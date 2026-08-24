@@ -1,0 +1,8 @@
+{
+  "name": "Sistema Integrado POS/ERP Empresarial. v2.0.1",
+  "description": "Plataforma multi-empresa e multi-loja integrada de Ponto de Venda (POS offline-first), Stock \u0026 Inventário, Financeiro \u0026 Faturação certificada (SAF-T), Recursos Humanos, Compras/Procurement e CRM com barramento de eventos.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
