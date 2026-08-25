@@ -12,14 +12,29 @@ import {
   Ticket,
   Mail,
   Phone,
+  PhoneCall,
+  PhoneForwarded,
+  PhoneIncoming,
+  PhoneOutgoing,
+  PhoneOff,
   Edit2,
   Trash2,
   X,
   Check,
   Building,
   UserCheck,
+  Trophy,
+  ShoppingBag,
+  Clock,
+  ExternalLink,
+  MessageSquare,
+  Receipt,
+  FileSpreadsheet,
 } from 'lucide-react';
-import { Customer } from '../../types';
+import { Customer, CallLog } from '../../types';
+import { CustomerCallModal } from './CustomerCallModal';
+import { CustomerPurchaseHistoryModal } from './CustomerPurchaseHistoryModal';
+import { TopBuyersReport } from './TopBuyersReport';
 
 export const CRMModule: React.FC = () => {
   const {
@@ -30,13 +45,35 @@ export const CRMModule: React.FC = () => {
     deleteCustomer,
     salesHistory,
     addLoyaltyPoints,
+    callLogs,
+    deleteCallLog,
     notify,
   } = useApp();
 
-  const [activeTab, setActiveTab] = useState<'customers' | 'loyalty' | 'giftcards' | 'campaigns'>('customers');
+  const [activeTab, setActiveTab] = useState<
+    'customers' | 'top_buyers' | 'calls' | 'loyalty' | 'giftcards' | 'campaigns'
+  >('customers');
+
   const [searchQuery, setSearchQuery] = useState('');
   const [showNewCustModal, setShowNewCustModal] = useState(false);
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
+
+  // Call Modal State
+  const [isCallModalOpen, setIsCallModalOpen] = useState(false);
+  const [callingCustomer, setCallingCustomer] = useState<Customer | null>(null);
+  const [customCallNumber, setCustomCallNumber] = useState<string>('');
+
+  // Purchase History Modal State
+  const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
+  const [selectedHistoryCustomer, setSelectedHistoryCustomer] = useState<Customer | null>(null);
+
+  // Calls Log Search & Filter
+  const [callsSearch, setCallsSearch] = useState('');
+  const [callsOutcomeFilter, setCallsOutcomeFilter] = useState<string>('all');
+
+  // Quick Dialer popup state
+  const [showQuickDialPad, setShowQuickDialPad] = useState(false);
+  const [quickDialNumber, setQuickDialNumber] = useState('');
 
   // New Customer Form
   const [name, setName] = useState('');
@@ -72,6 +109,20 @@ export const CRMModule: React.FC = () => {
       (c.email || '').toLowerCase().includes(q) ||
       (c.phone || '').includes(q)
     );
+  });
+
+  const filteredCallLogs = (callLogs || []).filter((call) => {
+    const q = callsSearch.toLowerCase();
+    const matchesQuery =
+      (call.customerName || '').toLowerCase().includes(q) ||
+      (call.customerPhone || '').includes(q) ||
+      (call.notes || '').toLowerCase().includes(q) ||
+      (call.operatorName || '').toLowerCase().includes(q);
+
+    const matchesOutcome =
+      callsOutcomeFilter === 'all' || call.outcome === callsOutcomeFilter;
+
+    return matchesQuery && matchesOutcome;
   });
 
   const handleOpenEdit = (cust: Customer) => {
@@ -143,10 +194,40 @@ export const CRMModule: React.FC = () => {
     setAddress('');
   };
 
+  // Launch Softphone / VoIP Call
+  const handleInitiateCall = (customer: Customer) => {
+    setCallingCustomer(customer);
+    setCustomCallNumber(customer.phone || '');
+    setIsCallModalOpen(true);
+  };
+
+  const handleDialCustomNumber = (phoneToDial: string) => {
+    const matchedCustomer = customers.find(
+      (c) => c.phone && c.phone.replace(/\s+/g, '') === phoneToDial.replace(/\s+/g, '')
+    );
+    setCallingCustomer(matchedCustomer || null);
+    setCustomCallNumber(phoneToDial);
+    setShowQuickDialPad(false);
+    setIsCallModalOpen(true);
+  };
+
+  // View Customer Purchase and Invoices History
+  const handleViewPurchaseHistory = (customer: Customer) => {
+    setSelectedHistoryCustomer(customer);
+    setIsHistoryModalOpen(true);
+  };
+
+  const formatDuration = (seconds: number) => {
+    if (!seconds) return '0s (Não atendida)';
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins > 0 ? `${mins}m ` : ''}${secs}s`;
+  };
+
   return (
     <div className="flex-1 flex flex-col h-full overflow-hidden bg-[#0a0a0a] text-[#e5e5e5]">
       {/* Top Banner KPI Cards */}
-      <div className="p-4 bg-[#0d0d0d] border-b border-[#262626] grid grid-cols-1 sm:grid-cols-4 gap-3 shrink-0">
+      <div className="p-4 bg-[#0d0d0d] border-b border-[#262626] grid grid-cols-2 sm:grid-cols-4 gap-3 shrink-0">
         <div className="p-3 bg-[#141414] rounded-xl border border-[#262626] flex items-center space-x-3">
           <div className="w-10 h-10 rounded-lg bg-[#c5a47e]/15 text-[#c5a47e] border border-[#c5a47e]/30 flex items-center justify-center font-bold">
             <Users className="w-5 h-5" />
@@ -159,76 +240,354 @@ export const CRMModule: React.FC = () => {
 
         <div className="p-3 bg-[#141414] rounded-xl border border-[#262626] flex items-center space-x-3">
           <div className="w-10 h-10 rounded-lg bg-amber-500/15 text-amber-400 border border-amber-500/30 flex items-center justify-center font-bold">
-            <Award className="w-5 h-5" />
+            <Trophy className="w-5 h-5" />
           </div>
           <div>
-            <span className="text-[10px] uppercase font-bold text-neutral-400 tracking-widest">Membros VIP Ouro</span>
-            <p className="text-xl font-serif font-bold text-amber-400">
-              {(customers || []).filter((c) => (c.loyaltyTier || '').toLowerCase() === 'ouro').length} clientes
+            <span className="text-[10px] uppercase font-bold text-neutral-400 tracking-widest">Top Comprador</span>
+            <p className="text-sm font-serif font-bold text-amber-400 truncate max-w-[140px]">
+              {[...customers].sort((a, b) => (b.totalSpent || 0) - (a.totalSpent || 0))[0]?.name || 'N/D'}
             </p>
           </div>
         </div>
 
         <div className="p-3 bg-[#141414] rounded-xl border border-[#262626] flex items-center space-x-3">
           <div className="w-10 h-10 rounded-lg bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 flex items-center justify-center font-bold">
-            <Sparkles className="w-5 h-5" />
+            <PhoneCall className="w-5 h-5" />
           </div>
           <div>
-            <span className="text-[10px] uppercase font-bold text-neutral-400 tracking-widest">Pontos em Circulação</span>
+            <span className="text-[10px] uppercase font-bold text-neutral-400 tracking-widest">Chamadas Realizadas</span>
             <p className="text-xl font-serif font-bold text-emerald-400">
-              {(customers || []).reduce((s, c) => s + (c.loyaltyPoints || 0), 0)} pts
+              {(callLogs || []).length} no CRM
             </p>
           </div>
         </div>
 
         <div className="p-3 bg-[#141414] rounded-xl border border-[#262626] flex items-center space-x-3">
           <div className="w-10 h-10 rounded-lg bg-blue-500/15 text-blue-400 border border-blue-500/30 flex items-center justify-center font-bold">
-            <Gift className="w-5 h-5" />
+            <Sparkles className="w-5 h-5" />
           </div>
           <div>
-            <span className="text-[10px] uppercase font-bold text-neutral-400 tracking-widest">Saldo Cartões Oferta</span>
+            <span className="text-[10px] uppercase font-bold text-neutral-400 tracking-widest">Pontos em Circulação</span>
             <p className="text-xl font-serif font-bold text-[#c5a47e]">
-              {formatCurrency(giftCards.reduce((s, g) => s + g.currentBalance, 0))}
+              {(customers || []).reduce((s, c) => s + (c.loyaltyPoints || 0), 0)} pts
             </p>
           </div>
         </div>
       </div>
 
-      {/* Tabs */}
-      <div className="px-4 bg-[#0d0d0d] border-b border-[#262626] flex items-center justify-between">
+      {/* Navigation Tabs and Header Actions */}
+      <div className="px-4 bg-[#0d0d0d] border-b border-[#262626] flex flex-col sm:flex-row sm:items-center justify-between gap-2">
         <div className="flex space-x-1 overflow-x-auto">
           {[
-            { id: 'customers', label: 'Diretório de Clientes' },
-            { id: 'loyalty', label: 'Programa de Fidelização' },
-            { id: 'giftcards', label: 'Cartões Presente / Vouchers' },
-            { id: 'campaigns', label: 'Campanhas & Descontos' },
-          ].map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id as any)}
-              className={`py-3 px-3.5 text-xs font-bold border-b-2 whitespace-nowrap transition-all ${
-                activeTab === tab.id
-                  ? 'border-[#c5a47e] text-[#c5a47e]'
-                  : 'border-transparent text-neutral-400 hover:text-[#e5e5e5]'
-              }`}
-            >
-              {tab.label}
-            </button>
-          ))}
+            { id: 'customers', label: 'Diretório de Clientes', icon: Users },
+            { id: 'top_buyers', label: 'Relatórios & Top Compradores', icon: Trophy, badge: 'Novo' },
+            { id: 'calls', label: 'Registo de Chamadas', icon: PhoneCall, count: (callLogs || []).length },
+            { id: 'loyalty', label: 'Programa de Fidelização', icon: Award },
+            { id: 'giftcards', label: 'Cartões Presente / Vouchers', icon: Gift },
+            { id: 'campaigns', label: 'Campanhas & Descontos', icon: Ticket },
+          ].map((tab) => {
+            const Icon = tab.icon;
+            const isActive = activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                id={`crm-tab-${tab.id}`}
+                onClick={() => setActiveTab(tab.id as any)}
+                className={`py-3 px-3.5 text-xs font-bold border-b-2 whitespace-nowrap transition-all flex items-center gap-1.5 ${
+                  isActive
+                    ? 'border-[#c5a47e] text-[#c5a47e]'
+                    : 'border-transparent text-neutral-400 hover:text-[#e5e5e5]'
+                }`}
+              >
+                <Icon className="w-3.5 h-3.5" />
+                <span>{tab.label}</span>
+                {tab.badge && (
+                  <span className="px-1.5 py-0.2 rounded-full bg-amber-500/20 text-amber-400 text-[10px] font-bold border border-amber-500/30">
+                    {tab.badge}
+                  </span>
+                )}
+                {typeof tab.count === 'number' && tab.count > 0 && (
+                  <span className="px-1.5 py-0.2 rounded-full bg-slate-800 text-slate-300 text-[10px] font-mono">
+                    {tab.count}
+                  </span>
+                )}
+              </button>
+            );
+          })}
         </div>
 
-        <button
-          onClick={() => setShowNewCustModal(true)}
-          className="flex items-center space-x-1.5 px-3 py-1.5 bg-[#c5a47e] hover:bg-[#d4b896] text-black rounded-lg text-xs font-bold uppercase tracking-wider shadow-xs transition-colors shrink-0"
-        >
-          <Plus className="w-4 h-4" />
-          <span>Registar Cliente</span>
-        </button>
+        {/* Action Buttons: Teclado Telefónico & Registar Cliente */}
+        <div className="flex items-center gap-2 py-2 sm:py-0">
+          {/* Quick Call / Dialer Trigger */}
+          <div className="relative">
+            <button
+              id="open-crm-dialer-btn"
+              onClick={() => setShowQuickDialPad(!showQuickDialPad)}
+              className="flex items-center space-x-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold uppercase tracking-wider shadow-sm transition-colors"
+              title="Abrir teclado e efetuar chamada telefónica"
+            >
+              <PhoneCall className="w-3.5 h-3.5" />
+              <span>Fazer Chamada</span>
+            </button>
+
+            {/* Quick dial popover */}
+            {showQuickDialPad && (
+              <div className="absolute right-0 top-full mt-2 z-50 w-72 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl p-4 space-y-3 animate-in fade-in zoom-in-95 duration-150">
+                <div className="flex items-center justify-between pb-2 border-b border-slate-800">
+                  <h4 className="text-xs font-bold text-white flex items-center gap-1.5">
+                    <Phone className="w-3.5 h-3.5 text-emerald-400" />
+                    Central Telefónica CRM
+                  </h4>
+                  <button
+                    onClick={() => setShowQuickDialPad(false)}
+                    className="p-1 text-slate-400 hover:text-white"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-[11px] text-slate-400 font-medium">Número ou Contacto a Ligar:</label>
+                  <input
+                    type="tel"
+                    placeholder="+351 912 345 678"
+                    value={quickDialNumber}
+                    onChange={(e) => setQuickDialNumber(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white font-mono placeholder-slate-600 focus:outline-none focus:border-emerald-500"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <span className="text-[10px] text-slate-500 uppercase tracking-wider block font-semibold">
+                    Ou escolher cliente rápido:
+                  </span>
+                  <div className="max-h-32 overflow-y-auto space-y-1 pr-1">
+                    {customers.slice(0, 4).map((c) => (
+                      <button
+                        key={c.id}
+                        onClick={() => {
+                          handleInitiateCall(c);
+                          setShowQuickDialPad(false);
+                        }}
+                        className="w-full text-left px-2 py-1.5 rounded-lg bg-slate-800/60 hover:bg-slate-800 text-xs text-slate-300 hover:text-white flex items-center justify-between"
+                      >
+                        <span className="truncate">{c.name}</span>
+                        <span className="font-mono text-[11px] text-emerald-400 shrink-0">{c.phone}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => {
+                    if (quickDialNumber.trim()) {
+                      handleDialCustomNumber(quickDialNumber.trim());
+                    }
+                  }}
+                  disabled={!quickDialNumber.trim()}
+                  className="w-full py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-lg text-xs font-bold uppercase tracking-wider flex items-center justify-center gap-1.5 shadow-md"
+                >
+                  <PhoneCall className="w-4 h-4" />
+                  <span>Discar & Iniciar Chamada</span>
+                </button>
+              </div>
+            )}
+          </div>
+
+          <button
+            id="register-new-customer-btn"
+            onClick={() => setShowNewCustModal(true)}
+            className="flex items-center space-x-1.5 px-3 py-1.5 bg-[#c5a47e] hover:bg-[#d4b896] text-black rounded-lg text-xs font-bold uppercase tracking-wider shadow-xs transition-colors shrink-0"
+          >
+            <Plus className="w-4 h-4" />
+            <span>Registar Cliente</span>
+          </button>
+        </div>
       </div>
 
       {/* Tab Contents */}
       <div className="flex-1 p-4 overflow-y-auto">
-        {/* Customers Tab */}
+        {/* 1. TOP BUYERS & PURCHASING REPORTS TAB */}
+        {activeTab === 'top_buyers' && (
+          <TopBuyersReport
+            onSelectCustomer={(c) => {
+              handleOpenEdit(c);
+            }}
+            onInitiateCall={(c) => {
+              handleInitiateCall(c);
+            }}
+            onViewHistory={(c) => {
+              handleViewPurchaseHistory(c);
+            }}
+          />
+        )}
+
+        {/* 2. CALL LOGS & CRM HISTORY TAB */}
+        {activeTab === 'calls' && (
+          <div className="space-y-4">
+            {/* Header / Search Controls */}
+            <div className="bg-[#141414] border border-[#262626] rounded-xl p-4 flex flex-col md:flex-row items-center justify-between gap-3">
+              <div className="relative w-full md:w-80">
+                <Search className="w-4 h-4 text-neutral-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  placeholder="Pesquisar chamadas por cliente, telefone ou notas..."
+                  value={callsSearch}
+                  onChange={(e) => setCallsSearch(e.target.value)}
+                  className="w-full pl-9 pr-3 py-2 bg-[#0d0d0d] border border-[#262626] rounded-lg text-xs text-[#e5e5e5] placeholder-neutral-500 focus:outline-hidden focus:border-[#c5a47e]"
+                />
+              </div>
+
+              <div className="flex items-center gap-2 w-full md:w-auto justify-end">
+                <select
+                  value={callsOutcomeFilter}
+                  onChange={(e) => setCallsOutcomeFilter(e.target.value)}
+                  className="bg-[#0d0d0d] border border-[#262626] rounded-lg px-3 py-2 text-xs text-neutral-300 focus:outline-none focus:border-[#c5a47e]"
+                >
+                  <option value="all">Todos os Resultados</option>
+                  <option value="venda_realizada">Venda Concretizada</option>
+                  <option value="contacto_positivo">Contacto Positivo</option>
+                  <option value="agendamento">Agendamento</option>
+                  <option value="informacao">Informação</option>
+                  <option value="nao_atendeu">Não Atendeu</option>
+                  <option value="reclamacao">Reclamação</option>
+                </select>
+
+                <button
+                  onClick={() => setShowQuickDialPad(true)}
+                  className="flex items-center gap-1.5 px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold transition-colors"
+                >
+                  <PhoneCall className="w-3.5 h-3.5" />
+                  <span>Nova Chamada</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Calls Table */}
+            <div className="bg-[#141414] rounded-xl border border-[#262626] shadow-sm overflow-hidden">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-[#0d0d0d] border-b border-[#262626] text-neutral-400 font-bold uppercase text-[10px] tracking-wider">
+                  <tr>
+                    <th className="p-3">Data / Hora</th>
+                    <th className="p-3">Cliente / Contacto</th>
+                    <th className="p-3">Duração</th>
+                    <th className="p-3">Resultado / Desfecho</th>
+                    <th className="p-3">Notas & Apontamentos</th>
+                    <th className="p-3">Operador</th>
+                    <th className="p-3 text-center">Ações</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[#262626] font-medium">
+                  {filteredCallLogs.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="p-8 text-center text-neutral-500">
+                        Nenhum registo de chamada encontrado.
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredCallLogs.map((call) => {
+                      const matchedCustomer = customers.find(
+                        (c) => c.id === call.customerId || (c.phone && c.phone === call.customerPhone)
+                      );
+
+                      return (
+                        <tr key={call.id} className="hover:bg-[#1a1a1a]/60">
+                          <td className="p-3 font-mono text-neutral-400">
+                            {formatDate(call.timestamp)}
+                          </td>
+                          <td className="p-3">
+                            <div className="font-bold text-white">{call.customerName}</div>
+                            <div className="flex items-center gap-2 text-[11px] text-emerald-400 font-mono mt-0.5">
+                              <Phone className="w-3 h-3" />
+                              <span>{call.customerPhone}</span>
+                              {call.customerPhone && (
+                                <a
+                                  href={`tel:${call.customerPhone.replace(/\s+/g, '')}`}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="text-neutral-500 hover:text-emerald-400"
+                                  title="Ligar direto via dispositivo"
+                                >
+                                  <ExternalLink className="w-3 h-3" />
+                                </a>
+                              )}
+                            </div>
+                          </td>
+                          <td className="p-3 font-mono text-neutral-300">
+                            <span className="flex items-center gap-1">
+                              <Clock className="w-3 h-3 text-neutral-500" />
+                              {formatDuration(call.durationSeconds)}
+                            </span>
+                          </td>
+                          <td className="p-3">
+                            <span
+                              className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold border ${
+                                call.outcome === 'venda_realizada'
+                                  ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                                  : call.outcome === 'contacto_positivo'
+                                  ? 'bg-indigo-500/20 text-indigo-300 border-indigo-500/30'
+                                  : call.outcome === 'agendamento'
+                                  ? 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+                                  : call.outcome === 'reclamacao'
+                                  ? 'bg-rose-500/20 text-rose-300 border-rose-500/30'
+                                  : 'bg-neutral-500/20 text-neutral-400 border-neutral-500/30'
+                              }`}
+                            >
+                              {call.outcome === 'venda_realizada' && 'Venda Concretizada'}
+                              {call.outcome === 'contacto_positivo' && 'Contacto Positivo'}
+                              {call.outcome === 'agendamento' && 'Agendamento'}
+                              {call.outcome === 'informacao' && 'Informação'}
+                              {call.outcome === 'nao_atendeu' && 'Não Atendeu'}
+                              {call.outcome === 'reclamacao' && 'Reclamação'}
+                              {call.outcome === 'ocupado' && 'Ocupado'}
+                            </span>
+                          </td>
+                          <td className="p-3 text-neutral-300 max-w-xs">
+                            <p className="line-clamp-2 text-xs">{call.notes || 'Sem observações registadas.'}</p>
+                          </td>
+                          <td className="p-3 text-neutral-400 text-xs">
+                            {call.operatorName || 'Operador'}
+                          </td>
+                          <td className="p-3 text-center">
+                            <div className="flex items-center justify-center space-x-1.5">
+                              <button
+                                onClick={() => {
+                                  if (matchedCustomer) {
+                                    handleInitiateCall(matchedCustomer);
+                                  } else {
+                                    handleDialCustomNumber(call.customerPhone);
+                                  }
+                                }}
+                                className="p-1.5 bg-[#1f1f1f] hover:bg-emerald-600 hover:text-white text-emerald-400 border border-[#333333] rounded-md transition-all cursor-pointer shadow-xs"
+                                title="Voltar a Ligar"
+                              >
+                                <PhoneCall className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={() => {
+                                  if (confirm('Deseja eliminar este registo de chamada?')) {
+                                    deleteCallLog(call.id);
+                                    notify('Registo de chamada eliminado.', 'info');
+                                  }
+                                }}
+                                className="p-1.5 bg-[#1f1f1f] hover:bg-rose-500 hover:text-white text-neutral-500 border border-[#333333] rounded-md transition-all cursor-pointer shadow-xs"
+                                title="Eliminar Registo"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* 3. CUSTOMERS DIRECTORY TAB */}
         {activeTab === 'customers' && (
           <div className="space-y-4">
             <div className="relative max-w-sm">
@@ -248,12 +607,12 @@ export const CRMModule: React.FC = () => {
                   <tr>
                     <th className="p-3">Nome do Cliente</th>
                     <th className="p-3">NIF Fiscal</th>
-                    <th className="p-3">Contactos</th>
+                    <th className="p-3">Contactos & Telefone</th>
                     <th className="p-3">Localidade</th>
                     <th className="p-3 text-center">Nível Fidelidade</th>
                     <th className="p-3 text-right">Pontos</th>
                     <th className="p-3 text-right">Total Acumulado</th>
-                    <th className="p-3 text-center">Ações</th>
+                    <th className="p-3 text-center">Ações Rápidas</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#262626] font-medium">
@@ -272,10 +631,35 @@ export const CRMModule: React.FC = () => {
                           </div>
                         </td>
                         <td className="p-3 font-mono text-[#c5a47e]">{cust.taxNumber || '999999990'}</td>
+                        
+                        {/* Contacts Column with direct Click-to-Call */}
                         <td className="p-3 text-neutral-400">
                           <div>{cust.email || '-'}</div>
-                          <div className="text-[10px] text-neutral-500">{cust.phone || '-'}</div>
+                          {cust.phone ? (
+                            <div className="flex items-center gap-1.5 mt-0.5">
+                              <button
+                                onClick={() => handleInitiateCall(cust)}
+                                className="flex items-center gap-1 text-[11px] text-emerald-400 hover:text-emerald-300 font-mono transition-colors"
+                                title="Efetuar chamada via Central Telefónica do CRM"
+                              >
+                                <Phone className="w-3 h-3" />
+                                <span>{cust.phone}</span>
+                              </button>
+                              <a
+                                href={`tel:${cust.phone.replace(/\s+/g, '')}`}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="text-neutral-500 hover:text-emerald-400 transition-colors"
+                                title="Ligar direto no telemóvel / dispositivo"
+                              >
+                                <ExternalLink className="w-3 h-3" />
+                              </a>
+                            </div>
+                          ) : (
+                            <span className="text-[10px] text-neutral-500">-</span>
+                          )}
                         </td>
+
                         <td className="p-3 text-neutral-300">{cust.city || 'Lisboa'}{cust.country ? `, ${cust.country}` : ''}</td>
                         <td className="p-3 text-center">
                           <span
@@ -298,15 +682,40 @@ export const CRMModule: React.FC = () => {
                         <td className="p-3 text-right font-mono font-bold text-emerald-400">
                           {formatCurrency(cust.totalSpent || 0)}
                         </td>
+
+                        {/* Action buttons including Call and Purchase History */}
                         <td className="p-3 text-center">
                           <div className="flex items-center justify-center space-x-1.5">
+                            {/* Make Phone Call */}
+                            <button
+                              id={`call-cust-row-${cust.id}`}
+                              onClick={() => handleInitiateCall(cust)}
+                              className="p-1.5 bg-[#1f1f1f] hover:bg-emerald-600 hover:text-white text-emerald-400 border border-[#333333] rounded-md transition-all cursor-pointer shadow-xs"
+                              title="Efetuar Chamada Telefónica"
+                            >
+                              <PhoneCall className="w-3.5 h-3.5" />
+                            </button>
+
+                            {/* View Purchase History & Invoices */}
+                            <button
+                              id={`history-cust-row-${cust.id}`}
+                              onClick={() => handleViewPurchaseHistory(cust)}
+                              className="p-1.5 bg-[#1f1f1f] hover:bg-indigo-600 hover:text-white text-indigo-400 border border-[#333333] rounded-md transition-all cursor-pointer shadow-xs"
+                              title="Ver Histórico de Compras e Faturas"
+                            >
+                              <ShoppingBag className="w-3.5 h-3.5" />
+                            </button>
+
+                            {/* Edit Customer */}
                             <button
                               onClick={() => handleOpenEdit(cust)}
                               className="p-1.5 bg-[#1f1f1f] hover:bg-[#c5a47e] hover:text-black text-[#c5a47e] border border-[#333333] rounded-md transition-all cursor-pointer shadow-xs"
-                              title="Editar Dados do Cliente / Consumidor Final"
+                              title="Editar Dados do Cliente"
                             >
                               <Edit2 className="w-3.5 h-3.5" />
                             </button>
+
+                            {/* Delete Customer */}
                             <button
                               onClick={() => handleDelete(cust)}
                               className="p-1.5 bg-[#1f1f1f] hover:bg-rose-500 hover:text-white text-neutral-400 border border-[#333333] rounded-md transition-all cursor-pointer shadow-xs"
@@ -325,7 +734,7 @@ export const CRMModule: React.FC = () => {
           </div>
         )}
 
-        {/* Loyalty Program Rules Tab */}
+        {/* 4. LOYALTY PROGRAM RULES TAB */}
         {activeTab === 'loyalty' && (
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div className="bg-[#141414] p-5 rounded-xl border border-amber-500/30 shadow-sm space-y-3">
@@ -368,7 +777,7 @@ export const CRMModule: React.FC = () => {
           </div>
         )}
 
-        {/* Gift Cards Tab */}
+        {/* 5. GIFT CARDS TAB */}
         {activeTab === 'giftcards' && (
           <div className="bg-[#141414] rounded-xl border border-[#262626] shadow-sm overflow-hidden">
             <div className="p-3.5 border-b border-[#262626] bg-[#0d0d0d] flex justify-between items-center">
@@ -423,7 +832,7 @@ export const CRMModule: React.FC = () => {
           </div>
         )}
 
-        {/* Campaigns Tab */}
+        {/* 6. CAMPAIGNS TAB */}
         {activeTab === 'campaigns' && (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="bg-[#141414] p-5 rounded-xl border border-[#262626] shadow-sm space-y-3">
@@ -461,7 +870,33 @@ export const CRMModule: React.FC = () => {
         )}
       </div>
 
-      {/* New Customer Modal */}
+      {/* CALL MODAL (SOFTPHONE / VOIP DIALER) */}
+      <CustomerCallModal
+        customer={callingCustomer}
+        initialPhoneNumber={customCallNumber}
+        isOpen={isCallModalOpen}
+        onClose={() => {
+          setIsCallModalOpen(false);
+          setCallingCustomer(null);
+          setCustomCallNumber('');
+        }}
+      />
+
+      {/* PURCHASE & INVOICE HISTORY MODAL */}
+      <CustomerPurchaseHistoryModal
+        customer={selectedHistoryCustomer}
+        isOpen={isHistoryModalOpen}
+        onClose={() => {
+          setIsHistoryModalOpen(false);
+          setSelectedHistoryCustomer(null);
+        }}
+        onInitiateCall={(customer) => {
+          setIsHistoryModalOpen(false);
+          handleInitiateCall(customer);
+        }}
+      />
+
+      {/* NEW CUSTOMER MODAL */}
       {showNewCustModal && (
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-[#141414] border border-[#262626] text-[#e5e5e5] rounded-xl shadow-2xl max-w-md w-full p-6 space-y-4">
@@ -535,7 +970,8 @@ export const CRMModule: React.FC = () => {
           </div>
         </div>
       )}
-      {/* Edit Customer Modal */}
+
+      {/* EDIT CUSTOMER MODAL */}
       {editingCustomer && (
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-[#141414] border border-[#262626] text-[#e5e5e5] rounded-xl shadow-2xl max-w-lg w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto">

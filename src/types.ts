@@ -358,6 +358,7 @@ export interface CashShift {
     authorizedBy?: string;
   }[];
   zReportNumber?: string;
+  notes?: string;
 }
 
 export interface Customer {
@@ -380,6 +381,19 @@ export interface Customer {
   currentCredit?: number;
   createdAt: string;
   notes?: string;
+}
+
+export interface CallLog {
+  id: string;
+  customerId?: string;
+  customerName: string;
+  customerPhone: string;
+  timestamp: string;
+  durationSeconds: number;
+  outcome: 'venda_realizada' | 'contacto_positivo' | 'agendamento' | 'nao_atendeu' | 'ocupado' | 'reclamacao' | 'informacao';
+  notes?: string;
+  operatorName?: string;
+  direction?: 'saida' | 'entrada';
 }
 
 export interface Coupon {

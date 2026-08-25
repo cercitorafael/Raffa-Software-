@@ -36,6 +36,27 @@
   ::-webkit-scrollbar-thumb:hover {
     background: #3f3f3f;
   }
+
+  /* Custom visible horizontal scrollbar */
+  .custom-horizontal-scrollbar {
+    overflow-x: auto;
+    scrollbar-width: thin;
+    scrollbar-color: #c5a47e #141414;
+  }
+  .custom-horizontal-scrollbar::-webkit-scrollbar {
+    height: 5px;
+  }
+  .custom-horizontal-scrollbar::-webkit-scrollbar-track {
+    background: #121212;
+    border-radius: 3px;
+  }
+  .custom-horizontal-scrollbar::-webkit-scrollbar-thumb {
+    background: #c5a47e;
+    border-radius: 3px;
+  }
+  .custom-horizontal-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: #e2cca8;
+  }
 }
 
 /* ==================== THEME STYLES ==================== */

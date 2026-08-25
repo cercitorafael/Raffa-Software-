@@ -30,6 +30,8 @@ import {
 } from 'lucide-react';
 import { Product, Warehouse, LotBatch, ProductCategory } from '../../types';
 import { ProductImportExportModal } from './ProductImportExportModal';
+import { CategoryManagementModal } from './CategoryManagementModal';
+import { CategoryManagementTab } from './CategoryManagementTab';
 
 export const StockModule: React.FC = () => {
   const {
@@ -65,7 +67,7 @@ export const StockModule: React.FC = () => {
 
   const currencySymbol = currentCompany?.currencySymbol || currencyDefinition?.symbol || 'Mt';
 
-  const [activeTab, setActiveTab] = useState<'overview' | 'warehouses' | 'lots' | 'movements' | 'transfer' | 'inventory_count' | 'reorder'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'categories' | 'warehouses' | 'lots' | 'movements' | 'transfer' | 'inventory_count' | 'reorder'>('overview');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategoryFilter, setSelectedCategoryFilter] = useState<string>('all');
   const [selectedWarehouseFilter, setSelectedWarehouseFilter] = useState<string>('all');
@@ -76,6 +78,9 @@ export const StockModule: React.FC = () => {
   const [adjustingProduct, setAdjustingProduct] = useState<Product | null>(null);
   const [showImportExportModal, setShowImportExportModal] = useState(false);
   const [importExportInitialMode, setImportExportInitialMode] = useState<'import' | 'export'>('import');
+
+  // Category Modal
+  const [showCategoryModal, setShowCategoryModal] = useState(false);
 
   // Warehouse Modals
   const [showNewWarehouseModal, setShowNewWarehouseModal] = useState(false);
@@ -397,6 +402,20 @@ export const StockModule: React.FC = () => {
               <span>Exportar</span>
             </button>
 
+            <button
+              id="stock-categories-btn"
+              onClick={() => setActiveTab('categories')}
+              className={`px-3.5 py-2 border font-medium text-xs rounded-lg transition-colors flex items-center space-x-1.5 cursor-pointer shadow-xs ${
+                activeTab === 'categories'
+                  ? 'bg-amber-500/20 text-amber-300 border-amber-500/50'
+                  : 'bg-[#1a1a1a] hover:bg-[#252525] text-amber-300 hover:text-amber-200 border-[#333] hover:border-amber-500/40'
+              }`}
+              title="Gerir categorias de artigos, famílias de produtos, cores e ícones"
+            >
+              <Layers className="w-4 h-4 text-amber-400" />
+              <span>Gestão de Categorias</span>
+            </button>
+
             {canCreate && (
               <button
                 onClick={() => {
@@ -460,6 +479,7 @@ export const StockModule: React.FC = () => {
       <div className="bg-[#121212] border-b border-[#262626] px-6 flex items-center space-x-2 overflow-x-auto">
         {[
           { id: 'overview', label: 'Artigos & Catálogo', icon: Package, count: products.length },
+          { id: 'categories', label: 'Gestão de Categorias', icon: Layers, count: categories.length },
           { id: 'warehouses', label: 'Armazéns & Lojas', icon: WarehouseIcon, count: warehouses.length },
           { id: 'lots', label: 'Lotes & Validades', icon: Tag, count: lots.length },
           { id: 'movements', label: 'Histórico de Movimentos', icon: ArrowUpDown, count: stockMovements.length },
@@ -483,7 +503,9 @@ export const StockModule: React.FC = () => {
               <span>{tab.label}</span>
               {tab.count !== undefined && (
                 <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${
-                  isActive ? 'bg-[#c5a47e]/20 text-[#c5a47e]' : 'bg-[#1f1f1f] text-neutral-400'
+                  isActive
+                    ? 'bg-[#c5a47e]/20 text-[#c5a47e]'
+                    : 'bg-[#1f1f1f] text-neutral-400'
                 }`}>
                   {tab.count}
                 </span>
@@ -512,16 +534,26 @@ export const StockModule: React.FC = () => {
               </div>
 
               <div className="flex items-center space-x-2 w-full sm:w-auto">
-                <select
-                  value={selectedCategoryFilter}
-                  onChange={(e) => setSelectedCategoryFilter(e.target.value)}
-                  className="bg-[#0d0d0d] border border-[#262626] rounded-md px-3 py-1.5 text-xs text-neutral-200 focus:outline-hidden"
-                >
-                  <option value="all">Todas as Categorias</option>
-                  {categories.map((c) => (
-                    <option key={c.id} value={c.id}>{c.name}</option>
-                  ))}
-                </select>
+                <div className="flex items-center space-x-1">
+                  <select
+                    value={selectedCategoryFilter}
+                    onChange={(e) => setSelectedCategoryFilter(e.target.value)}
+                    className="bg-[#0d0d0d] border border-[#262626] rounded-md px-3 py-1.5 text-xs text-neutral-200 focus:outline-hidden"
+                  >
+                    <option value="all">Todas as Categorias</option>
+                    {categories.map((c) => (
+                      <option key={c.id} value={c.id}>{c.name}</option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() => setShowCategoryModal(true)}
+                    className="p-1.5 bg-[#1a1a1a] hover:bg-[#252525] text-amber-400 hover:text-amber-300 border border-[#2e2e2e] hover:border-amber-500/40 rounded-md transition-colors cursor-pointer"
+                    title="Gerir Categorias (+ Nova / Editar)"
+                  >
+                    <Layers className="w-3.5 h-3.5" />
+                  </button>
+                </div>
 
                 <select
                   value={selectedWarehouseFilter}
@@ -659,6 +691,16 @@ export const StockModule: React.FC = () => {
               </table>
             </div>
           </div>
+        )}
+
+        {/* TAB: CATEGORIES CRUD */}
+        {activeTab === 'categories' && (
+          <CategoryManagementTab
+            onFilterByCategory={(catId) => {
+              setSelectedCategoryFilter(catId);
+              setActiveTab('overview');
+            }}
+          />
         )}
 
         {/* TAB 2: WAREHOUSES CRUD */}
@@ -1221,7 +1263,17 @@ export const StockModule: React.FC = () => {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-medium text-neutral-300 mb-1">Categoria</label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-xs font-medium text-neutral-300">Categoria</label>
+                    <button
+                      type="button"
+                      onClick={() => setShowCategoryModal(true)}
+                      className="text-[11px] text-[#c5a47e] hover:underline flex items-center space-x-1 cursor-pointer"
+                    >
+                      <Plus className="w-3 h-3" />
+                      <span>Gerir</span>
+                    </button>
+                  </div>
                   <select
                     value={prodForm.category}
                     onChange={(e) => setProdForm({ ...prodForm, category: e.target.value })}
@@ -1578,6 +1630,16 @@ export const StockModule: React.FC = () => {
         isOpen={showImportExportModal}
         onClose={() => setShowImportExportModal(false)}
         initialMode={importExportInitialMode}
+      />
+
+      {/* Category Management Modal */}
+      <CategoryManagementModal
+        isOpen={showCategoryModal}
+        onClose={() => setShowCategoryModal(false)}
+        onSelectCategory={(catId) => {
+          setSelectedCategoryFilter(catId);
+          setActiveTab('overview');
+        }}
       />
     </div>
   );

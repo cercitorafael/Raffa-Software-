@@ -30,6 +30,7 @@ import {
   LotBatch,
   OmnichannelOrder,
   InvoiceTemplateConfig,
+  CallLog,
 } from './types';
 
 export const defaultInvoiceTemplates: InvoiceTemplateConfig[] = [
@@ -1275,26 +1276,94 @@ export const initialLeads: LeadOpportunity[] = [
   },
 ];
 
-export const initialActiveShift: CashShift = {
-  id: 'shift-1',
-  companyId: 'comp-1',
-  storeId: 'store-lis-1',
-  terminalId: 'term-lis-1',
-  operatorId: 'usr-caixa',
-  operatorName: 'Gonçalo Ribeiro',
-  openedAt: '2026-08-23T08:30:00Z',
-  status: 'aberto',
-  initialCash: 150.00, // 150€ fundo de maneio
-  totalSales: 184.20,
-  totalCash: 64.20,
-  totalCards: 70.00,
-  totalMbway: 50.00,
-  totalTransfers: 0,
-  totalVouchers: 0,
-  sangriaTotal: 0,
-  suprimentoTotal: 0,
-  movements: [],
-};
+export const initialActiveShift: CashShift | null = null;
+
+export const initialClosedShifts: CashShift[] = [
+  {
+    id: 'shift-prev-1',
+    companyId: 'comp-1',
+    storeId: 'store-lis-1',
+    terminalId: 'term-lis-1',
+    operatorId: 'usr-caixa',
+    operatorName: 'Gonçalo Ribeiro',
+    openedAt: '2026-08-24T08:30:00Z',
+    closedAt: '2026-08-24T20:00:00Z',
+    status: 'fechado',
+    initialCash: 150.00, // 150€ fundo de maneio inicial do dia anterior
+    finalCashReported: 1390.50,
+    finalCashSystem: 1390.50,
+    cashDifference: 0,
+    totalSales: 1240.50,
+    totalCash: 480.50,
+    totalCards: 560.00,
+    totalMbway: 200.00,
+    totalTransfers: 0,
+    totalVouchers: 0,
+    sangriaTotal: 200.00,
+    suprimentoTotal: 0,
+    movements: [
+      {
+        id: 'c-mov-init-1',
+        type: 'sangria',
+        amount: 200.00,
+        reason: 'Recolha periódica para cofre central',
+        timestamp: '2026-08-24T14:30:00Z',
+      },
+    ],
+    notes: 'Turno do dia anterior encerrado regularmente com sucesso e conferência de caixa sem divergências.',
+  },
+];
+
+export const initialCallLogs: CallLog[] = [
+  {
+    id: 'call-1',
+    customerId: 'cust-4',
+    customerName: 'Arquitetos & Associados Lda',
+    customerPhone: '+351 213 890 123',
+    timestamp: '2026-08-24T15:30:00Z',
+    durationSeconds: 195,
+    outcome: 'venda_realizada',
+    notes: 'Confirmada nova encomenda de materiais de escritório e café corporativo. Enviar fatura pró-forma.',
+    operatorName: 'Manuel Fernandes',
+    direction: 'saida',
+  },
+  {
+    id: 'call-2',
+    customerId: 'cust-2',
+    customerName: 'João Pedro Carvalho',
+    customerPhone: '+351 912 345 678',
+    timestamp: '2026-08-24T11:15:00Z',
+    durationSeconds: 140,
+    outcome: 'contacto_positivo',
+    notes: 'Apresentação do novo catálogo de vinhos premium e oferta de vale de 10% do escalão Ouro.',
+    operatorName: 'Gonçalo Ribeiro',
+    direction: 'saida',
+  },
+  {
+    id: 'call-3',
+    customerId: 'cust-3',
+    customerName: 'Maria Inês Ferreira',
+    customerPhone: '+351 934 567 890',
+    timestamp: '2026-08-23T16:45:00Z',
+    durationSeconds: 65,
+    outcome: 'agendamento',
+    notes: 'Agendada recolha de encomenda em loja para quinta-feira de manhã.',
+    operatorName: 'Manuel Fernandes',
+    direction: 'saida',
+  },
+  {
+    id: 'call-4',
+    customerId: 'cust-5',
+    customerName: 'Tiago Miguel Neves',
+    customerPhone: '+351 961 234 567',
+    timestamp: '2026-08-22T10:20:00Z',
+    durationSeconds: 0,
+    outcome: 'nao_atendeu',
+    notes: 'Tentativa de contacto para seguimento de pós-venda. Não atendeu, tentar novamente.',
+    operatorName: 'Gonçalo Ribeiro',
+    direction: 'saida',
+  },
+];
 
 export const initialEvents: SystemEvent[] = [
   {

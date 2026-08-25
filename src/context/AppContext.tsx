@@ -43,6 +43,7 @@ import {
   ToastNotification,
   Language,
   LanguageOption,
+  CallLog,
 } from '../types';
 import { useI18n } from '../i18n';
 import {
@@ -72,9 +73,11 @@ import {
   initialPurchaseOrders,
   initialLeads,
   initialActiveShift,
+  initialClosedShifts,
   initialEvents,
   initialOmnichannelOrders,
   initialSales,
+  initialCallLogs,
 } from '../mockData';
 import {
   generateFiscalHash,
@@ -240,8 +243,9 @@ export interface AppContextType {
 
   // POS
   activeShift: CashShift | null;
+  shiftsHistory: CashShift[];
   openShift: (initialCash: number) => void;
-  closeShift: (notes?: string) => CashShift | null;
+  closeShift: (notesOrCounted?: string | number, notes?: string) => CashShift | null;
   registerCashMovement: (type: 'sangria' | 'suprimento', amount: number, reason: string) => void;
   cart: CartItem[];
   addToCart: (product: Product, quantity?: number) => void;
@@ -344,6 +348,9 @@ export interface AppContextType {
   updateCustomer: (id: string, cust: Partial<Customer>) => void;
   deleteCustomer: (id: string) => void;
   addLoyaltyPoints: (customerId: string, points: number) => void;
+  callLogs: CallLog[];
+  addCallLog: (call: Omit<CallLog, 'id' | 'timestamp'>) => void;
+  deleteCallLog: (id: string) => void;
 
   leads: LeadOpportunity[];
   addLead: (lead: Omit<LeadOpportunity, 'id' | 'createdAt'>) => void;
@@ -531,9 +538,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   );
 
   // POS
-  const [activeShift, setActiveShift] = useState<CashShift | null>(() =>
-    loadFromStorage('activeShift', initialActiveShift)
-  );
+  const [activeShift, setActiveShift] = useState<CashShift | null>(() => {
+    const stored = loadFromStorage<CashShift | null>('activeShift', null);
+    // Explicit rule: Upon first session or if closed in previous day, register must be CLOSED (null).
+    // Only remains open if a user explicitly opened it and status is 'aberto'.
+    if (stored && stored.status === 'aberto' && typeof stored.initialCash === 'number') {
+      return stored;
+    }
+    return null;
+  });
+  const [shiftsHistory, setShiftsHistory] = useState<CashShift[]>(() => {
+    const stored = loadFromStorage<CashShift[]>('shiftsHistory', initialClosedShifts);
+    return Array.isArray(stored) ? stored : initialClosedShifts;
+  });
   const [cart, setCart] = useState<CartItem[]>(() =>
     loadFromStorage('cart', [])
   );
@@ -590,6 +607,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // CRM
   const [customers, setCustomers] = useState<Customer[]>(() =>
     loadFromStorage('customers', initialCustomers)
+  );
+  const [callLogs, setCallLogs] = useState<CallLog[]>(() =>
+    loadFromStorage('callLogs', initialCallLogs)
   );
   const [leads, setLeads] = useState<LeadOpportunity[]>(() =>
     loadFromStorage('leads', initialLeads)
@@ -789,6 +809,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     saveToStorage('lots', lots);
     saveToStorage('stockMovements', stockMovements);
     saveToStorage('activeShift', activeShift);
+    saveToStorage('shiftsHistory', shiftsHistory);
     saveToStorage('cart', cart);
     saveToStorage('salesHistory', salesHistory);
     saveToStorage('accountsPayable', accountsPayable);
@@ -804,6 +825,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     saveToStorage('payrolls', payrolls);
     saveToStorage('employeeShifts', employeeShifts);
     saveToStorage('customers', customers);
+    saveToStorage('callLogs', callLogs);
     saveToStorage('leads', leads);
     saveToStorage('omnichannelOrders', omnichannelOrders);
     saveToStorage('events', events);
@@ -827,6 +849,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     lots,
     stockMovements,
     activeShift,
+    shiftsHistory,
     cart,
     salesHistory,
     accountsPayable,
@@ -842,6 +865,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     payrolls,
     employeeShifts,
     customers,
+    callLogs,
     leads,
     omnichannelOrders,
     events,
@@ -2016,6 +2040,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // ==================== POS & SALES ====================
   const openShift = (initialCash: number) => {
+    const safeInitialCash = Math.max(0, Number(initialCash) || 0);
     const shift: CashShift = {
       id: `shift-${Date.now()}`,
       companyId: currentCompany.id,
@@ -2025,7 +2050,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       operatorName: currentUser.name,
       openedAt: new Date().toISOString(),
       status: 'aberto',
-      initialCash,
+      initialCash: safeInitialCash,
       totalSales: 0,
       totalCash: 0,
       totalCards: 0,
@@ -2037,30 +2062,55 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       movements: [],
     };
     setActiveShift(shift);
+    saveToStorage('activeShift', shift);
     emitEvent('POS', 'pos.shift.opened', {
       shiftId: shift.id,
+      terminal: currentTerminal.code,
       operator: currentUser.name,
-      initialCash,
+      initialCash: safeInitialCash,
     });
     sound.playSuccessChime();
+    notify(`Caixa aberto com sucesso (Fundo Inicial: ${formatCurrency(safeInitialCash)}). Pronto para vendas!`, 'success');
   };
 
-  const closeShift = (notes?: string) => {
+  const closeShift = (notesOrCounted?: string | number, notes?: string) => {
     if (!activeShift) return null;
+    const counted = typeof notesOrCounted === 'number' ? notesOrCounted : undefined;
+    const noteText = typeof notesOrCounted === 'string' ? notesOrCounted : (notes || '');
+    const expectedCash =
+      activeShift.initialCash +
+      activeShift.totalCash +
+      activeShift.suprimentoTotal -
+      activeShift.sangriaTotal;
+    const diff = counted !== undefined ? counted - expectedCash : 0;
+
     const closed: CashShift = {
       ...activeShift,
       closedAt: new Date().toISOString(),
       status: 'fechado',
-      notes,
+      finalCashReported: counted,
+      finalCashSystem: expectedCash,
+      cashDifference: diff,
+      notes: noteText,
     };
+
     setActiveShift(null);
+    saveToStorage('activeShift', null);
+    setShiftsHistory((prev) => [closed, ...prev]);
+
     emitEvent('POS', 'pos.shift.closed', {
       shiftId: closed.id,
+      terminal: currentTerminal.code,
+      operator: closed.operatorName,
       totalSales: closed.totalSales,
       totalCash: closed.totalCash,
+      expectedCash,
+      countedCash: counted,
+      difference: diff,
       closedAt: closed.closedAt,
     });
     sound.playSuccessChime();
+    notify('Caixa encerrado com sucesso. Relatório Z gerado.', 'info');
     return closed;
   };
 
@@ -3060,6 +3110,31 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     );
   };
 
+  const addCallLog = (call: Omit<CallLog, 'id' | 'timestamp'>) => {
+    const id = `call-${Date.now()}`;
+    const newLog: CallLog = {
+      ...call,
+      id,
+      timestamp: new Date().toISOString(),
+      operatorName: call.operatorName || currentUser.name || 'Operador',
+      direction: call.direction || 'saida',
+    };
+    setCallLogs((prev) => [newLog, ...prev]);
+    emitEvent('CRM', 'crm.customer.call_logged', {
+      customer: newLog.customerName,
+      phone: newLog.customerPhone,
+      outcome: newLog.outcome,
+      duration: newLog.durationSeconds,
+    });
+    sound.playSuccessChime();
+  };
+
+  const deleteCallLog = (id: string) => {
+    setCallLogs((prev) => prev.filter((c) => c.id !== id));
+    emitEvent('CRM', 'crm.customer.call_deleted', { callId: id });
+    sound.playSuccessChime();
+  };
+
   const addLead = (lead: Omit<LeadOpportunity, 'id' | 'createdAt'>) => {
     const id = `lead-${Date.now()}`;
     const newLead: LeadOpportunity = {
@@ -3319,6 +3394,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         deductStockForItems,
         replenishStockForItems,
         activeShift,
+        shiftsHistory,
         openShift,
         closeShift,
         registerCashMovement,
@@ -3401,6 +3477,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         updateCustomer,
         deleteCustomer,
         addLoyaltyPoints,
+        callLogs,
+        addCallLog,
+        deleteCallLog,
         leads,
         addLead,
         updateLead,

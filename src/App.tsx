@@ -15,6 +15,7 @@ import { ProcurementModule } from './components/procurement/ProcurementModule';
 import { CRMModule } from './components/crm/CRMModule';
 import { EventBusModule } from './components/events/EventBusModule';
 import { SettingsModule } from './components/settings/SettingsModule';
+import { SupabaseUserManager } from './components/supabase/SupabaseUserManager';
 import { CashShiftModal } from './components/pos/CashShiftModal';
 import { OfflineSyncModal } from './components/pos/OfflineSyncModal';
 import { PriceCheckerModal } from './components/pos/PriceCheckerModal';
@@ -54,6 +55,8 @@ const MainLayout: React.FC = () => {
         return <CRMModule />;
       case 'users':
         return <SettingsModule key="users" initialTab="users" />;
+      case 'supabase':
+        return <SupabaseUserManager />;
       case 'events':
         return <EventBusModule />;
       case 'settings':

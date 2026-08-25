@@ -24,6 +24,9 @@ import {
   Edit2,
   UserPlus,
   X,
+  Lock,
+  Unlock,
+  AlertTriangle,
 } from 'lucide-react';
 import { PaymentModal } from './PaymentModal';
 import { ReceiptModal } from './ReceiptModal';
@@ -77,8 +80,12 @@ export const POSModule: React.FC = () => {
   const [discountInput, setDiscountInput] = useState<number>(0);
   const [showSalesHistoryModal, setShowSalesHistoryModal] = useState(false);
 
-  // Customer Picker Modal States
+  // Customer Picker Modal States & Quick Direct Input
+  const [isTypingCustomer, setIsTypingCustomer] = useState(false);
+  const [directCustomerName, setDirectCustomerName] = useState('');
+  const [directCustomerNif, setDirectCustomerNif] = useState('');
   const [customerSearch, setCustomerSearch] = useState('');
+  const [showCustomerDropdown, setShowCustomerDropdown] = useState(false);
   const [editingPosCustomer, setEditingPosCustomer] = useState<Customer | null>(null);
   const [showNewCustPosForm, setShowNewCustPosForm] = useState(false);
   const [posCustName, setPosCustName] = useState('');
@@ -166,6 +173,31 @@ export const POSModule: React.FC = () => {
     <div className="flex-1 flex flex-col md:flex-row h-full overflow-hidden bg-[#0a0a0a] text-[#e5e5e5]">
       {/* Left Workspace: Product Catalog & Fast Search */}
       <div className="flex-1 flex flex-col min-w-0 p-4 overflow-hidden">
+        {/* Closed Cash Register Notice */}
+        {!activeShift && (
+          <div className="mb-3 p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs">
+            <div className="flex items-center space-x-2.5 text-amber-300">
+              <div className="w-8 h-8 rounded-lg bg-amber-500/20 flex items-center justify-center shrink-0">
+                <Lock className="w-4 h-4 text-amber-400" />
+              </div>
+              <div>
+                <p className="font-bold text-amber-200">Caixa Fechada &bull; Abertura Obrigatória</p>
+                <p className="text-[11px] text-amber-400/80">
+                  O caixa permanece fechado até que o operador realize a abertura manual com o fundo de maneio.
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowShiftModal(true)}
+              className="px-3 py-1.5 bg-[#c5a47e] hover:bg-[#d4b896] text-black font-bold rounded-lg text-xs flex items-center space-x-1.5 transition-all shadow-xs cursor-pointer shrink-0"
+            >
+              <Unlock className="w-3.5 h-3.5" />
+              <span>Abrir Caixa</span>
+            </button>
+          </div>
+        )}
+
         {/* Top Control Bar: Barcode Gun Simulation & Search */}
         <div className="bg-[#141414] p-3 rounded-xl border border-[#262626] shadow-sm space-y-2 mb-3">
           <div className="flex flex-col sm:flex-row gap-2">
@@ -203,9 +235,9 @@ export const POSModule: React.FC = () => {
           </div>
 
           {/* Quick Barcode Sample Pills for instant test */}
-          <div className="flex items-center gap-1.5 overflow-x-auto text-[11px] text-neutral-400 pt-1">
+          <div className="flex items-center gap-1.5 custom-horizontal-scrollbar py-1 text-[11px] text-neutral-400">
             <span className="font-semibold text-neutral-400 shrink-0 uppercase tracking-widest text-[10px]">Scans Rápidos:</span>
-            {products.slice(0, 5).map((p) => (
+            {products.slice(0, 8).map((p) => (
               <button
                 key={p.id}
                 type="button"
@@ -220,7 +252,7 @@ export const POSModule: React.FC = () => {
 
         {/* Category Filter Pills & View Mode Toggle */}
         <div className="flex items-center justify-between gap-2 pb-2 shrink-0">
-          <div className="flex items-center gap-1.5 overflow-x-auto min-w-0 flex-1">
+          <div className="flex items-center gap-1.5 custom-horizontal-scrollbar py-1 min-w-0 flex-1">
             <button
               onClick={() => setSelectedCategory('all')}
               className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap cursor-pointer ${
@@ -529,35 +561,207 @@ export const POSModule: React.FC = () => {
           </div>
         </div>
 
-        {/* Customer Selector Pill */}
-        <div className="px-3.5 py-2 bg-[#141414] border-b border-[#262626] flex items-center justify-between">
-          <div className="flex items-center space-x-2 text-xs truncate">
-            <User className="w-4 h-4 text-[#c5a47e] shrink-0" />
-            <div className="truncate">
-              {selectedCustomer ? (
-                <div>
-                  <span className="font-bold text-[#e5e5e5] text-xs block truncate">
-                    {selectedCustomer.name}
-                  </span>
-                  <span className="text-[10px] text-neutral-400 font-mono">
-                    NIF: {selectedCustomer.taxNumber} • <span className="text-[#c5a47e]">{selectedCustomer.loyaltyPoints} pts ({selectedCustomer.loyaltyTier})</span>
-                  </span>
+        {/* Customer Selector / Direct Name Input */}
+        <div className="px-3.5 py-2.5 bg-[#141414] border-b border-[#262626] relative">
+          {isTypingCustomer ? (
+            /* Direct typing inline mode */
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-bold text-[#c5a47e] flex items-center space-x-1.5">
+                  <User className="w-3.5 h-3.5" />
+                  <span>Digitar Dados do Cliente</span>
+                </span>
+                <div className="flex items-center space-x-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsTypingCustomer(false);
+                      setShowCustomerDropdown(false);
+                    }}
+                    className="p-1 text-neutral-400 hover:text-white rounded-sm hover:bg-[#222]"
+                    title="Fechar edição direta"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
                 </div>
-              ) : (
-                <div>
-                  <span className="font-medium text-neutral-300 text-xs block">Consumidor Final</span>
-                  <span className="text-[10px] text-neutral-400 font-mono">NIF 999999990</span>
-                </div>
-              )}
-            </div>
-          </div>
+              </div>
 
-          <button
-            onClick={() => setShowCustomerPicker(true)}
-            className="px-2.5 py-1 bg-[#1a1a1a] hover:bg-[#c5a47e]/20 text-[#c5a47e] border border-[#262626] rounded-md text-[11px] font-semibold shrink-0 transition-colors"
-          >
-            {selectedCustomer ? 'Alterar' : '+ Cliente'}
-          </button>
+              <div className="relative">
+                <input
+                  type="text"
+                  autoFocus
+                  placeholder="Nome do cliente (ex: João Silva)..."
+                  value={directCustomerName}
+                  onChange={(e) => {
+                    setDirectCustomerName(e.target.value);
+                    setShowCustomerDropdown(true);
+                  }}
+                  onFocus={() => setShowCustomerDropdown(true)}
+                  className="w-full px-2.5 py-1.5 bg-[#0d0d0d] border border-[#2e2e2e] rounded-md text-xs text-white placeholder-neutral-500 focus:outline-hidden focus:border-[#c5a47e]"
+                />
+
+                {/* Auto-suggest dropdown from existing customers */}
+                {showCustomerDropdown && directCustomerName.trim().length > 0 && (
+                  <div className="absolute left-0 right-0 top-full mt-1 bg-[#181818] border border-[#333] rounded-lg shadow-xl z-30 max-h-40 overflow-y-auto divide-y divide-[#262626]">
+                    {customers
+                      .filter((c) =>
+                        (c.name || '').toLowerCase().includes(directCustomerName.toLowerCase()) ||
+                        (c.taxNumber || '').includes(directCustomerName)
+                      )
+                      .slice(0, 5)
+                      .map((c) => (
+                        <div
+                          key={c.id}
+                          onMouseDown={() => {
+                            setSelectedCustomer(c);
+                            setDirectCustomerName(c.name);
+                            setDirectCustomerNif(c.taxNumber);
+                            setIsTypingCustomer(false);
+                            setShowCustomerDropdown(false);
+                            notify(`Cliente "${c.name}" associado!`, 'success');
+                          }}
+                          className="p-2 hover:bg-[#252525] cursor-pointer text-xs flex items-center justify-between"
+                        >
+                          <div>
+                            <span className="font-semibold text-white block">{c.name}</span>
+                            <span className="text-[10px] text-neutral-400 font-mono">NIF: {c.taxNumber}</span>
+                          </div>
+                          <span className="text-[10px] text-[#c5a47e] font-mono">{c.loyaltyPoints} pts</span>
+                        </div>
+                      ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="flex gap-1.5">
+                <input
+                  type="text"
+                  placeholder="NIF / NUIT (opcional, padrão 999999990)"
+                  value={directCustomerNif}
+                  onChange={(e) => setDirectCustomerNif(e.target.value)}
+                  className="flex-1 px-2.5 py-1.5 bg-[#0d0d0d] border border-[#2e2e2e] rounded-md text-xs font-mono text-white placeholder-neutral-500 focus:outline-hidden focus:border-[#c5a47e]"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    const trimmedName = directCustomerName.trim();
+                    const trimmedNif = directCustomerNif.trim() || '999999990';
+                    if (!trimmedName) {
+                      notify('Por favor digite o nome do cliente', 'warning');
+                      return;
+                    }
+
+                    // Check if exists or create a temporary/durable customer
+                    const existing = customers.find(
+                      (c) => c.taxNumber === trimmedNif || c.name.toLowerCase() === trimmedName.toLowerCase()
+                    );
+
+                    if (existing) {
+                      setSelectedCustomer(existing);
+                    } else {
+                      const newCust: Customer = {
+                        id: `cust-pos-${Date.now()}`,
+                        companyId: currentCompany.id,
+                        name: trimmedName,
+                        taxNumber: trimmedNif,
+                        email: `${trimmedName.toLowerCase().replace(/\s+/g, '.')}@email.com`,
+                        phone: '',
+                        address: 'Balcão de Venda',
+                        city: 'Lisboa',
+                        country: 'PT',
+                        postalCode: '1000-001',
+                        loyaltyPoints: 0,
+                        loyaltyTier: 'bronze',
+                        totalSpent: 0,
+                        ordersCount: 0,
+                        creditLimit: 0,
+                        currentCredit: 0,
+                        createdAt: new Date().toISOString().split('T')[0],
+                      };
+                      addCustomer(newCust);
+                      setSelectedCustomer(newCust);
+                    }
+
+                    setIsTypingCustomer(false);
+                    setShowCustomerDropdown(false);
+                    notify(`Cliente "${trimmedName}" pronto para a fatura!`, 'success');
+                  }}
+                  className="px-3 py-1.5 bg-[#c5a47e] text-black font-bold rounded-md text-xs hover:bg-[#b5946e] cursor-pointer flex items-center space-x-1"
+                >
+                  <Check className="w-3.5 h-3.5" />
+                  <span>Aplicar</span>
+                </button>
+              </div>
+            </div>
+          ) : (
+            /* Standard Customer Pill with Instant Type Button */
+            <div className="flex items-center justify-between">
+              <div className="flex items-center space-x-2 text-xs truncate">
+                <User className="w-4 h-4 text-[#c5a47e] shrink-0" />
+                <div className="truncate">
+                  {selectedCustomer ? (
+                    <div>
+                      <span className="font-bold text-[#e5e5e5] text-xs block truncate">
+                        {selectedCustomer.name}
+                      </span>
+                      <span className="text-[10px] text-neutral-400 font-mono">
+                        NIF: {selectedCustomer.taxNumber} •{' '}
+                        <span className="text-[#c5a47e]">
+                          {selectedCustomer.loyaltyPoints || 0} pts ({selectedCustomer.loyaltyTier || 'Bronze'})
+                        </span>
+                      </span>
+                    </div>
+                  ) : (
+                    <div>
+                      <span className="font-medium text-neutral-300 text-xs block">Consumidor Final</span>
+                      <span className="text-[10px] text-neutral-400 font-mono">NIF 999999990</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex items-center space-x-1 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDirectCustomerName(selectedCustomer ? selectedCustomer.name : '');
+                    setDirectCustomerNif(selectedCustomer ? selectedCustomer.taxNumber : '');
+                    setIsTypingCustomer(true);
+                  }}
+                  className="px-2 py-1 bg-[#1a1a1a] hover:bg-[#c5a47e]/20 text-[#c5a47e] border border-[#262626] rounded-md text-[11px] font-semibold flex items-center space-x-1 transition-colors cursor-pointer"
+                  title="Digitar nome do cliente diretamente"
+                >
+                  <Edit2 className="w-3 h-3" />
+                  <span>{selectedCustomer ? 'Editar Nome' : 'Digitar Nome'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setShowCustomerPicker(true)}
+                  className="p-1 bg-[#1a1a1a] hover:bg-[#262626] text-neutral-300 border border-[#262626] rounded-md text-[11px] transition-colors cursor-pointer"
+                  title="Pesquisar na Lista de Clientes ou Registar"
+                >
+                  <Search className="w-3.5 h-3.5" />
+                </button>
+
+                {selectedCustomer && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedCustomer(null);
+                      setDirectCustomerName('');
+                      setDirectCustomerNif('');
+                      notify('Consumidor Final reposto!', 'info');
+                    }}
+                    className="p-1 bg-[#1a1a1a] hover:bg-rose-500/20 text-neutral-400 hover:text-rose-400 border border-[#262626] rounded-md transition-colors"
+                    title="Remover cliente e repor Consumidor Final"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Cart Items List */}

@@ -20,6 +20,7 @@ import {
   ChevronLeft,
   ChevronRight,
   ArrowLeftRight,
+  Database,
 } from 'lucide-react';
 
 export const Sidebar: React.FC = () => {
@@ -100,7 +101,7 @@ export const Sidebar: React.FC = () => {
       id: 'stock',
       label: 'Stock & Inventário',
       icon: Boxes,
-      roles: ['gerente', 'comprador', 'admin'],
+      roles: ['gerente', 'comprador', 'admin', 'caixa', 'financeiro', 'rh', 'operador'],
     },
     {
       id: 'finance',
@@ -134,6 +135,15 @@ export const Sidebar: React.FC = () => {
       shortBadge: `${users.length}`,
       badgeColor: 'bg-[#c5a47e]/20 text-[#c5a47e]',
       roles: ['admin', 'gerente', 'rh', 'caixa', 'financeiro', 'comprador'],
+    },
+    {
+      id: 'supabase',
+      label: 'Supabase (DB & CRUD)',
+      icon: Database,
+      badge: 'Cloud DB',
+      shortBadge: 'DB',
+      badgeColor: 'bg-emerald-500/20 text-emerald-400',
+      roles: ['admin', 'gerente', 'financeiro', 'rh', 'caixa', 'comprador'],
     },
     {
       id: 'events',
