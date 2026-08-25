@@ -63,6 +63,7 @@ export const Navbar: React.FC<{ onOpenShiftModal: () => void }> = ({ onOpenShift
     logout,
     isSidebarCollapsed,
     toggleSidebar,
+    supabaseRealtimeStatus,
   } = useApp();
 
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -262,6 +263,32 @@ export const Navbar: React.FC<{ onOpenShiftModal: () => void }> = ({ onOpenShift
           >
             <Database className="w-3.5 h-3.5 text-[#c5a47e]" />
             <span>Offline & IDB</span>
+          </button>
+
+          {/* Supabase Realtime Live Status Button */}
+          <button
+            onClick={() => setActiveNavTab('supabase')}
+            title={`Supabase Realtime: ${supabaseRealtimeStatus === 'connected' ? '🟢 Conectado em direto (escutando INSERT/UPDATE/DELETE)' : supabaseRealtimeStatus === 'connecting' ? '🟡 A conectar...' : '🔴 Desconectado'}. Clique para abrir o Painel Supabase.`}
+            className={`flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-all cursor-pointer shrink-0 whitespace-nowrap shadow-xs ${
+              supabaseRealtimeStatus === 'connected'
+                ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/20'
+                : supabaseRealtimeStatus === 'connecting'
+                ? 'bg-amber-500/10 text-amber-400 border-amber-500/30 hover:bg-amber-500/20 animate-pulse'
+                : 'bg-rose-500/10 text-rose-400 border-rose-500/30 hover:bg-rose-500/20'
+            }`}
+          >
+            <span
+              className={`w-2 h-2 rounded-full ${
+                supabaseRealtimeStatus === 'connected'
+                  ? 'bg-emerald-400 animate-pulse'
+                  : supabaseRealtimeStatus === 'connecting'
+                  ? 'bg-amber-400 animate-ping'
+                  : 'bg-rose-400'
+              }`}
+            />
+            <span className="font-medium">
+              Supabase Realtime
+            </span>
           </button>
 
           <button

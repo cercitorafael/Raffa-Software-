@@ -90,12 +90,30 @@ import { CurrencyDefinition } from '../types';
 import { sound } from '../utils/audio';
 import { offlineDB, DBStats } from '../utils/indexedDB';
 import { registerServiceWorker, requestBackgroundSync } from '../serviceWorkerRegistration';
+import {
+  startSupabaseRealtimeSync,
+  stopSupabaseRealtimeSync,
+  pushRecordToSupabase,
+  pullAllFromSupabase,
+  pushAllToSupabase,
+  getSyncLogs,
+  clearSyncLogs,
+  SupabaseSyncLog,
+} from '../lib/supabaseSync';
 
 export interface CartItem extends SaleItem {
   image?: string;
 }
 
 export interface AppContextType {
+  // Supabase Real-time Sync & Cloud Storage
+  supabaseRealtimeStatus: 'connected' | 'connecting' | 'disconnected' | 'error';
+  supabaseSyncLogs: SupabaseSyncLog[];
+  pullFromSupabase: () => Promise<any>;
+  pushToSupabase: () => Promise<any>;
+  reconnectSupabaseRealtime: () => void;
+  clearSupabaseLogs: () => void;
+
   // Tenancy & RBAC
   companies: Company[];
   currentCompany: Company;
@@ -538,6 +556,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     loadFromStorage('events', initialEvents)
   );
 
+  // Supabase Real-time Cloud Synchronization
+  const [supabaseRealtimeStatus, setSupabaseRealtimeStatus] = useState<'connected' | 'connecting' | 'disconnected' | 'error'>('connecting');
+  const [supabaseSyncLogs, setSupabaseSyncLogs] = useState<SupabaseSyncLog[]>(() => getSyncLogs());
+
   // Products & Stock
   const [categories, setCategories] = useState<ProductCategory[]>(() =>
     loadFromStorage('categories', initialCategories)
@@ -893,7 +915,261 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     syncQueue,
   ]);
 
-  // ==================== EVENT BUS CRUD ====================
+  // ==================== SUPABASE REAL-TIME SYNCHRONIZATION ENGINE ====================
+  const reconnectSupabaseRealtime = useCallback(() => {
+    startSupabaseRealtimeSync({
+      onStatusChange: (status) => {
+        setSupabaseRealtimeStatus(status);
+      },
+      onLogAdded: (log) => {
+        setSupabaseSyncLogs((prev) => [log, ...prev].slice(0, 150));
+      },
+      onProductChange: (event, item, rawOld) => {
+        if (event === 'DELETE') {
+          const idToDelete = item.id || rawOld?.id;
+          if (idToDelete) {
+            setProducts((prev) => prev.filter((p) => String(p.id) !== String(idToDelete)));
+            setStock((prev) => prev.filter((s) => String(s.productId) !== String(idToDelete)));
+            notify(`🗑️ Artigo removido no Supabase e eliminado do sistema (${rawOld?.name || idToDelete})`, 'info');
+          }
+        } else if (item.id) {
+          setProducts((prev) => {
+            const exists = prev.some((p) => String(p.id) === String(item.id));
+            if (exists) {
+              return prev.map((p) => (String(p.id) === String(item.id) ? ({ ...p, ...item } as Product) : p));
+            }
+            return [item as Product, ...prev];
+          });
+        }
+      },
+      onCustomerChange: (event, item, rawOld) => {
+        if (event === 'DELETE') {
+          const idToDelete = item.id || rawOld?.id;
+          if (idToDelete) {
+            setCustomers((prev) => prev.filter((c) => String(c.id) !== String(idToDelete)));
+            notify(`🗑️ Cliente removido no Supabase e eliminado do sistema (${rawOld?.name || idToDelete})`, 'info');
+          }
+        } else if (item.id) {
+          setCustomers((prev) => {
+            const exists = prev.some((c) => String(c.id) === String(item.id));
+            if (exists) {
+              return prev.map((c) => (String(c.id) === String(item.id) ? ({ ...c, ...item } as Customer) : c));
+            }
+            return [item as Customer, ...prev];
+          });
+        }
+      },
+      onSupplierChange: (event, item, rawOld) => {
+        if (event === 'DELETE') {
+          const idToDelete = item.id || rawOld?.id;
+          if (idToDelete) {
+            setSuppliers((prev) => prev.filter((s) => String(s.id) !== String(idToDelete)));
+            notify(`🗑️ Fornecedor removido no Supabase e eliminado (${rawOld?.name || idToDelete})`, 'info');
+          }
+        } else if (item.id) {
+          setSuppliers((prev) => {
+            const exists = prev.some((s) => String(s.id) === String(item.id));
+            if (exists) {
+              return prev.map((s) => (String(s.id) === String(item.id) ? ({ ...s, ...item } as Supplier) : s));
+            }
+            return [item as Supplier, ...prev];
+          });
+        }
+      },
+      onCategoryChange: (event, item, rawOld) => {
+        if (event === 'DELETE') {
+          const idToDelete = item.id || rawOld?.id;
+          if (idToDelete) {
+            setCategories((prev) => prev.filter((c) => String(c.id) !== String(idToDelete)));
+          }
+        } else if (item.id) {
+          setCategories((prev) => {
+            const exists = prev.some((c) => String(c.id) === String(item.id));
+            if (exists) {
+              return prev.map((c) => (String(c.id) === String(item.id) ? ({ ...c, ...item } as ProductCategory) : c));
+            }
+            return [...prev, item as ProductCategory];
+          });
+        }
+      },
+      onSaleChange: (event, item, rawOld) => {
+        if (event === 'DELETE') {
+          const idToDelete = item.id || rawOld?.id;
+          if (idToDelete) {
+            setSalesHistory((prev) => prev.filter((s) => String(s.id) !== String(idToDelete)));
+            notify(`🗑️ Documento/Venda eliminada no Supabase (${rawOld?.invoice_number || idToDelete})`, 'info');
+          }
+        } else if (item.id) {
+          setSalesHistory((prev) => {
+            const exists = prev.some((s) => String(s.id) === String(item.id));
+            if (exists) {
+              return prev.map((s) => (String(s.id) === String(item.id) ? ({ ...s, ...item } as Sale) : s));
+            }
+            return [item as Sale, ...prev];
+          });
+        }
+      },
+      onUserChange: (event, item, rawOld) => {
+        if (event === 'DELETE') {
+          const idToDelete = item.id || rawOld?.id;
+          if (idToDelete) {
+            setUsers((prev) => prev.filter((u) => String(u.id) !== String(idToDelete)));
+            notify(`🗑️ Utilizador removido no Supabase (${rawOld?.name || idToDelete})`, 'info');
+          }
+        } else if (item.id) {
+          setUsers((prev) => {
+            const exists = prev.some((u) => String(u.id) === String(item.id));
+            if (exists) {
+              return prev.map((u) => (String(u.id) === String(item.id) ? ({ ...u, ...item } as User) : u));
+            }
+            return [...prev, item as User];
+          });
+        }
+      },
+      onWarehouseChange: (event, item, rawOld) => {
+        if (event === 'DELETE') {
+          const idToDelete = item.id || rawOld?.id;
+          if (idToDelete) {
+            setWarehouses((prev) => prev.filter((w) => String(w.id) !== String(idToDelete)));
+          }
+        } else if (item.id) {
+          setWarehouses((prev) => {
+            const exists = prev.some((w) => String(w.id) === String(item.id));
+            if (exists) {
+              return prev.map((w) => (String(w.id) === String(item.id) ? ({ ...w, ...item } as Warehouse) : w));
+            }
+            return [...prev, item as Warehouse];
+          });
+        }
+      },
+      onStockChange: (event, item, rawOld) => {
+        if (event === 'DELETE') {
+          const idToDelete = item.id || rawOld?.id;
+          if (idToDelete) {
+            setStock((prev) => prev.filter((s) => String(s.id) !== String(idToDelete)));
+          }
+        } else if (item.id) {
+          setStock((prev) => {
+            const exists = prev.some((s) => String(s.id) === String(item.id));
+            if (exists) {
+              return prev.map((s) => (String(s.id) === String(item.id) ? ({ ...s, ...item } as StockItem) : s));
+            }
+            return [...prev, item as StockItem];
+          });
+        }
+      },
+      onAccountPayableChange: (event, item, rawOld) => {
+        if (event === 'DELETE') {
+          const idToDelete = item.id || rawOld?.id;
+          if (idToDelete) {
+            setAccountsPayable((prev) => prev.filter((a) => String(a.id) !== String(idToDelete)));
+          }
+        } else if (item.id) {
+          setAccountsPayable((prev) => {
+            const exists = prev.some((a) => String(a.id) === String(item.id));
+            if (exists) {
+              return prev.map((a) => (String(a.id) === String(item.id) ? ({ ...a, ...item } as AccountPayable) : a));
+            }
+            return [item as AccountPayable, ...prev];
+          });
+        }
+      },
+      onAccountReceivableChange: (event, item, rawOld) => {
+        if (event === 'DELETE') {
+          const idToDelete = item.id || rawOld?.id;
+          if (idToDelete) {
+            setAccountsReceivable((prev) => prev.filter((a) => String(a.id) !== String(idToDelete)));
+          }
+        } else if (item.id) {
+          setAccountsReceivable((prev) => {
+            const exists = prev.some((a) => String(a.id) === String(item.id));
+            if (exists) {
+              return prev.map((a) => (String(a.id) === String(item.id) ? ({ ...a, ...item } as AccountReceivable) : a));
+            }
+            return [item as AccountReceivable, ...prev];
+          });
+        }
+      },
+      onShiftChange: (event, item, rawOld) => {
+        if (event === 'DELETE') {
+          const idToDelete = item.id || rawOld?.id;
+          if (idToDelete) {
+            setShiftsHistory((prev) => prev.filter((s) => String(s.id) !== String(idToDelete)));
+          }
+        } else if (item.id) {
+          setShiftsHistory((prev) => {
+            const exists = prev.some((s) => String(s.id) === String(item.id));
+            if (exists) {
+              return prev.map((s) => (String(s.id) === String(item.id) ? ({ ...s, ...item } as CashShift) : s));
+            }
+            return [item as CashShift, ...prev];
+          });
+        }
+      },
+    });
+  }, []);
+
+  useEffect(() => {
+    reconnectSupabaseRealtime();
+    return () => {
+      stopSupabaseRealtimeSync();
+    };
+  }, [reconnectSupabaseRealtime]);
+
+  const pullFromSupabase = async () => {
+    notify('A sincronizar dados a partir do Supabase...', 'info');
+    const res = await pullAllFromSupabase();
+    if (res.data.products && res.data.products.length > 0) setProducts(res.data.products);
+    if (res.data.customers && res.data.customers.length > 0) setCustomers(res.data.customers);
+    if (res.data.suppliers && res.data.suppliers.length > 0) setSuppliers(res.data.suppliers);
+    if (res.data.categories && res.data.categories.length > 0) setCategories(res.data.categories);
+    if (res.data.sales && res.data.sales.length > 0) setSalesHistory(res.data.sales);
+    if (res.data.users && res.data.users.length > 0) setUsers(res.data.users);
+    if (res.data.warehouses && res.data.warehouses.length > 0) setWarehouses(res.data.warehouses);
+    if (res.data.stock && res.data.stock.length > 0) setStock(res.data.stock);
+    if (res.data.accountsPayable && res.data.accountsPayable.length > 0) setAccountsPayable(res.data.accountsPayable);
+    if (res.data.accountsReceivable && res.data.accountsReceivable.length > 0) setAccountsReceivable(res.data.accountsReceivable);
+    if (res.data.shifts && res.data.shifts.length > 0) setShiftsHistory(res.data.shifts);
+
+    const totalPulled = Object.values(res.counts).reduce((a, b) => a + b, 0);
+    if (totalPulled > 0 || res.errors.length === 0) {
+      notify(`Sincronização concluída: ${totalPulled} registos sincronizados do Supabase.`, 'success');
+      sound.playSuccessChime();
+    } else {
+      notify(`Aviso: ${res.errors[0] || 'Nenhum dado encontrado no Supabase.'}`, 'warning');
+    }
+    return res;
+  };
+
+  const pushToSupabase = async () => {
+    notify('A enviar todos os registos para o Supabase...', 'info');
+    const res = await pushAllToSupabase({
+      products,
+      customers,
+      suppliers,
+      categories,
+      sales: salesHistory,
+      users,
+      warehouses,
+      stock,
+      accountsPayable,
+      accountsReceivable,
+      shifts: shiftsHistory,
+    });
+    const totalSent = Object.values(res.uploaded).reduce((a, b) => a + b, 0);
+    if (res.errors.length === 0) {
+      notify(`Sucesso: ${totalSent} registos exportados e atualizados no Supabase!`, 'success');
+      sound.playSuccessChime();
+    } else {
+      notify(`Enviados ${totalSent} registos. Aviso: ${res.errors[0]}`, 'warning');
+    }
+    return res;
+  };
+
+  const clearSupabaseLogs = () => {
+    clearSyncLogs();
+    setSupabaseSyncLogs([]);
+  };
   const emitEvent = (
     service: SystemEvent['service'],
     eventType: string,
@@ -954,6 +1230,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       createdAt: userData.createdAt || new Date().toISOString().split('T')[0],
     };
     setUsers((prev) => [newUser, ...prev]);
+    pushRecordToSupabase('usuarios', 'insert', newUser);
     emitEvent('POS', 'user.created', {
       userId: id,
       name: newUser.name,
@@ -974,6 +1251,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           if (currentUser.id === id) {
             setCurrentUser(updated);
           }
+          pushRecordToSupabase('usuarios', 'update', updated);
           return updated;
         }
         return u;
@@ -990,6 +1268,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
     const target = users.find((u) => u.id === id);
     setUsers((prev) => prev.filter((u) => u.id !== id));
+    pushRecordToSupabase('usuarios', 'delete', { id });
     emitEvent('POS', 'user.deleted', { userId: id, name: target?.name });
     sound.playSuccessChime();
     notify(`Utilizador "${target?.name || id}" eliminado com sucesso.`, 'success');
@@ -1475,7 +1754,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // ==================== PRODUCTS, WAREHOUSES & STOCK CRUD ====================
   const addCategory = (cat: Omit<ProductCategory, 'id'>) => {
     const id = `cat-${Date.now()}`;
-    setCategories((prev) => [...prev, { ...cat, id }]);
+    const newCat = { ...cat, id };
+    setCategories((prev) => [...prev, newCat]);
+    pushRecordToSupabase('categorias', 'insert', newCat);
     emitEvent('Stock', 'category.created', { categoryId: id, name: cat.name });
     sound.playSuccessChime();
   };
@@ -1484,12 +1765,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setCategories((prev) =>
       prev.map((c) => (c.id === id ? { ...c, ...updates } : c))
     );
+    pushRecordToSupabase('categorias', 'update', { id, ...updates });
     emitEvent('Stock', 'category.updated', { categoryId: id, updates });
     sound.playSuccessChime();
   };
 
   const deleteCategory = (id: string) => {
     setCategories((prev) => prev.filter((c) => c.id !== id));
+    pushRecordToSupabase('categorias', 'delete', { id });
     emitEvent('Stock', 'category.deleted', { categoryId: id });
     sound.playSuccessChime();
     notify('Categoria eliminada com sucesso.', 'success');
@@ -1518,6 +1801,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       },
     ]);
 
+    pushRecordToSupabase('produtos', 'insert', newProduct);
+
     emitEvent('Stock', 'stock.product.created', {
       productId: newId,
       name: newProduct.name,
@@ -1529,7 +1814,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const updateProduct = (id: string, updates: Partial<Product>) => {
     setProducts((prev) =>
-      prev.map((p) => (p.id === id ? { ...p, ...updates } : p))
+      prev.map((p) => {
+        if (p.id === id) {
+          const updated = { ...p, ...updates };
+          pushRecordToSupabase('produtos', 'update', updated);
+          return updated;
+        }
+        return p;
+      })
     );
     emitEvent('Stock', 'stock.product.updated', { productId: id, updates });
     sound.playSuccessChime();
@@ -1540,6 +1832,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setProducts((prev) => prev.filter((p) => p.id !== id));
     setStock((prev) => prev.filter((s) => s.productId !== id));
     setCart((prev) => prev.filter((c) => c.productId !== id));
+    pushRecordToSupabase('produtos', 'delete', { id });
     emitEvent('Stock', 'stock.product.deleted', { productId: id, name: target?.name });
     sound.playSuccessChime();
     notify(`Artigo "${target?.name || id}" eliminado com sucesso.`, 'success');
@@ -1695,13 +1988,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const id = `wh-${Date.now()}`;
     const newWh: Warehouse = { ...wh, id, companyId: wh.companyId || currentCompany.id };
     setWarehouses((prev) => [...prev, newWh]);
+    pushRecordToSupabase('armazens', 'insert', newWh);
     emitEvent('Stock', 'warehouse.created', { warehouseId: id, name: newWh.name });
     sound.playSuccessChime();
   };
 
   const updateWarehouse = (id: string, updates: Partial<Warehouse>) => {
     setWarehouses((prev) =>
-      prev.map((w) => (w.id === id ? { ...w, ...updates } : w))
+      prev.map((w) => {
+        if (w.id === id) {
+          const updated = { ...w, ...updates };
+          pushRecordToSupabase('armazens', 'update', updated);
+          return updated;
+        }
+        return w;
+      })
     );
     emitEvent('Stock', 'warehouse.updated', { warehouseId: id, updates });
     sound.playSuccessChime();
@@ -1715,6 +2016,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const target = warehouses.find((w) => w.id === id);
     setWarehouses((prev) => prev.filter((w) => w.id !== id));
     setStock((prev) => prev.filter((s) => s.warehouseId !== id));
+    pushRecordToSupabase('armazens', 'delete', { id });
     emitEvent('Stock', 'warehouse.deleted', { warehouseId: id });
     sound.playSuccessChime();
     notify(`Armazém "${target?.name || id}" eliminado com sucesso.`, 'success');
@@ -2404,6 +2706,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     // 4. Save to Sales History
     setSalesHistory((prev) => [sale, ...prev]);
     setLastCompletedSale(sale);
+    pushRecordToSupabase('vendas', 'insert', sale);
 
     // 5. Offline handling
     if (!isOnline) {
@@ -2471,6 +2774,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     );
 
     setSalesHistory((prev) => [ncSale, ...prev]);
+    pushRecordToSupabase('vendas', 'insert', ncSale);
     emitEvent('Financeiro', 'finance.invoice.annulled', {
       originalInvoice: inv.invoiceNumber,
       creditNote: ncNumber,
@@ -2485,6 +2789,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const id = `ap-${Date.now()}`;
     const newAp: AccountPayable = { ...ap, id, paidAmount: 0, status: 'pendente' };
     setAccountsPayable((prev) => [newAp, ...prev]);
+    pushRecordToSupabase('contas_pagar', 'insert', newAp);
     emitEvent('Financeiro', 'finance.payable.created', {
       payableId: id,
       supplier: newAp.supplierName,
@@ -2495,7 +2800,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const updateAccountPayable = (id: string, updates: Partial<AccountPayable>) => {
     setAccountsPayable((prev) =>
-      prev.map((p) => (p.id === id ? { ...p, ...updates } : p))
+      prev.map((p) => {
+        if (p.id === id) {
+          const updated = { ...p, ...updates };
+          pushRecordToSupabase('contas_pagar', 'update', updated);
+          return updated;
+        }
+        return p;
+      })
     );
     emitEvent('Financeiro', 'finance.payable.updated', { payableId: id, updates });
     sound.playSuccessChime();
@@ -2503,6 +2815,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const deleteAccountPayable = (id: string) => {
     setAccountsPayable((prev) => prev.filter((p) => p.id !== id));
+    pushRecordToSupabase('contas_pagar', 'delete', { id });
     emitEvent('Financeiro', 'finance.payable.deleted', { payableId: id });
     sound.playSuccessChime();
   };
@@ -2511,13 +2824,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setAccountsPayable((prev) =>
       prev.map((ap) => {
         if (ap.id === id) {
-          return {
+          const updated: AccountPayable = {
             ...ap,
             status: 'pago',
             paidAmount: ap.amount,
             paymentDate: new Date().toISOString().split('T')[0],
             paymentMethod: method as any,
           };
+          pushRecordToSupabase('contas_pagar', 'update', updated);
+          return updated;
         }
         return ap;
       })
@@ -2530,6 +2845,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const id = `ar-${Date.now()}`;
     const newAr: AccountReceivable = { ...ar, id, receivedAmount: 0, status: 'pendente' };
     setAccountsReceivable((prev) => [newAr, ...prev]);
+    pushRecordToSupabase('contas_receber', 'insert', newAr);
     emitEvent('Financeiro', 'finance.receivable.created', {
       receivableId: id,
       customer: newAr.customerName,
@@ -2540,7 +2856,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const updateAccountReceivable = (id: string, updates: Partial<AccountReceivable>) => {
     setAccountsReceivable((prev) =>
-      prev.map((r) => (r.id === id ? { ...r, ...updates } : r))
+      prev.map((r) => {
+        if (r.id === id) {
+          const updated = { ...r, ...updates };
+          pushRecordToSupabase('contas_receber', 'update', updated);
+          return updated;
+        }
+        return r;
+      })
     );
     emitEvent('Financeiro', 'finance.receivable.updated', { receivableId: id, updates });
     sound.playSuccessChime();
@@ -2548,6 +2871,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const deleteAccountReceivable = (id: string) => {
     setAccountsReceivable((prev) => prev.filter((r) => r.id !== id));
+    pushRecordToSupabase('contas_receber', 'delete', { id });
     emitEvent('Financeiro', 'finance.receivable.deleted', { receivableId: id });
     sound.playSuccessChime();
   };
@@ -2650,13 +2974,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const id = `sup-${Date.now()}`;
     const newSup: Supplier = { ...sup, id, code, companyId: sup.companyId || currentCompany.id };
     setSuppliers((prev) => [...prev, newSup]);
+    pushRecordToSupabase('fornecedores', 'insert', newSup);
     emitEvent('Compras', 'supplier.created', { supplierId: id, name: newSup.name });
     sound.playSuccessChime();
   };
 
   const updateSupplier = (id: string, updates: Partial<Supplier>) => {
     setSuppliers((prev) =>
-      prev.map((s) => (s.id === id ? { ...s, ...updates } : s))
+      prev.map((s) => {
+        if (s.id === id) {
+          const updated = { ...s, ...updates };
+          pushRecordToSupabase('fornecedores', 'update', updated);
+          return updated;
+        }
+        return s;
+      })
     );
     emitEvent('Compras', 'supplier.updated', { supplierId: id, updates });
     sound.playSuccessChime();
@@ -2664,6 +2996,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const deleteSupplier = (id: string) => {
     setSuppliers((prev) => prev.filter((s) => s.id !== id));
+    pushRecordToSupabase('fornecedores', 'delete', { id });
     emitEvent('Compras', 'supplier.deleted', { supplierId: id });
     sound.playSuccessChime();
   };
@@ -3100,13 +3433,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       createdAt: new Date().toISOString().split('T')[0],
     };
     setCustomers((prev) => [newCust, ...prev]);
+    pushRecordToSupabase('clientes', 'insert', newCust);
     emitEvent('CRM', 'crm.customer.created', { customerId: id, name: newCust.name });
     sound.playSuccessChime();
   };
 
   const updateCustomer = (id: string, updates: Partial<Customer>) => {
     setCustomers((prev) =>
-      prev.map((c) => (c.id === id ? { ...c, ...updates } : c))
+      prev.map((c) => {
+        if (c.id === id) {
+          const updated = { ...c, ...updates };
+          pushRecordToSupabase('clientes', 'update', updated);
+          return updated;
+        }
+        return c;
+      })
     );
     emitEvent('CRM', 'crm.customer.updated', { customerId: id, updates });
     sound.playSuccessChime();
@@ -3114,6 +3455,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const deleteCustomer = (id: string) => {
     setCustomers((prev) => prev.filter((c) => c.id !== id));
+    pushRecordToSupabase('clientes', 'delete', { id });
     emitEvent('CRM', 'crm.customer.deleted', { customerId: id });
     sound.playSuccessChime();
   };
@@ -3321,6 +3663,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   return (
     <AppContext.Provider
       value={{
+        // Supabase Real-time Cloud Synchronization
+        supabaseRealtimeStatus,
+        supabaseSyncLogs,
+        pullFromSupabase,
+        pushToSupabase,
+        reconnectSupabaseRealtime,
+        clearSupabaseLogs,
+
+        // Tenancy & RBAC
         companies,
         currentCompany,
         setCurrentCompany,

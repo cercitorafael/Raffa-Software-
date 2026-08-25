@@ -308,34 +308,283 @@ export async function testarConexaoSupabase(): Promise<{
 }
 
 /**
- * SCRIPT SQL PARA CRIAR A TABELA 'usuarios' NO SQL EDITOR DO SUPABASE
+ * SCRIPT SQL COMPLETO PARA CRIAR TODAS AS TABELAS DO SISTEMA NO SQL EDITOR DO SUPABASE
+ * (Inclui Realtime, RLS e suporte a REPLICA IDENTITY FULL para que exclusões sejam capturadas em tempo real)
  */
-export const SUPABASE_SQL_SCHEMA = `-- Copie e cole no SQL Editor do seu projeto Supabase:
+export const SUPABASE_SQL_SCHEMA = `-- ==============================================================================
+-- SCHEMA COMPLETO POS & ERP ENTERPRISE PARA SUPABASE
+-- Execute este script no SQL Editor do seu projeto Supabase (supabase.com/dashboard)
+-- ==============================================================================
+
+-- 1. TABELA DE UTILIZADORES
 CREATE TABLE IF NOT EXISTS public.usuarios (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id TEXT PRIMARY KEY,
+    company_id TEXT DEFAULT 'comp-1',
+    store_id TEXT DEFAULT 'store-1',
     nome TEXT NOT NULL,
-    email TEXT UNIQUE NOT NULL,
+    name TEXT,
+    email TEXT,
+    cargo TEXT DEFAULT 'caixa',
+    role TEXT DEFAULT 'caixa',
+    pin TEXT DEFAULT '1234',
     telefone TEXT,
-    cargo TEXT DEFAULT 'Operador',
+    phone TEXT,
     ativo BOOLEAN DEFAULT true,
-    nif TEXT,
+    is_active BOOLEAN DEFAULT true,
     avatar_url TEXT,
+    permissions JSONB,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
--- Habilitar RLS (Row Level Security) e permitir acesso público/anon para testes
-ALTER TABLE public.usuarios ENABLE ROW LEVEL SECURITY;
+-- 2. TABELA DE CATEGORIAS
+CREATE TABLE IF NOT EXISTS public.categorias (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    icon TEXT,
+    color TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
 
-CREATE POLICY "Permitir leitura para todos" 
-ON public.usuarios FOR SELECT USING (true);
+-- 3. TABELA DE PRODUTOS / ARTIGOS
+CREATE TABLE IF NOT EXISTS public.produtos (
+    id TEXT PRIMARY KEY,
+    company_id TEXT DEFAULT 'comp-1',
+    sku TEXT,
+    barcode TEXT,
+    name TEXT NOT NULL,
+    category TEXT DEFAULT 'Geral',
+    price NUMERIC DEFAULT 0,
+    cost_price NUMERIC DEFAULT 0,
+    tax_rate NUMERIC DEFAULT 16,
+    unit TEXT DEFAULT 'un',
+    min_stock NUMERIC DEFAULT 0,
+    max_stock NUMERIC DEFAULT 0,
+    image_url TEXT,
+    has_batch_control BOOLEAN DEFAULT false,
+    supplier_id TEXT,
+    description TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
 
-CREATE POLICY "Permitir insercao para todos" 
-ON public.usuarios FOR INSERT WITH CHECK (true);
+-- 4. TABELA DE CLIENTES
+CREATE TABLE IF NOT EXISTS public.clientes (
+    id TEXT PRIMARY KEY,
+    company_id TEXT DEFAULT 'comp-1',
+    name TEXT NOT NULL,
+    tax_number TEXT,
+    email TEXT,
+    phone TEXT,
+    address TEXT,
+    city TEXT,
+    postal_code TEXT,
+    loyalty_points NUMERIC DEFAULT 0,
+    loyalty_tier TEXT DEFAULT 'Bronze',
+    total_spent NUMERIC DEFAULT 0,
+    credit_limit NUMERIC DEFAULT 0,
+    current_credit NUMERIC DEFAULT 0,
+    notes TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
 
-CREATE POLICY "Permitir atualizacao para todos" 
-ON public.usuarios FOR UPDATE USING (true);
+-- 5. TABELA DE FORNECEDORES
+CREATE TABLE IF NOT EXISTS public.fornecedores (
+    id TEXT PRIMARY KEY,
+    company_id TEXT DEFAULT 'comp-1',
+    code TEXT,
+    name TEXT NOT NULL,
+    trade_name TEXT,
+    tax_number TEXT,
+    email TEXT,
+    phone TEXT,
+    address TEXT,
+    payment_terms TEXT DEFAULT 'Pronto Pagamento',
+    iban TEXT,
+    rating NUMERIC DEFAULT 5,
+    categories JSONB DEFAULT '[]'::jsonb,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
 
-CREATE POLICY "Permitir delecao para todos" 
-ON public.usuarios FOR DELETE USING (true);
+-- 6. TABELA DE ARMAZÉNS
+CREATE TABLE IF NOT EXISTS public.armazens (
+    id TEXT PRIMARY KEY,
+    company_id TEXT DEFAULT 'comp-1',
+    store_id TEXT,
+    name TEXT NOT NULL,
+    code TEXT,
+    location TEXT,
+    is_default BOOLEAN DEFAULT false,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+-- 7. TABELA DE STOCK / INVENTÁRIO
+CREATE TABLE IF NOT EXISTS public.stock (
+    id TEXT PRIMARY KEY,
+    product_id TEXT NOT NULL,
+    warehouse_id TEXT NOT NULL,
+    quantity NUMERIC DEFAULT 0,
+    reserved NUMERIC DEFAULT 0,
+    avg_cost NUMERIC DEFAULT 0,
+    batch_number TEXT,
+    expiry_date TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+-- 8. TABELA DE VENDAS & FATURAÇÃO
+CREATE TABLE IF NOT EXISTS public.vendas (
+    id TEXT PRIMARY KEY,
+    company_id TEXT DEFAULT 'comp-1',
+    store_id TEXT DEFAULT 'store-1',
+    terminal_id TEXT DEFAULT 'term-1',
+    invoice_number TEXT NOT NULL,
+    invoice_type TEXT DEFAULT 'FS',
+    date TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
+    customer_id TEXT,
+    customer_name TEXT,
+    customer_tax_number TEXT,
+    items JSONB DEFAULT '[]'::jsonb,
+    subtotal NUMERIC DEFAULT 0,
+    discount_total NUMERIC DEFAULT 0,
+    tax_total NUMERIC DEFAULT 0,
+    total NUMERIC DEFAULT 0,
+    payments JSONB DEFAULT '[]'::jsonb,
+    change_amount NUMERIC DEFAULT 0,
+    operator_id TEXT,
+    operator_name TEXT,
+    shift_id TEXT,
+    fiscal_hash TEXT,
+    previous_hash TEXT,
+    atcud TEXT,
+    notes TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+-- 9. TABELA DE CONTAS A PAGAR
+CREATE TABLE IF NOT EXISTS public.contas_pagar (
+    id TEXT PRIMARY KEY,
+    company_id TEXT DEFAULT 'comp-1',
+    supplier_id TEXT,
+    supplier_name TEXT,
+    document_number TEXT,
+    date TEXT,
+    due_date TEXT,
+    amount NUMERIC DEFAULT 0,
+    paid_amount NUMERIC DEFAULT 0,
+    status TEXT DEFAULT 'pendente',
+    payment_date TEXT,
+    notes TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+-- 10. TABELA DE CONTAS A RECEBER
+CREATE TABLE IF NOT EXISTS public.contas_receber (
+    id TEXT PRIMARY KEY,
+    company_id TEXT DEFAULT 'comp-1',
+    customer_id TEXT,
+    customer_name TEXT,
+    document_number TEXT,
+    date TEXT,
+    due_date TEXT,
+    amount NUMERIC DEFAULT 0,
+    received_amount NUMERIC DEFAULT 0,
+    status TEXT DEFAULT 'pendente',
+    receipt_date TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+-- 11. TABELA DE TURNOS DE CAIXA
+CREATE TABLE IF NOT EXISTS public.turnos_caixa (
+    id TEXT PRIMARY KEY,
+    company_id TEXT DEFAULT 'comp-1',
+    store_id TEXT DEFAULT 'store-1',
+    terminal_id TEXT DEFAULT 'term-1',
+    operator_id TEXT,
+    operator_name TEXT,
+    opened_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
+    closed_at TIMESTAMP WITH TIME ZONE,
+    status TEXT DEFAULT 'aberto',
+    initial_cash NUMERIC DEFAULT 0,
+    final_cash_reported NUMERIC,
+    final_cash_system NUMERIC,
+    cash_difference NUMERIC DEFAULT 0,
+    total_sales NUMERIC DEFAULT 0,
+    total_cash NUMERIC DEFAULT 0,
+    total_cards NUMERIC DEFAULT 0,
+    total_mbway NUMERIC DEFAULT 0,
+    total_transfers NUMERIC DEFAULT 0,
+    total_vouchers NUMERIC DEFAULT 0,
+    sangria_total NUMERIC DEFAULT 0,
+    suprimento_total NUMERIC DEFAULT 0,
+    movements JSONB DEFAULT '[]'::jsonb,
+    z_report_number TEXT,
+    notes TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+-- ==============================================================================
+-- REPLICA IDENTITY FULL (Essencial para receber dados completos em eventos DELETE no Realtime)
+-- ==============================================================================
+ALTER TABLE public.usuarios REPLICA IDENTITY FULL;
+ALTER TABLE public.categorias REPLICA IDENTITY FULL;
+ALTER TABLE public.produtos REPLICA IDENTITY FULL;
+ALTER TABLE public.clientes REPLICA IDENTITY FULL;
+ALTER TABLE public.fornecedores REPLICA IDENTITY FULL;
+ALTER TABLE public.armazens REPLICA IDENTITY FULL;
+ALTER TABLE public.stock REPLICA IDENTITY FULL;
+ALTER TABLE public.vendas REPLICA IDENTITY FULL;
+ALTER TABLE public.contas_pagar REPLICA IDENTITY FULL;
+ALTER TABLE public.contas_receber REPLICA IDENTITY FULL;
+ALTER TABLE public.turnos_caixa REPLICA IDENTITY FULL;
+
+-- ==============================================================================
+-- ROW LEVEL SECURITY (RLS) & POLÍTICAS DE ACESSO TOTAL (Anon / Authenticated)
+-- ==============================================================================
+DO $$
+DECLARE
+    t text;
+    tables text[] := ARRAY[
+        'usuarios', 'categorias', 'produtos', 'clientes', 
+        'fornecedores', 'armazens', 'stock', 'vendas', 
+        'contas_pagar', 'contas_receber', 'turnos_caixa'
+    ];
+BEGIN
+    FOREACH t IN ARRAY tables LOOP
+        EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY;', t);
+        EXECUTE format('DROP POLICY IF EXISTS "Acesso total publico %s" ON public.%I;', t, t);
+        EXECUTE format('CREATE POLICY "Acesso total publico %s" ON public.%I FOR ALL USING (true) WITH CHECK (true);', t, t);
+    END LOOP;
+END $$;
+
+-- ==============================================================================
+-- HABILITAR REALTIME NO SUPABASE
+-- ==============================================================================
+DO $$
+DECLARE
+    t text;
+    tables text[] := ARRAY[
+        'usuarios', 'categorias', 'produtos', 'clientes', 
+        'fornecedores', 'armazens', 'stock', 'vendas', 
+        'contas_pagar', 'contas_receber', 'turnos_caixa'
+    ];
+BEGIN
+    FOREACH t IN ARRAY tables LOOP
+        BEGIN
+            EXECUTE format('ALTER PUBLICATION supabase_realtime ADD TABLE public.%I;', t);
+        EXCEPTION WHEN OTHERS THEN
+            -- Já adicionado ou publicação existente
+            NULL;
+        END;
+    END LOOP;
+END $$;
 `;
+

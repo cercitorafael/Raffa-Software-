@@ -24,6 +24,18 @@ import {
   Layers,
   ArrowRight,
   Info,
+  Radio,
+  ArrowDownToLine,
+  ArrowUpFromLine,
+  Activity,
+  Boxes,
+  Users as UsersIcon,
+  Truck,
+  Receipt,
+  ShoppingBag,
+  Store as StoreIcon,
+  Sliders,
+  Filter,
 } from 'lucide-react';
 import {
   supabase,
@@ -42,11 +54,33 @@ import {
   resetSupabaseCredentials,
 } from '../../lib/supabase';
 import { useApp } from '../../context/AppContext';
+import { SupabaseSyncLog, TableSyncName } from '../../lib/supabaseSync';
 
 export const SupabaseUserManager: React.FC = () => {
-  const { notify } = useApp();
+  const {
+    notify,
+    supabaseRealtimeStatus,
+    supabaseSyncLogs,
+    reconnectSupabaseRealtime,
+    pullFromSupabase,
+    pushToSupabase,
+    products,
+    customers,
+    suppliers,
+    categories,
+    salesHistory,
+    users,
+    warehouses,
+    stock,
+    accountsPayable,
+    accountsReceivable,
+    employeeShifts,
+  } = useApp();
+
   const [usuarios, setUsuarios] = useState<Usuario[]>([]);
   const [loading, setLoading] = useState(false);
+  const [syncingAll, setSyncingAll] = useState(false);
+  const [pushingAll, setPushingAll] = useState(false);
   const [connStatus, setConnStatus] = useState<{
     tested: boolean;
     conectado: boolean;
@@ -58,8 +92,9 @@ export const SupabaseUserManager: React.FC = () => {
     mensagem: 'Não verificado',
   });
 
-  const [activeTab, setActiveTab] = useState<'usuarios' | 'sql' | 'codigo' | 'config'>('usuarios');
+  const [activeTab, setActiveTab] = useState<'realtime' | 'usuarios' | 'tabelas' | 'sql' | 'config' | 'codigo'>('realtime');
   const [searchQuery, setSearchQuery] = useState('');
+  const [logFilter, setLogFilter] = useState<'ALL' | 'INSERT' | 'UPDATE' | 'DELETE' | 'ERROR'>('ALL');
   const [copiedSql, setCopiedSql] = useState(false);
   const [copiedCode, setCopiedCode] = useState(false);
 
@@ -72,7 +107,6 @@ export const SupabaseUserManager: React.FC = () => {
   const dashboardProjectUrl = `https://supabase.com/dashboard/project/${projectRef}`;
   const tableEditorUrl = `https://supabase.com/dashboard/project/${projectRef}/editor`;
   const sqlEditorUrl = `https://supabase.com/dashboard/project/${projectRef}/sql/new`;
-  const apiSettingsUrl = `https://supabase.com/dashboard/project/${projectRef}/settings/api`;
 
   // Modal / Form state
   const [showModal, setShowModal] = useState(false);
@@ -153,6 +187,7 @@ export const SupabaseUserManager: React.FC = () => {
     setInputKey(updatedCreds.key);
     notify('Credenciais atualizadas com sucesso!', 'success');
     handleTestConnection();
+    reconnectSupabaseRealtime();
   };
 
   const handleResetConfig = () => {
@@ -162,6 +197,7 @@ export const SupabaseUserManager: React.FC = () => {
     setInputKey(defaultCreds.key);
     notify('Restaurado para as credenciais padrão!', 'info');
     handleTestConnection();
+    reconnectSupabaseRealtime();
   };
 
   const handleOpenCreate = () => {
@@ -237,10 +273,37 @@ export const SupabaseUserManager: React.FC = () => {
     }
   };
 
+  const handlePullFromSupabase = async () => {
+    setSyncingAll(true);
+    try {
+      await pullFromSupabase();
+      await fetchUsuarios();
+    } finally {
+      setSyncingAll(false);
+    }
+  };
+
+  const handlePushToSupabase = async () => {
+    if (
+      !confirm(
+        'Deseja enviar todos os dados locais atuais (Produtos, Clientes, Categorias, Armazéns, etc.) para o Supabase?'
+      )
+    ) {
+      return;
+    }
+    setPushingAll(true);
+    try {
+      await pushToSupabase();
+      await fetchUsuarios();
+    } finally {
+      setPushingAll(false);
+    }
+  };
+
   const handleCopySql = () => {
     navigator.clipboard.writeText(SUPABASE_SQL_SCHEMA);
     setCopiedSql(true);
-    notify('Script SQL copiado para a área de transferência!', 'success');
+    notify('Script SQL completo copiado para a área de transferência!', 'success');
     setTimeout(() => setCopiedSql(false), 2500);
   };
 
@@ -256,81 +319,33 @@ const SUPABASE_ANON_KEY = '${SUPABASE_ANON_KEY}';
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 // ==========================================
-// 2. SERVER-SIDE & SSR (Next.js, Remix, Express)
-// Instalação: npm install @supabase/ssr @supabase/supabase-js
+// 2. ESCUTA REAL-TIME (INSERT, UPDATE, DELETE)
 // ==========================================
-import { createServerClient } from '@supabase/ssr';
+export function subscribeToRealtime(tableName, onInsert, onUpdate, onDelete) {
+  const channel = supabase
+    .channel('erp-changes')
+    .on(
+      'postgres_changes',
+      { event: 'INSERT', schema: 'public', table: tableName },
+      (payload) => onInsert(payload.new)
+    )
+    .on(
+      'postgres_changes',
+      { event: 'UPDATE', schema: 'public', table: tableName },
+      (payload) => onUpdate(payload.new)
+    )
+    .on(
+      'postgres_changes',
+      { event: 'DELETE', schema: 'public', table: tableName },
+      (payload) => onDelete(payload.old)
+    )
+    .subscribe();
 
-export function criarClienteServidor(cookiesReq: { get: (name: string) => string | undefined, set: (name: string, value: string) => void }) {
-  return createServerClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-    cookies: {
-      get(name) {
-        return cookiesReq.get(name);
-      },
-      set(name, value, options) {
-        cookiesReq.set(name, value);
-      },
-      remove(name, options) {
-        cookiesReq.set(name, '');
-      }
-    }
-  });
-}
-
-// ==========================================
-// 3. OPERAÇÕES CRUD NA TABELA 'usuarios'
-// ==========================================
-
-// LISTAR (READ)
-export async function listarUsuarios() {
-  const { data, error } = await supabase
-    .from('usuarios')
-    .select('*')
-    .order('created_at', { ascending: false });
-  if (error) throw error;
-  return data;
-}
-
-// CRIAR (CREATE)
-export async function criarUsuario(usuario) {
-  const { data, error } = await supabase
-    .from('usuarios')
-    .insert([usuario])
-    .select()
-    .single();
-  if (error) throw error;
-  return data;
-}
-
-// ATUALIZAR (UPDATE)
-export async function atualizarUsuario(id, dados) {
-  const { data, error } = await supabase
-    .from('usuarios')
-    .update(dados)
-    .eq('id', id)
-    .select()
-    .single();
-  if (error) throw error;
-  return data;
-}
-
-// ELIMINAR (DELETE)
-export async function eliminarUsuario(id) {
-  const { error } = await supabase
-    .from('usuarios')
-    .delete()
-    .eq('id', id);
-  if (error) throw error;
-  return true;
+  return () => {
+    supabase.removeChannel(channel);
+  };
 }
 `;
-
-  const handleCopyCode = () => {
-    navigator.clipboard.writeText(nodeSnippet);
-    setCopiedCode(true);
-    notify('Código JavaScript / TypeScript copiado!', 'success');
-    setTimeout(() => setCopiedCode(false), 2500);
-  };
 
   const filteredUsuarios = usuarios.filter((u) => {
     const q = searchQuery.toLowerCase();
@@ -342,79 +357,140 @@ export async function eliminarUsuario(id) {
     );
   });
 
+  const filteredLogs = supabaseSyncLogs.filter((log) => {
+    if (logFilter === 'ALL') return true;
+    return log.action === logFilter;
+  });
+
+  const tableMatrix: {
+    name: TableSyncName;
+    label: string;
+    icon: any;
+    localCount: number;
+  }[] = [
+    { name: 'produtos', label: 'Produtos & Artigos', icon: Boxes, localCount: products.length },
+    { name: 'clientes', label: 'Clientes & CRM', icon: UsersIcon, localCount: customers.length },
+    { name: 'fornecedores', label: 'Fornecedores', icon: Truck, localCount: suppliers.length },
+    { name: 'categorias', label: 'Categorias de Produtos', icon: Layers, localCount: categories.length },
+    { name: 'vendas', label: 'Vendas & Faturas', icon: ShoppingBag, localCount: salesHistory.length },
+    { name: 'armazens', label: 'Armazéns & Lojas', icon: StoreIcon, localCount: warehouses.length },
+    { name: 'stock', label: 'Itens em Stock', icon: Boxes, localCount: stock.length },
+    { name: 'contas_pagar', label: 'Contas a Pagar', icon: Receipt, localCount: accountsPayable.length },
+    { name: 'contas_receber', label: 'Contas a Receber', icon: Receipt, localCount: accountsReceivable.length },
+    { name: 'turnos_caixa', label: 'Turnos de Caixa', icon: Activity, localCount: employeeShifts.length },
+    { name: 'usuarios', label: 'Usuários do Sistema', icon: UsersIcon, localCount: users.length },
+  ];
+
   return (
     <div className="flex-1 flex flex-col h-full overflow-hidden bg-[#0a0a0a] text-[#e5e5e5]">
-      {/* Header */}
-      <div className="p-4 bg-[#0d0d0d] border-b border-[#262626] flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+      {/* Top Header */}
+      <div className="p-4 bg-[#0d0d0d] border-b border-[#262626] flex flex-col lg:flex-row lg:items-center justify-between gap-3 shrink-0">
         <div className="flex items-center space-x-3">
           <div className="p-2.5 bg-emerald-500/10 border border-emerald-500/30 rounded-xl text-emerald-400">
             <Database className="w-6 h-6" />
           </div>
           <div>
             <div className="flex items-center space-x-2">
-              <h2 className="text-lg font-serif font-bold text-white">Integração Supabase</h2>
-              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                Project ID: {projectRef}
+              <h2 className="text-lg font-serif font-bold text-white">Hub de Sincronização Supabase</h2>
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-mono">
+                {projectRef}
               </span>
             </div>
             <p className="text-xs text-neutral-400">
-              Gestão da tabela <span className="font-mono text-[#c5a47e]">usuarios</span> & cliente PostgreSQL Cloud
+              Sincronização bidirecional em tempo real (INSERT, UPDATE, DELETE) & PostgreSQL Cloud
             </p>
           </div>
         </div>
 
-        {/* Quick Connection Status Badge & Actions */}
+        {/* Global Action Buttons */}
         <div className="flex items-center flex-wrap gap-2">
+          {/* Realtime Status Badge */}
           <div
             className={`px-3 py-1.5 rounded-lg border text-xs flex items-center space-x-2 ${
-              connStatus.conectado
-                ? 'bg-emerald-950/30 border-emerald-500/40 text-emerald-300'
-                : 'bg-rose-950/30 border-rose-500/40 text-rose-300'
+              supabaseRealtimeStatus === 'connected'
+                ? 'bg-emerald-950/40 border-emerald-500/50 text-emerald-300'
+                : supabaseRealtimeStatus === 'connecting'
+                ? 'bg-amber-950/40 border-amber-500/50 text-amber-300 animate-pulse'
+                : 'bg-rose-950/40 border-rose-500/50 text-rose-300'
             }`}
           >
             <span
               className={`w-2 h-2 rounded-full ${
-                connStatus.conectado ? 'bg-emerald-400 animate-pulse' : 'bg-rose-400'
+                supabaseRealtimeStatus === 'connected'
+                  ? 'bg-emerald-400 animate-pulse'
+                  : supabaseRealtimeStatus === 'connecting'
+                  ? 'bg-amber-400 animate-ping'
+                  : 'bg-rose-400'
               }`}
             />
-            <span className="font-medium text-[11px]">
-              {connStatus.conectado ? 'Supabase Conectado' : 'Desconectado'}
+            <span className="font-semibold text-[11px]">
+              {supabaseRealtimeStatus === 'connected'
+                ? 'Realtime Conectado (Live)'
+                : supabaseRealtimeStatus === 'connecting'
+                ? 'A Conectar...'
+                : 'Desconectado'}
             </span>
           </div>
 
+          {/* Pull All Data */}
+          <button
+            onClick={handlePullFromSupabase}
+            disabled={syncingAll}
+            className="px-3 py-1.5 bg-[#171717] hover:bg-[#222222] text-[#c5a47e] hover:text-white border border-[#333] rounded-lg text-xs font-semibold flex items-center space-x-1.5 transition-all cursor-pointer shadow-xs disabled:opacity-50"
+            title="Puxar todos os dados existentes no Supabase e reconciliar com o sistema local"
+          >
+            <ArrowDownToLine className={`w-3.5 h-3.5 ${syncingAll ? 'animate-bounce' : ''}`} />
+            <span>{syncingAll ? 'A Puxar...' : 'Puxar da Nuvem (Pull)'}</span>
+          </button>
+
+          {/* Push All Data */}
+          <button
+            onClick={handlePushToSupabase}
+            disabled={pushingAll}
+            className="px-3 py-1.5 bg-[#171717] hover:bg-[#222222] text-neutral-300 hover:text-white border border-[#333] rounded-lg text-xs font-semibold flex items-center space-x-1.5 transition-all cursor-pointer shadow-xs disabled:opacity-50"
+            title="Enviar todos os dados locais atuais para o Supabase"
+          >
+            <ArrowUpFromLine className={`w-3.5 h-3.5 ${pushingAll ? 'animate-bounce' : ''}`} />
+            <span>{pushingAll ? 'A Enviar...' : 'Enviar para Nuvem (Push)'}</span>
+          </button>
+
+          {/* Reconnect Realtime */}
+          <button
+            onClick={reconnectSupabaseRealtime}
+            className="p-2 bg-[#171717] hover:bg-[#222222] text-neutral-300 hover:text-white border border-[#333] rounded-lg text-xs flex items-center transition-all cursor-pointer"
+            title="Reconectar Canal Realtime"
+          >
+            <RefreshCw className="w-3.5 h-3.5 text-neutral-400" />
+          </button>
+
+          {/* Open Supabase Dashboard */}
           <a
             href={dashboardProjectUrl}
             target="_blank"
             rel="noopener noreferrer"
-            className="p-2 bg-[#1a1a1a] hover:bg-[#2a2a2a] text-[#c5a47e] hover:text-white border border-[#333] rounded-lg text-xs flex items-center space-x-1.5 transition-all"
+            className="p-2 bg-[#171717] hover:bg-[#222222] text-[#c5a47e] border border-[#333] rounded-lg text-xs flex items-center space-x-1.5 transition-all"
             title="Abrir Dashboard no Supabase.com"
           >
             <ExternalLink className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Abrir Painel Supabase</span>
+            <span className="hidden sm:inline">Supabase.com</span>
           </a>
-
-          <button
-            onClick={handleTestConnection}
-            disabled={loading}
-            className="p-2 bg-[#1a1a1a] hover:bg-[#252525] text-neutral-200 border border-[#333] rounded-lg text-xs flex items-center space-x-1.5 transition-all cursor-pointer"
-            title="Testar Conexão e Recarregar"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-[#c5a47e]' : ''}`} />
-            <span className="hidden sm:inline">Atualizar</span>
-          </button>
-
-          <button
-            onClick={handleOpenCreate}
-            className="px-3 py-1.5 bg-[#c5a47e] hover:bg-[#b5946e] text-black font-bold text-xs rounded-lg flex items-center space-x-1.5 shadow-md transition-all cursor-pointer"
-          >
-            <UserPlus className="w-4 h-4" />
-            <span>+ Novo Usuário</span>
-          </button>
         </div>
       </div>
 
-      {/* Tabs */}
-      <div className="px-4 bg-[#0e0e0e] border-b border-[#262626] flex space-x-4 overflow-x-auto">
+      {/* Navigation Tabs */}
+      <div className="px-4 bg-[#0e0e0e] border-b border-[#262626] flex space-x-4 overflow-x-auto shrink-0">
+        <button
+          onClick={() => setActiveTab('realtime')}
+          className={`py-3 text-xs font-semibold border-b-2 flex items-center space-x-2 shrink-0 transition-all cursor-pointer ${
+            activeTab === 'realtime'
+              ? 'border-[#c5a47e] text-[#c5a47e]'
+              : 'border-transparent text-neutral-400 hover:text-neutral-200'
+          }`}
+        >
+          <Radio className="w-3.5 h-3.5" />
+          <span>Monitor Real-time ({supabaseSyncLogs.length} eventos)</span>
+        </button>
+
         <button
           onClick={() => setActiveTab('usuarios')}
           className={`py-3 text-xs font-semibold border-b-2 flex items-center space-x-2 shrink-0 transition-all cursor-pointer ${
@@ -423,20 +499,20 @@ export async function eliminarUsuario(id) {
               : 'border-transparent text-neutral-400 hover:text-neutral-200'
           }`}
         >
-          <Database className="w-3.5 h-3.5" />
-          <span>Tabela Usuarios ({usuarios.length})</span>
+          <UsersIcon className="w-3.5 h-3.5" />
+          <span>Tabela Usuários ({usuarios.length})</span>
         </button>
 
         <button
-          onClick={() => setActiveTab('config')}
+          onClick={() => setActiveTab('tabelas')}
           className={`py-3 text-xs font-semibold border-b-2 flex items-center space-x-2 shrink-0 transition-all cursor-pointer ${
-            activeTab === 'config'
+            activeTab === 'tabelas'
               ? 'border-[#c5a47e] text-[#c5a47e]'
               : 'border-transparent text-neutral-400 hover:text-neutral-200'
           }`}
         >
-          <HelpCircle className="w-3.5 h-3.5" />
-          <span>Guia & Como Visualizar no Supabase</span>
+          <Layers className="w-3.5 h-3.5" />
+          <span>Matriz de Tabelas ERP (11 Tabelas)</span>
         </button>
 
         <button
@@ -448,7 +524,19 @@ export async function eliminarUsuario(id) {
           }`}
         >
           <Server className="w-3.5 h-3.5" />
-          <span>Esquema SQL (Criar Tabela)</span>
+          <span>Esquema SQL & REPLICA IDENTITY</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('config')}
+          className={`py-3 text-xs font-semibold border-b-2 flex items-center space-x-2 shrink-0 transition-all cursor-pointer ${
+            activeTab === 'config'
+              ? 'border-[#c5a47e] text-[#c5a47e]'
+              : 'border-transparent text-neutral-400 hover:text-neutral-200'
+          }`}
+        >
+          <Settings className="w-3.5 h-3.5" />
+          <span>Credenciais & Conexão</span>
         </button>
 
         <button
@@ -460,47 +548,148 @@ export async function eliminarUsuario(id) {
           }`}
         >
           <Code className="w-3.5 h-3.5" />
-          <span>Código Cliente & CRUD</span>
+          <span>Snippets de Código</span>
         </button>
       </div>
 
       {/* Main Content Area */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        {/* TAB 1: USUÁRIOS */}
-        {activeTab === 'usuarios' && (
+        {/* TAB 1: REAL-TIME MONITOR & LIVE STREAM */}
+        {activeTab === 'realtime' && (
           <div className="space-y-4">
-            {/* If table does not exist warning banner */}
-            {connStatus.tested && connStatus.tabelaExiste === false && (
-              <div className="p-4 bg-amber-950/30 border border-amber-500/40 rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 text-xs">
-                <div className="flex items-start space-x-3">
-                  <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
-                  <div>
-                    <h4 className="font-bold text-amber-200">A tabela "usuarios" ainda não foi criada no Supabase</h4>
-                    <p className="text-amber-300/80 mt-1">
-                      A conexão está ativa, mas a tabela no PostgreSQL ainda não existe no seu projeto <strong>{projectRef}</strong>.
-                    </p>
-                  </div>
+            {/* Realtime Engine Status Banner */}
+            <div className="p-4 bg-[#141414] border border-[#262626] rounded-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+              <div className="flex items-center space-x-3">
+                <div className="p-3 bg-emerald-500/10 border border-emerald-500/30 rounded-xl text-emerald-400">
+                  <Radio className="w-6 h-6 animate-pulse" />
                 </div>
-                <div className="flex items-center space-x-2">
-                  <a
-                    href={sqlEditorUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="px-3 py-1.5 bg-amber-500 text-black font-bold rounded-lg shrink-0 hover:bg-amber-400 flex items-center space-x-1"
-                  >
-                    <span>Abrir SQL Editor</span>
-                    <ExternalLink className="w-3 h-3" />
-                  </a>
-                  <button
-                    onClick={() => setActiveTab('sql')}
-                    className="px-3 py-1.5 bg-[#222] text-white border border-[#444] rounded-lg shrink-0 hover:bg-[#333]"
-                  >
-                    Ver Script
-                  </button>
+                <div>
+                  <h3 className="text-sm font-bold text-white flex items-center space-x-2">
+                    <span>Motor de Sincronização Bidirecional em Tempo Real</span>
+                    <span className="px-2 py-0.5 rounded-full text-[10px] bg-emerald-500/20 text-emerald-300 font-mono">
+                      postgres_changes (ALL)
+                    </span>
+                  </h3>
+                  <p className="text-xs text-neutral-400 mt-0.5">
+                    Qualquer alteração feita no Supabase (incluindo <strong>DELETE</strong>) é instantaneamente propagada e refletida aqui.
+                  </p>
                 </div>
               </div>
-            )}
 
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={reconnectSupabaseRealtime}
+                  className="px-3 py-1.5 bg-[#1e1e1e] hover:bg-[#282828] text-white border border-[#333] rounded-lg text-xs font-semibold flex items-center space-x-1.5 cursor-pointer"
+                >
+                  <RefreshCw className="w-3.5 h-3.5 text-[#c5a47e]" />
+                  <span>Reconectar Canal</span>
+                </button>
+                <button
+                  onClick={handlePullFromSupabase}
+                  disabled={syncingAll}
+                  className="px-3 py-1.5 bg-[#c5a47e] hover:bg-[#b5946e] text-black font-bold rounded-lg text-xs flex items-center space-x-1.5 cursor-pointer shadow-md disabled:opacity-50"
+                >
+                  <ArrowDownToLine className="w-3.5 h-3.5" />
+                  <span>{syncingAll ? 'A Sincronizar...' : 'Sincronizar Tudo Agora'}</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Logs Filter Toolbar */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-center space-x-2">
+                <Filter className="w-4 h-4 text-neutral-400" />
+                <span className="text-xs font-semibold text-neutral-300">Filtrar Eventos:</span>
+                {(['ALL', 'INSERT', 'UPDATE', 'DELETE', 'ERROR'] as const).map((filter) => (
+                  <button
+                    key={filter}
+                    onClick={() => setLogFilter(filter)}
+                    className={`px-2.5 py-1 rounded-md text-[11px] font-semibold transition-all cursor-pointer ${
+                      logFilter === filter
+                        ? 'bg-[#c5a47e] text-black'
+                        : 'bg-[#141414] text-neutral-400 hover:text-white border border-[#262626]'
+                    }`}
+                  >
+                    {filter === 'ALL' ? 'Todos' : filter}
+                  </button>
+                ))}
+              </div>
+
+              <div className="text-xs text-neutral-500 font-mono">
+                {filteredLogs.length} eventos gravados na sessão
+              </div>
+            </div>
+
+            {/* Realtime Event Stream Log Table */}
+            <div className="border border-[#262626] rounded-xl overflow-hidden bg-[#111111] shadow-xl">
+              <table className="w-full text-left text-xs text-neutral-300">
+                <thead className="bg-[#171717] text-neutral-400 uppercase text-[10px] tracking-wider font-semibold border-b border-[#262626]">
+                  <tr>
+                    <th className="p-3">Hora</th>
+                    <th className="p-3">Ação</th>
+                    <th className="p-3">Tabela</th>
+                    <th className="p-3">Origem</th>
+                    <th className="p-3">Descrição do Evento</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[#202020] font-mono text-[11px]">
+                  {filteredLogs.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="p-8 text-center text-neutral-500">
+                        Nenhum evento registrado ainda. Efetue ações no sistema ou altere dados no Supabase para ver eventos em direto.
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredLogs.map((log) => (
+                      <tr key={log.id} className="hover:bg-[#181818] transition-colors">
+                        <td className="p-3 text-neutral-400 whitespace-nowrap">
+                          {new Date(log.timestamp).toLocaleTimeString()}
+                        </td>
+                        <td className="p-3 whitespace-nowrap">
+                          <span
+                            className={`px-2 py-0.5 rounded font-bold text-[10px] ${
+                              log.action === 'INSERT'
+                                ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                                : log.action === 'UPDATE'
+                                ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
+                                : log.action === 'DELETE'
+                                ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
+                                : log.action === 'ERROR'
+                                ? 'bg-red-500/30 text-red-300 border border-red-500/50'
+                                : 'bg-neutral-800 text-neutral-300'
+                            }`}
+                          >
+                            {log.action}
+                          </span>
+                        </td>
+                        <td className="p-3 font-bold text-[#c5a47e] whitespace-nowrap">
+                          {log.table}
+                        </td>
+                        <td className="p-3 text-neutral-400 whitespace-nowrap">
+                          {log.origin === 'SUPABASE_REALTIME' ? (
+                            <span className="text-emerald-400 flex items-center space-x-1">
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse inline-block" />
+                              <span>Supabase Cloud</span>
+                            </span>
+                          ) : (
+                            <span className="text-neutral-400">Aplicação Local</span>
+                          )}
+                        </td>
+                        <td className="p-3 text-neutral-200 font-sans text-xs">
+                          {log.description}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* TAB 2: USUÁRIOS CRUD */}
+        {activeTab === 'usuarios' && (
+          <div className="space-y-4">
             {/* Filter and stats */}
             <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
               <div className="relative w-full sm:w-80">
@@ -513,16 +702,13 @@ export async function eliminarUsuario(id) {
                   className="w-full pl-9 pr-3 py-2 bg-[#121212] border border-[#262626] rounded-lg text-xs text-white placeholder-neutral-500 focus:outline-hidden focus:border-[#c5a47e]"
                 />
               </div>
-              <div className="flex items-center space-x-2 text-xs text-neutral-400">
-                <span>URL Ativa:</span>
-                <span className="font-mono text-[#c5a47e] bg-[#141414] px-2 py-1 rounded border border-[#262626] max-w-[240px] truncate">
-                  {SUPABASE_URL}
-                </span>
+              <div className="flex items-center space-x-2">
                 <button
-                  onClick={() => setActiveTab('config')}
-                  className="text-[#c5a47e] hover:underline text-[11px] font-semibold"
+                  onClick={handleOpenCreate}
+                  className="px-3 py-1.5 bg-[#c5a47e] hover:bg-[#b5946e] text-black font-bold text-xs rounded-lg flex items-center space-x-1.5 shadow-md transition-all cursor-pointer"
                 >
-                  Alterar
+                  <UserPlus className="w-4 h-4" />
+                  <span>+ Novo Usuário</span>
                 </button>
               </div>
             </div>
@@ -552,20 +738,12 @@ export async function eliminarUsuario(id) {
                         ) : (
                           <div className="space-y-3">
                             <p>Nenhum usuário encontrado na tabela "usuarios".</p>
-                            <div className="flex justify-center gap-2">
-                              <button
-                                onClick={handleOpenCreate}
-                                className="px-3 py-1.5 bg-[#c5a47e] text-black rounded-lg hover:bg-[#b5946e] font-bold text-xs cursor-pointer"
-                              >
-                                + Criar Primeiro Usuário
-                              </button>
-                              <button
-                                onClick={() => setActiveTab('config')}
-                                className="px-3 py-1.5 bg-[#1c1c1c] text-neutral-300 border border-[#333] rounded-lg hover:bg-[#252525] text-xs cursor-pointer"
-                              >
-                                Como Acessar Meu Projeto Supabase
-                              </button>
-                            </div>
+                            <button
+                              onClick={handleOpenCreate}
+                              className="px-3 py-1.5 bg-[#c5a47e] text-black rounded-lg hover:bg-[#b5946e] font-bold text-xs cursor-pointer"
+                            >
+                              + Criar Primeiro Usuário
+                            </button>
                           </div>
                         )}
                       </td>
@@ -601,34 +779,34 @@ export async function eliminarUsuario(id) {
                           {u.nif && <div className="text-[10px] text-neutral-500 font-mono">NIF: {u.nif}</div>}
                         </td>
                         <td className="p-3">
-                          <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-[#222] border border-[#333] text-[#c5a47e]">
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-[#222] text-[#c5a47e] border border-[#333]">
                             {u.cargo || 'Operador'}
                           </span>
                         </td>
                         <td className="p-3 text-center">
                           <span
-                            className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                            className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${
                               u.ativo !== false
-                                ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
-                                : 'bg-neutral-500/20 text-neutral-400 border-neutral-500/30'
+                                ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                                : 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
                             }`}
                           >
                             {u.ativo !== false ? 'Ativo' : 'Inativo'}
                           </span>
                         </td>
                         <td className="p-3 text-center">
-                          <div className="flex items-center justify-center space-x-1.5">
+                          <div className="flex items-center justify-center space-x-1">
                             <button
                               onClick={() => handleOpenEdit(u)}
-                              className="p-1.5 bg-[#1c1c1c] hover:bg-[#c5a47e] hover:text-black text-[#c5a47e] border border-[#333] rounded-md transition-colors"
+                              className="p-1.5 text-neutral-400 hover:text-white hover:bg-[#262626] rounded-md transition-colors cursor-pointer"
                               title="Editar Usuário"
                             >
                               <Edit3 className="w-3.5 h-3.5" />
                             </button>
                             <button
                               onClick={() => handleDelete(u)}
-                              className="p-1.5 bg-[#1c1c1c] hover:bg-rose-600 hover:text-white text-neutral-400 border border-[#333] rounded-md transition-colors"
-                              title="Eliminar Usuário"
+                              className="p-1.5 text-neutral-400 hover:text-rose-400 hover:bg-[#262626] rounded-md transition-colors cursor-pointer"
+                              title="Eliminar do Supabase"
                             >
                               <Trash2 className="w-3.5 h-3.5" />
                             </button>
@@ -643,194 +821,73 @@ export async function eliminarUsuario(id) {
           </div>
         )}
 
-        {/* TAB 2: GUIA & COMO VISUALIZAR NO SUPABASE */}
-        {activeTab === 'config' && (
-          <div className="space-y-6 max-w-4xl">
-            {/* Direct Links Card */}
-            <div className="p-5 bg-[#141414] border border-[#262626] rounded-xl space-y-4 shadow-xl">
-              <div className="flex items-center justify-between border-b border-[#262626] pb-3">
-                <div className="flex items-center space-x-2.5">
-                  <ExternalLink className="w-5 h-5 text-[#c5a47e]" />
-                  <h3 className="text-sm font-bold text-white">Atalhos Diretos para o seu Supabase</h3>
-                </div>
-                <span className="text-xs font-mono text-[#c5a47e] bg-[#1a1a1a] px-2 py-1 rounded border border-[#333]">
-                  Project ID: {projectRef}
-                </span>
+        {/* TAB 3: MATRIZ DE TABELAS ERP */}
+        {activeTab === 'tabelas' && (
+          <div className="space-y-4">
+            <div className="p-4 bg-[#141414] border border-[#262626] rounded-xl flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-bold text-white flex items-center space-x-2">
+                  <Layers className="w-4 h-4 text-[#c5a47e]" />
+                  <span>Matriz de Sincronização de Tabelas ERP</span>
+                </h3>
+                <p className="text-xs text-neutral-400 mt-1">
+                  Visão consolidada de todas as entidades do sistema com sincronização ativa na Supabase.
+                </p>
               </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
-                <a
-                  href={dashboardProjectUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="p-3 bg-[#0d0d0d] hover:bg-[#1a1a1a] border border-[#262626] hover:border-[#c5a47e]/50 rounded-lg text-xs space-y-1 transition-all group block"
-                >
-                  <div className="font-bold text-white group-hover:text-[#c5a47e] flex items-center justify-between">
-                    <span>1. Dashboard</span>
-                    <ExternalLink className="w-3.5 h-3.5 text-neutral-500 group-hover:text-[#c5a47e]" />
-                  </div>
-                  <p className="text-[11px] text-neutral-400">Visão geral do projeto e métricas</p>
-                </a>
-
-                <a
-                  href={tableEditorUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="p-3 bg-[#0d0d0d] hover:bg-[#1a1a1a] border border-[#262626] hover:border-[#c5a47e]/50 rounded-lg text-xs space-y-1 transition-all group block"
-                >
-                  <div className="font-bold text-white group-hover:text-[#c5a47e] flex items-center justify-between">
-                    <span>2. Table Editor</span>
-                    <ExternalLink className="w-3.5 h-3.5 text-neutral-500 group-hover:text-[#c5a47e]" />
-                  </div>
-                  <p className="text-[11px] text-neutral-400">Ver e gerenciar tabelas e linhas</p>
-                </a>
-
-                <a
-                  href={sqlEditorUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="p-3 bg-[#0d0d0d] hover:bg-[#1a1a1a] border border-[#262626] hover:border-[#c5a47e]/50 rounded-lg text-xs space-y-1 transition-all group block"
-                >
-                  <div className="font-bold text-white group-hover:text-[#c5a47e] flex items-center justify-between">
-                    <span>3. SQL Editor</span>
-                    <ExternalLink className="w-3.5 h-3.5 text-neutral-500 group-hover:text-[#c5a47e]" />
-                  </div>
-                  <p className="text-[11px] text-neutral-400">Executar scripts para criar tabelas</p>
-                </a>
-
-                <a
-                  href={apiSettingsUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="p-3 bg-[#0d0d0d] hover:bg-[#1a1a1a] border border-[#262626] hover:border-[#c5a47e]/50 rounded-lg text-xs space-y-1 transition-all group block"
-                >
-                  <div className="font-bold text-white group-hover:text-[#c5a47e] flex items-center justify-between">
-                    <span>4. Chaves de API</span>
-                    <ExternalLink className="w-3.5 h-3.5 text-neutral-500 group-hover:text-[#c5a47e]" />
-                  </div>
-                  <p className="text-[11px] text-neutral-400">Project URL e anon/public key</p>
-                </a>
-              </div>
+              <button
+                onClick={handlePullFromSupabase}
+                disabled={syncingAll}
+                className="px-3 py-1.5 bg-[#c5a47e] hover:bg-[#b5946e] text-black font-bold text-xs rounded-lg flex items-center space-x-1.5 cursor-pointer shadow-md disabled:opacity-50"
+              >
+                <ArrowDownToLine className="w-3.5 h-3.5" />
+                <span>{syncingAll ? 'A Sincronizar...' : 'Sincronizar Todas as Tabelas'}</span>
+              </button>
             </div>
 
-            {/* Diagnostic / Step-by-step why you can't view it */}
-            <div className="p-5 bg-[#141414] border border-[#262626] rounded-xl space-y-4">
-              <h3 className="text-sm font-bold text-white flex items-center space-x-2">
-                <Info className="w-4 h-4 text-[#c5a47e]" />
-                <span>Por que não consegue visualizar o projeto no Supabase? (Guia de Solução)</span>
-              </h3>
-
-              <div className="space-y-3 text-xs text-neutral-300">
-                <div className="p-3 bg-[#0d0d0d] border border-[#262626] rounded-lg space-y-1">
-                  <div className="font-bold text-[#c5a47e] flex items-center space-x-1.5">
-                    <span>Motivo 1: Está logado numa conta diferente no Supabase</span>
-                  </div>
-                  <p className="text-neutral-400 leading-relaxed">
-                    A chave que forneceu pertence ao projeto com ID <code className="text-white font-mono bg-[#1a1a1a] px-1.5 py-0.5 rounded">{projectRef}</code>.
-                    Se aceder a <a href="https://supabase.com/dashboard" target="_blank" rel="noopener noreferrer" className="text-[#c5a47e] underline">supabase.com/dashboard</a> e não vir este projeto, certifique-se de que fez login com o mesmo e-mail ou conta do GitHub onde o projeto foi criado.
-                  </p>
-                </div>
-
-                <div className="p-3 bg-[#0d0d0d] border border-[#262626] rounded-lg space-y-1">
-                  <div className="font-bold text-[#c5a47e] flex items-center space-x-1.5">
-                    <span>Motivo 2: Criou um NOVO projeto no Supabase com outra URL</span>
-                  </div>
-                  <p className="text-neutral-400 leading-relaxed">
-                    Se criou um projeto novo no seu painel, ele terá uma URL diferente (ex: <code className="text-white font-mono bg-[#1a1a1a] px-1.5 py-0.5 rounded">https://xyz.supabase.co</code>).
-                    Basta copiar a <strong>Project URL</strong> e a <strong>Anon public Key</strong> em <em>Project Settings &gt; API</em> e colá-las no formulário abaixo!
-                  </p>
-                </div>
-
-                <div className="p-3 bg-[#0d0d0d] border border-[#262626] rounded-lg space-y-1">
-                  <div className="font-bold text-[#c5a47e] flex items-center space-x-1.5">
-                    <span>Motivo 3: O projeto existe, mas a tabela "usuarios" não foi criada</span>
-                  </div>
-                  <p className="text-neutral-400 leading-relaxed">
-                    O Supabase não cria tabelas automaticamente. Vá a <strong>SQL Editor</strong> no Supabase, copie o código do separador <strong>Esquema SQL</strong> deste aplicativo e clique em <strong>Run</strong>. A tabela aparecerá imediatamente no <strong>Table Editor</strong>.
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            {/* Custom Connection Settings Form */}
-            <div className="p-5 bg-[#141414] border border-[#262626] rounded-xl space-y-4">
-              <div className="flex items-center justify-between border-b border-[#262626] pb-3">
-                <div className="flex items-center space-x-2">
-                  <Settings className="w-5 h-5 text-[#c5a47e]" />
-                  <h3 className="text-sm font-bold text-white">Configurar Outro Projeto do Supabase</h3>
-                </div>
-                <button
-                  type="button"
-                  onClick={handleResetConfig}
-                  className="text-xs text-neutral-400 hover:text-white underline cursor-pointer"
-                >
-                  Restaurar Padrão
-                </button>
-              </div>
-
-              <form onSubmit={handleSaveConfig} className="space-y-4 text-xs">
-                <div>
-                  <label className="font-semibold text-neutral-300 block mb-1">
-                    Supabase Project URL
-                  </label>
-                  <input
-                    type="url"
-                    required
-                    value={inputUrl}
-                    onChange={(e) => setInputUrl(e.target.value)}
-                    placeholder="https://seu-projeto.supabase.co"
-                    className="w-full px-3 py-2 bg-[#0d0d0d] border border-[#262626] rounded-lg text-white font-mono placeholder-neutral-600 focus:outline-hidden focus:border-[#c5a47e]"
-                  />
-                  <span className="text-[10px] text-neutral-500 mt-0.5 block">
-                    Encontra em: Supabase Dashboard &gt; Project Settings &gt; API &gt; Project URL
-                  </span>
-                </div>
-
-                <div>
-                  <label className="font-semibold text-neutral-300 block mb-1">
-                    Supabase Anon / Public Key
-                  </label>
-                  <textarea
-                    rows={3}
-                    required
-                    value={inputKey}
-                    onChange={(e) => setInputKey(e.target.value)}
-                    placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
-                    className="w-full px-3 py-2 bg-[#0d0d0d] border border-[#262626] rounded-lg text-white font-mono text-[11px] placeholder-neutral-600 focus:outline-hidden focus:border-[#c5a47e]"
-                  />
-                  <span className="text-[10px] text-neutral-500 mt-0.5 block">
-                    Encontra em: Supabase Dashboard &gt; Project Settings &gt; API &gt; Project API keys &gt; anon public
-                  </span>
-                </div>
-
-                <div className="flex gap-2 pt-2">
-                  <button
-                    type="submit"
-                    className="px-4 py-2 bg-[#c5a47e] hover:bg-[#b5946e] text-black font-bold rounded-lg text-xs cursor-pointer shadow-md"
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {tableMatrix.map((tbl) => {
+                const Icon = tbl.icon;
+                return (
+                  <div
+                    key={tbl.name}
+                    className="p-4 bg-[#111111] border border-[#262626] rounded-xl hover:border-[#383838] transition-all space-y-3"
                   >
-                    Guardar e Testar Conexão
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleTestConnection}
-                    className="px-4 py-2 bg-[#1f1f1f] hover:bg-[#2a2a2a] text-white border border-[#333] rounded-lg text-xs cursor-pointer"
-                  >
-                    Testar Conexão Atual
-                  </button>
-                </div>
-              </form>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-2.5">
+                        <div className="p-2 bg-[#1a1a1a] rounded-lg text-[#c5a47e] border border-[#2a2a2a]">
+                          <Icon className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <h4 className="text-xs font-bold text-white">{tbl.label}</h4>
+                          <span className="font-mono text-[10px] text-neutral-400 block">
+                            public.{tbl.name}
+                          </span>
+                        </div>
+                      </div>
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
+                        {tbl.localCount} regs
+                      </span>
+                    </div>
+
+                    <div className="flex items-center justify-between pt-2 border-t border-[#202020] text-[11px] text-neutral-400">
+                      <span>Replica Identity: FULL</span>
+                      <span className="text-emerald-400 font-semibold">Realtime Ativo</span>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
         )}
 
-        {/* TAB 3: SQL SCHEMA */}
+        {/* TAB 4: SQL SCHEMA */}
         {activeTab === 'sql' && (
           <div className="space-y-4">
             <div className="p-4 bg-[#141414] border border-[#262626] rounded-xl space-y-2">
               <div className="flex items-center justify-between">
                 <div className="flex items-center space-x-2">
                   <Server className="w-5 h-5 text-[#c5a47e]" />
-                  <h3 className="text-sm font-bold text-white">Script SQL de Inicialização da Tabela</h3>
+                  <h3 className="text-sm font-bold text-white">Script SQL Completo para o Supabase</h3>
                 </div>
                 <div className="flex items-center space-x-2">
                   <a
@@ -852,31 +909,97 @@ export async function eliminarUsuario(id) {
                 </div>
               </div>
               <p className="text-xs text-neutral-400">
-                Execute o script abaixo diretamente no painel <strong>SQL Editor</strong> do seu Supabase Dashboard para criar a tabela com suporte a RLS (Row Level Security).
+                Execute o script abaixo diretamente no <strong>SQL Editor</strong> do Supabase. Inclui tabelas completas, chaves primárias e <strong>REPLICA IDENTITY FULL</strong> para suporte total à sincronização de eliminações (DELETE).
               </p>
             </div>
 
-            <div className="relative bg-[#0d0d0d] border border-[#262626] rounded-xl p-4 font-mono text-xs text-emerald-400 overflow-x-auto">
+            <div className="relative bg-[#0d0d0d] border border-[#262626] rounded-xl p-4 font-mono text-xs text-emerald-400 overflow-x-auto max-h-[500px]">
               <pre>{SUPABASE_SQL_SCHEMA}</pre>
             </div>
           </div>
         )}
 
-        {/* TAB 4: CODE SNIPPETS */}
+        {/* TAB 5: CREDENCIAIS & CONFIGURAÇÃO */}
+        {activeTab === 'config' && (
+          <div className="space-y-4 max-w-2xl">
+            <div className="p-5 bg-[#141414] border border-[#262626] rounded-xl space-y-4">
+              <div className="flex items-center space-x-3">
+                <div className="p-2.5 bg-[#c5a47e]/10 border border-[#c5a47e]/30 rounded-xl text-[#c5a47e]">
+                  <Settings className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-white">Configuração de Credenciais Supabase</h3>
+                  <p className="text-xs text-neutral-400">
+                    Altere a URL e a Anon Public Key se desejar conectar a outro projeto Supabase.
+                  </p>
+                </div>
+              </div>
+
+              <form onSubmit={handleSaveConfig} className="space-y-4 text-xs">
+                <div>
+                  <label className="text-neutral-400 block mb-1 font-semibold">Supabase Project URL *</label>
+                  <input
+                    type="url"
+                    required
+                    value={inputUrl}
+                    onChange={(e) => setInputUrl(e.target.value)}
+                    placeholder="https://xyz.supabase.co"
+                    className="w-full px-3 py-2 bg-[#0e0e0e] border border-[#2c2c2c] rounded-lg text-white font-mono placeholder-neutral-600 focus:outline-hidden focus:border-[#c5a47e]"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-neutral-400 block mb-1 font-semibold">Supabase Anon Public Key *</label>
+                  <textarea
+                    rows={3}
+                    required
+                    value={inputKey}
+                    onChange={(e) => setInputKey(e.target.value)}
+                    placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                    className="w-full px-3 py-2 bg-[#0e0e0e] border border-[#2c2c2c] rounded-lg text-white font-mono placeholder-neutral-600 focus:outline-hidden focus:border-[#c5a47e]"
+                  />
+                </div>
+
+                <div className="flex gap-2 pt-2">
+                  <button
+                    type="submit"
+                    className="px-4 py-2 bg-[#c5a47e] hover:bg-[#b5946e] text-black font-bold rounded-lg text-xs cursor-pointer shadow-md"
+                  >
+                    Guardar e Testar Conexão
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleResetConfig}
+                    className="px-4 py-2 bg-[#1f1f1f] hover:bg-[#2a2a2a] text-white border border-[#333] rounded-lg text-xs cursor-pointer"
+                  >
+                    Restaurar Padrão
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {/* TAB 6: CODE SNIPPETS */}
         {activeTab === 'codigo' && (
           <div className="space-y-4">
             <div className="p-4 bg-[#141414] border border-[#262626] rounded-xl flex items-center justify-between">
               <div>
                 <h3 className="text-sm font-bold text-white flex items-center space-x-2">
                   <Code className="w-4 h-4 text-[#c5a47e]" />
-                  <span>Código de Inicialização e CRUD Supabase (JS/TS/React/Node)</span>
+                  <span>Código de Conexão e CRUD Supabase</span>
                 </h3>
                 <p className="text-xs text-neutral-400 mt-1">
-                  Cliente configurado com a URL e chave anónima fornecidas.
+                  Exemplo de inicialização e subscrição em tempo real com @supabase/supabase-js.
                 </p>
               </div>
               <button
-                onClick={handleCopyCode}
+                onClick={() => {
+                  navigator.clipboard.writeText(nodeSnippet);
+                  setCopiedCode(true);
+                  notify('Código copiado!', 'success');
+                  setTimeout(() => setCopiedCode(false), 2500);
+                }}
                 className="px-3 py-1.5 bg-[#c5a47e] text-black font-bold text-xs rounded-lg flex items-center space-x-1.5 hover:bg-[#b5946e] cursor-pointer"
               >
                 {copiedCode ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
@@ -904,7 +1027,7 @@ export async function eliminarUsuario(id) {
               </div>
               <button
                 onClick={() => setShowModal(false)}
-                className="text-neutral-400 hover:text-white p-1 rounded-md"
+                className="text-neutral-400 hover:text-white p-1 rounded-md cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -990,14 +1113,14 @@ export async function eliminarUsuario(id) {
                 <button
                   type="button"
                   onClick={() => setShowModal(false)}
-                  className="flex-1 py-2 bg-[#1c1c1c] text-neutral-300 rounded-lg hover:bg-[#252525]"
+                  className="flex-1 py-2 bg-[#1c1c1c] text-neutral-300 rounded-lg hover:bg-[#252525] cursor-pointer"
                 >
                   Cancelar
                 </button>
                 <button
                   type="submit"
                   disabled={loading}
-                  className="flex-1 py-2 bg-[#c5a47e] hover:bg-[#b5946e] text-black font-bold rounded-lg shadow-md uppercase tracking-wider"
+                  className="flex-1 py-2 bg-[#c5a47e] hover:bg-[#b5946e] text-black font-bold rounded-lg shadow-md uppercase tracking-wider cursor-pointer"
                 >
                   {loading ? 'A guardar...' : editingId ? 'Salvar no Supabase' : 'Inserir no Supabase'}
                 </button>
