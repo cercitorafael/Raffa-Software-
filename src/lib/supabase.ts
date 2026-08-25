@@ -5,35 +5,86 @@ import { createClient } from '@supabase/supabase-js';
 export const DEFAULT_SUPABASE_URL = 'https://qfreeubflnyqrwtnhzcm.supabase.co';
 export const DEFAULT_SUPABASE_ANON_KEY = 'sb_publishable__qMK0CSgZL12sldy20MS7A_pqdTnQYs';
 
-export function getSupabaseCredentials() {
-  const customUrl = typeof window !== 'undefined' ? localStorage.getItem('custom_supabase_url') : null;
-  const customKey = typeof window !== 'undefined' ? localStorage.getItem('custom_supabase_anon_key') : null;
+export function isValidHttpUrl(stringToTest: string | null | undefined): boolean {
+  if (!stringToTest || typeof stringToTest !== 'string') return false;
+  const trimmed = stringToTest.trim();
+  if (!trimmed.startsWith('http://') && !trimmed.startsWith('https://')) return false;
+  try {
+    const parsed = new URL(trimmed);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
 
-  const url =
-    customUrl ||
-    (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_SUPABASE_URL) ||
-    DEFAULT_SUPABASE_URL;
+export function getSupabaseCredentials(): { url: string; key: string } {
+  let customUrl: string | null = null;
+  let customKey: string | null = null;
+  if (typeof window !== 'undefined') {
+    try {
+      customUrl = localStorage.getItem('custom_supabase_url');
+      customKey = localStorage.getItem('custom_supabase_anon_key');
+    } catch {}
+  }
 
-  const key =
-    customKey ||
-    (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_SUPABASE_ANON_KEY) ||
-    DEFAULT_SUPABASE_ANON_KEY;
+  let envUrl: string | undefined;
+  let envKey: string | undefined;
+  try {
+    if (typeof import.meta !== 'undefined' && (import.meta as any).env) {
+      envUrl = (import.meta as any).env.VITE_SUPABASE_URL;
+      envKey = (import.meta as any).env.VITE_SUPABASE_ANON_KEY;
+    }
+  } catch {}
+
+  let url = DEFAULT_SUPABASE_URL;
+  if (isValidHttpUrl(customUrl)) {
+    url = customUrl!.trim();
+  } else if (isValidHttpUrl(envUrl)) {
+    url = envUrl!.trim();
+  }
+
+  // Safety fallback if URL is still invalid
+  if (!isValidHttpUrl(url)) {
+    url = DEFAULT_SUPABASE_URL;
+  }
+
+  let key = DEFAULT_SUPABASE_ANON_KEY;
+  if (customKey && customKey.trim().length > 0) {
+    key = customKey.trim();
+  } else if (envKey && envKey.trim().length > 0) {
+    key = envKey.trim();
+  }
+  if (!key || key.trim().length === 0) {
+    key = DEFAULT_SUPABASE_ANON_KEY;
+  }
 
   return { url: url.trim(), key: key.trim() };
 }
 
-export function saveSupabaseCredentials(url: string, key: string) {
+export function saveSupabaseCredentials(url: string, key: string): { success: boolean; message?: string } {
+  let formattedUrl = url.trim();
+  if (!formattedUrl.startsWith('http://') && !formattedUrl.startsWith('https://')) {
+    formattedUrl = 'https://' + formattedUrl;
+  }
+  if (!isValidHttpUrl(formattedUrl)) {
+    return { success: false, message: 'URL do Supabase inválida. Deve ser um endereço HTTP ou HTTPS válido.' };
+  }
   if (typeof window !== 'undefined') {
-    localStorage.setItem('custom_supabase_url', url.trim());
-    localStorage.setItem('custom_supabase_anon_key', key.trim());
+    try {
+      localStorage.setItem('custom_supabase_url', formattedUrl);
+      localStorage.setItem('custom_supabase_anon_key', key.trim());
+    } catch {}
     reinitSupabase();
   }
+  return { success: true };
 }
 
 export function resetSupabaseCredentials() {
   if (typeof window !== 'undefined') {
-    localStorage.removeItem('custom_supabase_url');
-    localStorage.removeItem('custom_supabase_anon_key');
+    try {
+      localStorage.removeItem('custom_supabase_url');
+      localStorage.removeItem('custom_supabase_anon_key');
+    } catch {}
     reinitSupabase();
   }
 }
@@ -48,28 +99,39 @@ export function extractProjectRef(url: string): string {
   }
 }
 
+function createSafeSupabaseClient(targetUrl: string, targetKey: string) {
+  const safeUrl = isValidHttpUrl(targetUrl) ? targetUrl.trim() : DEFAULT_SUPABASE_URL;
+  const safeKey = targetKey && targetKey.trim().length > 0 ? targetKey.trim() : DEFAULT_SUPABASE_ANON_KEY;
+  try {
+    return createClient(safeUrl, safeKey, {
+      auth: {
+        persistSession: true,
+        autoRefreshToken: true,
+      },
+    });
+  } catch (err) {
+    console.warn('Erro ao inicializar cliente Supabase com credenciais personalizadas, a usar fallback padrão:', err);
+    return createClient(DEFAULT_SUPABASE_URL, DEFAULT_SUPABASE_ANON_KEY, {
+      auth: {
+        persistSession: true,
+        autoRefreshToken: true,
+      },
+    });
+  }
+}
+
 const currentCreds = getSupabaseCredentials();
 export let SUPABASE_URL = currentCreds.url;
 export let SUPABASE_ANON_KEY = currentCreds.key;
 
-// Inicialização do cliente Supabase
-export let supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-  auth: {
-    persistSession: true,
-    autoRefreshToken: true,
-  },
-});
+// Inicialização segura do cliente Supabase
+export let supabase = createSafeSupabaseClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 export function reinitSupabase() {
   const creds = getSupabaseCredentials();
   SUPABASE_URL = creds.url;
   SUPABASE_ANON_KEY = creds.key;
-  supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-    auth: {
-      persistSession: true,
-      autoRefreshToken: true,
-    },
-  });
+  supabase = createSafeSupabaseClient(SUPABASE_URL, SUPABASE_ANON_KEY);
   return supabase;
 }
 

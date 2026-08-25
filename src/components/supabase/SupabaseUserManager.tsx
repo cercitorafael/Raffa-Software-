@@ -143,7 +143,14 @@ export const SupabaseUserManager: React.FC = () => {
       notify('Preencha a URL e a Anon Key do Supabase', 'warning');
       return;
     }
-    saveSupabaseCredentials(inputUrl.trim(), inputKey.trim());
+    const result = saveSupabaseCredentials(inputUrl.trim(), inputKey.trim());
+    if (!result.success) {
+      notify(result.message || 'URL do Supabase inválida', 'error');
+      return;
+    }
+    const updatedCreds = getSupabaseCredentials();
+    setInputUrl(updatedCreds.url);
+    setInputKey(updatedCreds.key);
     notify('Credenciais atualizadas com sucesso!', 'success');
     handleTestConnection();
   };

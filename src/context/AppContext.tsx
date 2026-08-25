@@ -399,6 +399,27 @@ export interface AppContextType {
 const AppContext = createContext<AppContextType | null>(null);
 
 const STORAGE_PREFIX = 'pos_erp_enterprise_';
+const SYSTEM_RESET_VERSION_KEY = 'pos_erp_system_clean_reset_v4';
+
+// One-time automatic cleanup of legacy mock data in browser storage to ensure a clean virgin system
+if (typeof window !== 'undefined') {
+  try {
+    if (localStorage.getItem(SYSTEM_RESET_VERSION_KEY) !== 'true') {
+      const keysToRemove: string[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && k.startsWith(STORAGE_PREFIX)) {
+          keysToRemove.push(k);
+        }
+      }
+      keysToRemove.forEach((k) => localStorage.removeItem(k));
+      localStorage.setItem(SYSTEM_RESET_VERSION_KEY, 'true');
+      offlineDB.clearAll().catch(() => {});
+    }
+  } catch (e) {
+    console.error('System reset migration error:', e);
+  }
+}
 
 function loadFromStorage<T>(key: string, fallback: T): T {
   try {
@@ -455,7 +476,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     loadFromStorage('users', initialUsers)
   );
   const [currentUser, setCurrentUser] = useState<User>(() =>
-    loadFromStorage('user', initialUsers[1]) // Gonçalo (Caixa) by default
+    loadFromStorage('user', initialUsers[0] || initialUsers[1])
   );
 
   // Authentication & Security State - Always require login when accessing the system
@@ -558,7 +579,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [salesHistory, setSalesHistory] = useState<Sale[]>(() => {
     const stored = loadFromStorage<Sale[]>('salesHistory', initialSales);
-    return Array.isArray(stored) && stored.length > 0 ? stored : initialSales;
+    return Array.isArray(stored) ? stored : initialSales;
   });
   const [lastCompletedSale, setLastCompletedSale] = useState<Sale | null>(null);
 
@@ -3286,7 +3307,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setTimeEntries(initialTimeEntries);
     setPayrolls(initialPayrolls);
     setEmployeeShifts(initialEmployeeShifts);
+    setShiftsHistory([]);
     setCustomers(initialCustomers);
+    setCallLogs([]);
     setLeads(initialLeads);
     setOmnichannelOrders(initialOmnichannelOrders);
     setEvents(initialEvents);
