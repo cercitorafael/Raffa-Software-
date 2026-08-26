@@ -41,8 +41,7 @@ export const Navbar: React.FC<{ onOpenShiftModal: () => void }> = ({ onOpenShift
     setCurrentTerminal,
     users,
     currentUser,
-    setCurrentUser,
-    switchRole,
+    hasPermission,
     isOnline,
     setIsOnline,
     isSyncing,
@@ -413,93 +412,78 @@ export const Navbar: React.FC<{ onOpenShiftModal: () => void }> = ({ onOpenShift
             </div>
           </button>
 
-          {/* Quick Role Switcher & User Management Dropdown */}
-          <div className="absolute right-0 mt-1 w-72 bg-[#141414] rounded-lg shadow-2xl border border-[#262626] py-2 hidden group-hover:block group-focus-within:block z-50 animate-in fade-in slide-in-from-top-2">
-            <div className="px-3 py-2 border-b border-[#262626] flex items-center justify-between">
-              <div>
-                <p className="text-[10px] uppercase tracking-widest font-semibold text-neutral-400">
-                  Sessão Atual
-                </p>
-                <p className="text-xs text-neutral-200 font-semibold">{currentUser.name}</p>
-                <p className="text-[11px] text-neutral-400 font-mono">@{currentUser.username}</p>
+          {/* Authenticated User Session & Security Dropdown (No Simulation) */}
+          <div className="absolute right-0 mt-1 w-80 bg-[#141414] rounded-xl shadow-2xl border border-[#262626] py-2 hidden group-hover:block group-focus-within:block z-50 animate-in fade-in slide-in-from-top-2">
+            <div className="px-4 py-3 border-b border-[#262626]">
+              <div className="flex items-center space-x-3">
+                <img
+                  src={currentUser.avatarUrl || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100'}
+                  alt={currentUser.name}
+                  className="w-10 h-10 rounded-full object-cover border border-[#c5a47e]/40 shrink-0"
+                />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs text-neutral-200 font-bold truncate">{currentUser.name}</p>
+                    <span className={`text-[9px] font-bold uppercase px-2 py-0.5 rounded-full border ${roleLabels[currentUser.role]?.color}`}>
+                      {roleLabels[currentUser.role]?.badge}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-neutral-400 font-mono">@{currentUser.username || 'utilizador'}</p>
+                  <p className="text-[10px] text-neutral-500 truncate">{currentUser.email}</p>
+                </div>
               </div>
-              <span className={`text-[9px] font-bold uppercase px-2 py-0.5 rounded-full border ${roleLabels[currentUser.role]?.color}`}>
-                {roleLabels[currentUser.role]?.badge}
-              </span>
+
+              {/* Context Details */}
+              <div className="mt-2.5 pt-2 border-t border-[#202020] grid grid-cols-2 gap-2 text-[10px]">
+                <div>
+                  <span className="text-neutral-500 block">Loja Afeta:</span>
+                  <span className="text-neutral-300 font-medium truncate block">{currentStore?.name || 'Loja Principal'}</span>
+                </div>
+                <div>
+                  <span className="text-neutral-500 block">Terminal:</span>
+                  <span className="text-neutral-300 font-medium truncate block">{currentTerminal?.name || 'POS-01'}</span>
+                </div>
+              </div>
             </div>
 
-            {/* Direct Link to User Management */}
-            <div className="p-2 border-b border-[#262626] space-y-1.5">
-              <button
-                onClick={() => setActiveNavTab('users')}
-                className="w-full py-1.5 px-3 bg-[#1a1a1a] hover:bg-[#222222] text-[#c5a47e] border border-[#c5a47e]/30 rounded-md text-xs font-semibold flex items-center justify-center space-x-2 transition-all cursor-pointer shadow-xs"
-              >
-                <UserCheck className="w-3.5 h-3.5 text-[#c5a47e]" />
-                <span>Gestão de Utilizadores</span>
-              </button>
-              <div className="grid grid-cols-2 gap-1.5">
+            {/* Quick Actions */}
+            <div className="p-2 space-y-1.5">
+              {(currentUser.role === 'admin' || hasPermission('users', 'read')) && (
+                <button
+                  onClick={() => setActiveNavTab('users')}
+                  className="w-full py-2 px-3 bg-[#1a1a1a] hover:bg-[#222222] text-[#c5a47e] border border-[#c5a47e]/30 rounded-lg text-xs font-semibold flex items-center justify-center space-x-2 transition-all cursor-pointer shadow-xs"
+                >
+                  <UserCheck className="w-4 h-4 text-[#c5a47e]" />
+                  <span>Gestão de Utilizadores & Acessos</span>
+                </button>
+              )}
+
+              <div className="grid grid-cols-2 gap-1.5 pt-1">
                 <button
                   onClick={lockScreen}
-                  className="py-1.5 px-2 bg-[#1a1a1a] hover:bg-amber-950/30 text-amber-400 hover:text-amber-300 border border-[#262626] hover:border-amber-500/30 rounded-md text-[11px] font-semibold flex items-center justify-center space-x-1.5 transition-all cursor-pointer"
+                  className="py-2 px-2 bg-[#1a1a1a] hover:bg-amber-950/30 text-amber-400 hover:text-amber-300 border border-[#262626] hover:border-amber-500/30 rounded-lg text-[11px] font-semibold flex items-center justify-center space-x-1.5 transition-all cursor-pointer"
+                  title="Bloquear terminal com código PIN"
                 >
-                  <Lock className="w-3 h-3" />
-                  <span>Bloquear</span>
+                  <Lock className="w-3.5 h-3.5" />
+                  <span>Bloquear Terminal</span>
                 </button>
                 <button
                   onClick={logout}
-                  className="py-1.5 px-2 bg-[#1a1a1a] hover:bg-rose-950/30 text-rose-400 hover:text-rose-300 border border-[#262626] hover:border-rose-500/30 rounded-md text-[11px] font-semibold flex items-center justify-center space-x-1.5 transition-all cursor-pointer"
+                  className="py-2 px-2 bg-[#1a1a1a] hover:bg-rose-950/30 text-rose-400 hover:text-rose-300 border border-[#262626] hover:border-rose-500/30 rounded-lg text-[11px] font-semibold flex items-center justify-center space-x-1.5 transition-all cursor-pointer"
+                  title="Encerrar sessão de forma segura"
                 >
-                  <LogOut className="w-3 h-3" />
-                  <span>Terminar</span>
+                  <LogOut className="w-3.5 h-3.5" />
+                  <span>Terminar Sessão</span>
                 </button>
               </div>
             </div>
 
-            <div className="px-3 py-1.5 text-[10px] uppercase tracking-widest font-semibold text-neutral-400">
-              Simular Perfil / RBAC
-            </div>
-
-            {(['admin', 'gerente', 'caixa', 'financeiro', 'rh', 'comprador'] as Role[]).map((r) => (
-              <button
-                key={r}
-                onClick={() => switchRole(r)}
-                className={`w-full text-left px-3 py-1.5 text-xs flex items-center justify-between hover:bg-[#1a1a1a] transition-colors cursor-pointer ${
-                  currentUser?.role === r ? 'bg-[#c5a47e]/15 font-semibold text-[#c5a47e]' : 'text-neutral-300'
-                }`}
-              >
-                <div className="flex items-center space-x-2">
-                  <Shield className="w-3.5 h-3.5 text-neutral-400" />
-                  <span>{roleLabels[r]?.name || r}</span>
-                </div>
-                <span className={`text-[9px] px-1.5 py-0.5 rounded-xs border ${roleLabels[r]?.color || 'border-neutral-700 text-neutral-300'}`}>
-                  {roleLabels[r]?.badge || r}
-                </span>
-              </button>
-            ))}
-
-            <div className="px-3 pt-2 pb-1 border-t border-[#262626] text-[10px] uppercase tracking-widest font-semibold text-neutral-400">
-              Alternar Utilizador da Equipa
-            </div>
-
-            <div className="max-h-36 overflow-y-auto px-1 space-y-0.5">
-              {(users || []).map((u) => (
-                <button
-                  key={u.id}
-                  onClick={() => {
-                    setCurrentUser(u);
-                    switchRole(u.roleId as Role);
-                  }}
-                  className={`w-full text-left px-2 py-1.5 text-[11px] rounded flex items-center justify-between hover:bg-[#1f1f1f] cursor-pointer transition-colors ${
-                    currentUser?.id === u.id ? 'bg-[#c5a47e]/10 text-[#c5a47e] font-semibold' : 'text-neutral-300'
-                  }`}
-                >
-                  <div className="truncate">
-                    <span>{u.name}</span>
-                    <span className="text-[10px] text-neutral-500 ml-1 font-mono">(@{u.username})</span>
-                  </div>
-                  <span className="text-[9px] text-neutral-400 capitalize font-mono">{u.roleId}</span>
-                </button>
-              ))}
+            {/* Strict Authentication Note */}
+            <div className="mx-2 mt-1 p-2 bg-[#0d0d0d] border border-[#1f1f1f] rounded-lg text-[10px] text-neutral-400 flex items-start space-x-2">
+              <ShieldCheck className="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" />
+              <p className="leading-tight">
+                Sessão com autenticação individual e trilha de auditoria AT. A troca de perfil exige novo login com credenciais/PIN.
+              </p>
             </div>
           </div>
         </div>

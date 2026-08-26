@@ -87,7 +87,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
     accountsPayable,
     accountsReceivable,
     hasPermission,
-    switchRole,
+    setActiveNavTab,
     theme,
     setTheme,
     toggleTheme,
@@ -289,10 +289,10 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
         </div>
         <div className="pt-2 flex items-center space-x-3">
           <button
-            onClick={() => switchRole('admin')}
+            onClick={() => setActiveNavTab('pos')}
             className="px-4 py-2 bg-[#c5a47e] hover:bg-[#b5946e] text-neutral-950 font-bold text-xs rounded-xl cursor-pointer shadow-md transition-colors"
           >
-            Alternar p/ Perfil de Administrador
+            Voltar ao Ponto de Venda
           </button>
         </div>
       </div>
@@ -1318,13 +1318,6 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
 
               <div className="flex items-center space-x-2">
                 <button
-                  onClick={() => switchRole('admin')}
-                  className="px-3 py-1.5 bg-[#262626] hover:bg-[#333333] text-neutral-200 text-xs rounded-md transition-colors cursor-pointer border border-[#3a3a3a]"
-                  title="Simular privilégios de Administrador Geral"
-                >
-                  ⚡ Elevar a Administrador
-                </button>
-                <button
                   onClick={() => {
                     setEditingUser(null);
                     setUserForm({
@@ -1356,7 +1349,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
                     <th className="px-4 py-3">Lojas Autorizadas</th>
                     <th className="px-4 py-3 text-center">PIN POS</th>
                     <th className="px-4 py-3 text-center">Estado / Sessão</th>
-                    <th className="px-4 py-3 text-right">Ações & Sessão</th>
+                    <th className="px-4 py-3 text-right">Ações</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#262626]">
@@ -1414,20 +1407,9 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
                         </td>
                         <td className="px-4 py-3 text-right">
                           <div className="flex items-center justify-end space-x-2">
-                            {!isCurrent ? (
-                              <button
-                                onClick={() => {
-                                  setCurrentUser(u);
-                                  switchRole((u.roleId || u.role) as Role);
-                                }}
-                                title={`Iniciar sessão como ${u.name}`}
-                                className="px-2 py-1 bg-[#1f1f1f] hover:bg-[#2a2a2a] text-neutral-200 border border-[#333] rounded text-[11px] font-medium cursor-pointer transition-colors"
-                              >
-                                Iniciar Sessão
-                              </button>
-                            ) : (
-                              <span className="text-[11px] text-emerald-400 font-medium px-2 py-1">
-                                Em Utilização
+                            {isCurrent && (
+                              <span className="text-[11px] text-emerald-400 font-medium px-2 py-1 bg-emerald-500/10 rounded-md border border-emerald-500/20">
+                                Sessão Ativa
                               </span>
                             )}
                             <button

@@ -236,6 +236,7 @@ export interface AppContextType {
   deleteWarehouse: (id: string) => void;
 
   stock: StockItem[];
+  getAvailableStock: (productId: string, warehouseId?: string) => number;
   lots: LotBatch[];
   addLot: (lot: Omit<LotBatch, 'id'>) => void;
   updateLot: (id: string, lot: Partial<LotBatch>) => void;
@@ -1559,12 +1560,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (currentUser.role === 'admin') return true;
     if (!currentUser.permissions) {
       const rolePerms = defaultPermissionsByRole[currentUser.role];
-      if (!rolePerms) return true;
+      if (!rolePerms) return false;
       const modPerm = rolePerms[module];
-      return modPerm ? !!modPerm[action] : true;
+      return modPerm ? !!modPerm[action] : false;
     }
     const modPerm = currentUser.permissions[module];
-    return modPerm ? !!modPerm[action] : true;
+    return modPerm ? !!modPerm[action] : false;
   };
 
   const updateRolePermissions = (
@@ -2465,13 +2466,68 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     sound.playCashRegisterSound();
   };
 
+  const getAvailableStock = useCallback(
+    (productId: string, warehouseId?: string): number => {
+      if (!productId || productId.startsWith('custom-')) return 999999;
+      const targetWhId =
+        warehouseId ||
+        currentStore?.defaultWarehouseId ||
+        warehouses[0]?.id;
+
+      if (targetWhId) {
+        const item = stock.find(
+          (s) => s.productId === productId && s.warehouseId === targetWhId
+        );
+        if (item) {
+          return Math.max(0, (Number(item.quantity) || 0) - (Number(item.reserved) || 0));
+        }
+      }
+
+      // Fallback: check total available stock across all warehouses
+      const totalQty = stock
+        .filter((s) => s.productId === productId)
+        .reduce(
+          (sum, s) =>
+            sum + Math.max(0, (Number(s.quantity) || 0) - (Number(s.reserved) || 0)),
+          0
+        );
+
+      return Math.max(0, totalQty);
+    },
+    [stock, currentStore?.defaultWarehouseId, warehouses]
+  );
+
   const addToCart = (product: Product, quantity = 1) => {
+    const available = getAvailableStock(product.id);
+
+    // Strict block on zero or negative stock
+    if (available <= 0) {
+      sound.playError();
+      notify(`Venda não permitida: O artigo "${product.name}" está sem stock ou com stock zero (Stock: 0).`, 'error');
+      return;
+    }
+
+    let addedSuccessfully = false;
+
     setCart((prev) => {
       const idx = prev.findIndex((i) => i.productId === product.id);
+      const currentInCart = idx >= 0 ? prev[idx].quantity : 0;
+      const targetQty = currentInCart + quantity;
+
+      if (targetQty > available) {
+        sound.playError();
+        notify(
+          `Stock insuficiente para "${product.name}". Disponível: ${available} ${product.unit || 'un'} (já no cesto: ${currentInCart}).`,
+          'warning'
+        );
+        return prev;
+      }
+
+      addedSuccessfully = true;
       const targetTaxRate = typeof product.taxRate === 'number' ? product.taxRate : 23;
       if (idx >= 0) {
         const item = prev[idx];
-        const newQty = item.quantity + quantity;
+        const newQty = targetQty;
         const discountPct = Number(item.discountPercent ?? item.discount ?? 0);
         const unitPrice = Number(item.unitPrice || product.price || 0);
         const gross = newQty * unitPrice;
@@ -2495,6 +2551,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         };
         return updated;
       }
+
       const unitPrice = Number(product.price || 0);
       const gross = quantity * unitPrice;
       const discountPct = 0;
@@ -2521,7 +2578,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         },
       ];
     });
-    sound.playBeep();
+
+    if (addedSuccessfully) {
+      sound.playBeep();
+    }
   };
 
   const removeFromCart = (productId: string) => {
@@ -2529,12 +2589,58 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const updateCartQuantity = (productId: string, quantityOrDelta: number, isDelta = false) => {
+    const available = getAvailableStock(productId);
+
     setCart((prev) => {
+      const targetItem = prev.find((i) => i.productId === productId);
+      if (!targetItem) return prev;
+
+      const newQty = isDelta ? targetItem.quantity + quantityOrDelta : quantityOrDelta;
+      if (newQty <= 0) {
+        return prev.filter((i) => i.productId !== productId);
+      }
+
+      // Check stock availability
+      if (available <= 0) {
+        sound.playError();
+        notify(`Artigo "${targetItem.productName}" sem stock. Removido do cesto.`, 'error');
+        return prev.filter((i) => i.productId !== productId);
+      }
+
+      if (newQty > available) {
+        sound.playError();
+        notify(
+          `Stock insuficiente para "${targetItem.productName}". Quantidade máxima disponível: ${available}.`,
+          'warning'
+        );
+        return prev.map((item) => {
+          if (item.productId === productId) {
+            const cappedQty = available;
+            const discountPct = Number(item.discountPercent ?? item.discount ?? 0);
+            const unitPrice = Number(item.unitPrice || 0);
+            const gross = cappedQty * unitPrice;
+            const discountAmount = (gross * discountPct) / 100;
+            const total = Math.max(0, gross - discountAmount);
+            const rate = typeof item.taxRate === 'number' ? item.taxRate : 23;
+            const base = total / (1 + rate / 100);
+            const taxAmount = total - base;
+            return {
+              ...item,
+              quantity: cappedQty,
+              discountPercent: discountPct,
+              discount: discountPct,
+              discountAmount,
+              taxAmount,
+              total,
+            };
+          }
+          return item;
+        });
+      }
+
       return prev
         .map((item) => {
           if (item.productId === productId) {
-            const newQty = isDelta ? item.quantity + quantityOrDelta : quantityOrDelta;
-            if (newQty <= 0) return null;
             const discountPct = Number(item.discountPercent ?? item.discount ?? 0);
             const unitPrice = Number(item.unitPrice || 0);
             const gross = newQty * unitPrice;
@@ -2599,6 +2705,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     customerName?: string
   ): Promise<Sale> => {
     if (cart.length === 0) throw new Error('Carrinho vazio');
+
+    // Strict stock verification before finalizing sale
+    for (const item of cart) {
+      if (!item.productId || item.productId.startsWith('custom-')) continue;
+      const available = getAvailableStock(item.productId, currentStore.defaultWarehouseId);
+      if (available <= 0) {
+        sound.playError();
+        notify(`Venda não permitida: O artigo "${item.productName}" está com stock zero ou esgotado.`, 'error');
+        throw new Error(`Artigo "${item.productName}" está sem stock.`);
+      }
+      if (item.quantity > available) {
+        sound.playError();
+        notify(
+          `Venda não permitida: Quantidade solicitada de "${item.productName}" (${item.quantity}) excede o stock disponível (${available}).`,
+          'error'
+        );
+        throw new Error(`Stock insuficiente para "${item.productName}".`);
+      }
+    }
 
     const subtotal = cart.reduce((acc, item) => acc + Number(item.unitPrice || 0) * Number(item.quantity || 0), 0);
     const itemDiscounts = cart.reduce((acc, item) => acc + Number(item.discountAmount || 0), 0);
@@ -3598,6 +3723,26 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       notes: `Gerada a partir da Encomenda Omnicanal ${order.orderNumber}`,
     };
 
+    // Check stock before converting omnichannel order
+    for (const item of items) {
+      if (!item.productId.startsWith('custom-')) {
+        const available = getAvailableStock(
+          item.productId,
+          order.pickupStoreId ? stores.find((s) => s.id === order.pickupStoreId)?.defaultWarehouseId : currentStore.defaultWarehouseId
+        );
+        if (available <= 0) {
+          sound.playError();
+          notify(`Não é possível converter a encomenda: O artigo "${item.productName}" está com stock zero.`, 'error');
+          return null;
+        }
+        if (item.quantity > available) {
+          sound.playError();
+          notify(`Não é possível converter a encomenda: Stock insuficiente para "${item.productName}" (Disponível: ${available}).`, 'error');
+          return null;
+        }
+      }
+    }
+
     // Deduct stock for converted omnichannel order
     deductStockForItems(
       items,
@@ -3756,6 +3901,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         updateWarehouse,
         deleteWarehouse,
         stock,
+        getAvailableStock,
         lots,
         addLot,
         updateLot,

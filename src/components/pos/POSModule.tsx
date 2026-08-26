@@ -27,6 +27,7 @@ import {
   Lock,
   Unlock,
   AlertTriangle,
+  ShieldAlert,
 } from 'lucide-react';
 import { PaymentModal } from './PaymentModal';
 import { ReceiptModal } from './ReceiptModal';
@@ -38,6 +39,7 @@ export const POSModule: React.FC = () => {
     products,
     categories,
     stock,
+    getAvailableStock,
     currentStore,
     currentCompany,
     cart,
@@ -129,6 +131,12 @@ export const POSModule: React.FC = () => {
     );
 
     if (found) {
+      const available = getProductStock(found.id);
+      if (available <= 0) {
+        sound.playError();
+        notify(`Venda não permitida: O artigo "${found.name}" está sem stock ou com stock zero (Stock: 0).`, 'error');
+        return;
+      }
       addToCart(found, qty);
       setBarcodeInput('');
       notify(`Adicionado: ${qty}x ${found.name}`, 'success');
@@ -159,15 +167,14 @@ export const POSModule: React.FC = () => {
 
   // Get stock for store default warehouse with fallback
   const getProductStock = (productId: string) => {
-    const item = stock.find(
-      (s) => s.productId === productId && s.warehouseId === currentStore.defaultWarehouseId
-    );
-    if (item) return item.quantity;
-    const totalAcrossWarehouses = stock
-      .filter((s) => s.productId === productId)
-      .reduce((sum, s) => sum + s.quantity, 0);
-    return totalAcrossWarehouses;
+    return getAvailableStock(productId, currentStore?.defaultWarehouseId);
   };
+
+  // Stock validity for entire cart
+  const invalidStockItems = cart.filter(
+    (item) => !item.productId.startsWith('custom-') && (getProductStock(item.productId) <= 0 || item.quantity > getProductStock(item.productId))
+  );
+  const hasStockErrors = invalidStockItems.length > 0;
 
   return (
     <div className="flex-1 flex flex-col md:flex-row h-full overflow-hidden bg-[#0a0a0a] text-[#e5e5e5]">
@@ -237,16 +244,34 @@ export const POSModule: React.FC = () => {
           {/* Quick Barcode Sample Pills for instant test */}
           <div className="flex items-center gap-1.5 custom-horizontal-scrollbar py-1 text-[11px] text-neutral-400">
             <span className="font-semibold text-neutral-400 shrink-0 uppercase tracking-widest text-[10px]">Scans Rápidos:</span>
-            {products.slice(0, 8).map((p) => (
-              <button
-                key={p.id}
-                type="button"
-                onClick={() => addToCart(p)}
-                className="px-2 py-0.5 bg-[#0d0d0d] hover:bg-[#c5a47e]/20 hover:text-[#c5a47e] text-neutral-300 rounded-md border border-[#262626] shrink-0 transition-colors cursor-pointer"
-              >
-                + {(p.name || '').split(' ')[0]} ({formatCurrency(p.price)})
-              </button>
-            ))}
+            {products.slice(0, 8).map((p) => {
+              const pStock = getProductStock(p.id);
+              const isOutOfStock = pStock <= 0;
+              return (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => {
+                    if (isOutOfStock) {
+                      sound.playError();
+                      notify(`Venda não permitida: O artigo "${p.name}" está sem stock ou esgotado (Stock: 0).`, 'error');
+                      return;
+                    }
+                    addToCart(p);
+                  }}
+                  disabled={isOutOfStock}
+                  className={`px-2 py-0.5 rounded-md border shrink-0 transition-colors cursor-pointer text-[11px] ${
+                    isOutOfStock
+                      ? 'bg-rose-950/30 text-rose-400/60 border-rose-900/30 cursor-not-allowed line-through'
+                      : 'bg-[#0d0d0d] hover:bg-[#c5a47e]/20 hover:text-[#c5a47e] text-neutral-300 border-[#262626]'
+                  }`}
+                  title={isOutOfStock ? `Sem stock disponível (${pStock})` : `Adicionar ${p.name}`}
+                >
+                  + {(p.name || '').split(' ')[0]} ({formatCurrency(p.price)})
+                  {isOutOfStock && <span className="ml-1 text-[9px] text-rose-400 font-bold font-mono">0</span>}
+                </button>
+              );
+            })}
           </div>
         </div>
 
@@ -350,15 +375,27 @@ export const POSModule: React.FC = () => {
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-4 gap-3">
               {filteredProducts.map((product) => {
                 const currentStock = getProductStock(product.id);
-                const isLowStock = currentStock <= product.minStock;
+                const isOutOfStock = currentStock <= 0;
+                const isLowStock = !isOutOfStock && currentStock <= product.minStock;
                 const inCart = cart.find((c) => c.productId === product.id);
 
                 return (
                   <div
                     key={product.id}
-                    onClick={() => addToCart(product)}
-                    className={`bg-[#141414] rounded-xl border overflow-hidden shadow-xs hover:border-[#c5a47e]/60 hover:shadow-md transition-all cursor-pointer flex flex-col group active:scale-98 select-none ${
-                      inCart ? 'border-[#c5a47e]/50 ring-1 ring-[#c5a47e]/30' : 'border-[#262626]'
+                    onClick={() => {
+                      if (isOutOfStock) {
+                        sound.playError();
+                        notify(`Venda não permitida: O artigo "${product.name}" está sem stock ou esgotado (Stock: 0).`, 'error');
+                        return;
+                      }
+                      addToCart(product);
+                    }}
+                    className={`bg-[#141414] rounded-xl border overflow-hidden shadow-xs transition-all flex flex-col group select-none ${
+                      isOutOfStock
+                        ? 'border-rose-900/30 opacity-60 cursor-not-allowed bg-[#140f0f]'
+                        : inCart
+                        ? 'border-[#c5a47e]/50 ring-1 ring-[#c5a47e]/30 cursor-pointer hover:border-[#c5a47e]/60 hover:shadow-md active:scale-98'
+                        : 'border-[#262626] cursor-pointer hover:border-[#c5a47e]/60 hover:shadow-md active:scale-98'
                     }`}
                   >
                     {/* Image container with badges */}
@@ -369,19 +406,21 @@ export const POSModule: React.FC = () => {
                           'https://images.unsplash.com/photo-1559056199-641a0ac8b55e?w=300'
                         }
                         alt={product.name}
-                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300 opacity-90 group-hover:opacity-100"
+                        className={`w-full h-full object-cover transition-transform duration-300 ${
+                          isOutOfStock ? 'grayscale opacity-50' : 'group-hover:scale-105 opacity-90 group-hover:opacity-100'
+                        }`}
                       />
                       <div className="absolute top-1.5 right-1.5 flex flex-col gap-1 items-end">
                         <span
                           className={`text-[9px] font-bold px-1.5 py-0.5 rounded-md shadow-xs ${
-                            currentStock === 0
-                              ? 'bg-rose-900/90 text-rose-200 border border-rose-700/50'
+                            isOutOfStock
+                              ? 'bg-rose-900/90 text-rose-200 border border-rose-700/50 uppercase font-mono'
                               : isLowStock
-                              ? 'bg-amber-900/90 text-amber-200 border border-amber-700/50 animate-pulse'
-                              : 'bg-[#0a0a0a]/90 text-neutral-300 border border-[#262626]'
+                              ? 'bg-amber-900/90 text-amber-200 border border-amber-700/50 animate-pulse font-mono'
+                              : 'bg-[#0a0a0a]/90 text-neutral-300 border border-[#262626] font-mono'
                           }`}
                         >
-                          Stock: {currentStock}
+                          {isOutOfStock ? 'SEM STOCK (0)' : `Stock: ${currentStock}`}
                         </span>
                         {inCart && (
                           <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-md bg-[#c5a47e] text-neutral-950 font-mono shadow-xs">
@@ -403,13 +442,13 @@ export const POSModule: React.FC = () => {
                         <span className="text-[10px] text-neutral-400 font-mono block mb-0.5">
                           {product.sku}
                         </span>
-                        <h4 className="text-xs font-medium text-[#e5e5e5] line-clamp-2 leading-snug">
+                        <h4 className={`text-xs font-medium line-clamp-2 leading-snug ${isOutOfStock ? 'text-neutral-500 line-through' : 'text-[#e5e5e5]'}`}>
                           {product.name}
                         </h4>
                       </div>
 
                       <div className="flex items-baseline justify-between mt-2 pt-2 border-t border-[#262626]">
-                        <span className="text-base font-serif font-bold text-[#c5a47e]">
+                        <span className={`text-base font-serif font-bold ${isOutOfStock ? 'text-neutral-500' : 'text-[#c5a47e]'}`}>
                           {formatCurrency(product.price)}
                         </span>
                         <span className="text-[10px] text-neutral-400 font-medium">/{product.unit}</span>
@@ -424,16 +463,28 @@ export const POSModule: React.FC = () => {
             <div className="bg-[#141414] border border-[#262626] rounded-xl overflow-hidden shadow-xs divide-y divide-[#202020]">
               {filteredProducts.map((product) => {
                 const currentStock = getProductStock(product.id);
-                const isLowStock = currentStock <= product.minStock;
+                const isOutOfStock = currentStock <= 0;
+                const isLowStock = !isOutOfStock && currentStock <= product.minStock;
                 const inCart = cart.find((c) => c.productId === product.id);
                 const categoryName = categories.find((c) => c.id === product.category)?.name || product.category;
 
                 return (
                   <div
                     key={product.id}
-                    onClick={() => addToCart(product)}
-                    className={`p-2.5 sm:p-3 flex items-center justify-between gap-3 hover:bg-[#1c1c1c] transition-all cursor-pointer group active:bg-[#222] select-none ${
-                      inCart ? 'bg-[#c5a47e]/5 border-l-2 border-l-[#c5a47e]' : ''
+                    onClick={() => {
+                      if (isOutOfStock) {
+                        sound.playError();
+                        notify(`Venda não permitida: O artigo "${product.name}" está sem stock ou esgotado (Stock: 0).`, 'error');
+                        return;
+                      }
+                      addToCart(product);
+                    }}
+                    className={`p-2.5 sm:p-3 flex items-center justify-between gap-3 transition-all select-none ${
+                      isOutOfStock
+                        ? 'opacity-60 bg-[#120e0e] cursor-not-allowed'
+                        : inCart
+                        ? 'bg-[#c5a47e]/5 border-l-2 border-l-[#c5a47e] hover:bg-[#1c1c1c] cursor-pointer group active:bg-[#222]'
+                        : 'hover:bg-[#1c1c1c] cursor-pointer group active:bg-[#222]'
                     }`}
                   >
                     {/* Thumbnail & Product Details */}
@@ -445,7 +496,7 @@ export const POSModule: React.FC = () => {
                             'https://images.unsplash.com/photo-1559056199-641a0ac8b55e?w=300'
                           }
                           alt={product.name}
-                          className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+                          className={`w-full h-full object-cover ${isOutOfStock ? 'grayscale opacity-50' : 'group-hover:scale-105 transition-transform'}`}
                         />
                         {inCart && (
                           <div className="absolute inset-0 bg-[#c5a47e]/30 flex items-center justify-center font-bold text-xs text-black font-mono">
@@ -463,7 +514,7 @@ export const POSModule: React.FC = () => {
                             {categoryName}
                           </span>
                         </div>
-                        <h4 className="text-xs font-semibold text-neutral-200 group-hover:text-[#c5a47e] transition-colors truncate mt-0.5">
+                        <h4 className={`text-xs font-semibold truncate mt-0.5 ${isOutOfStock ? 'text-neutral-500 line-through' : 'text-neutral-200 group-hover:text-[#c5a47e] transition-colors'}`}>
                           {product.name}
                         </h4>
                         <div className="flex items-center space-x-2 mt-0.5">
@@ -478,14 +529,14 @@ export const POSModule: React.FC = () => {
                     <div className="hidden md:flex items-center space-x-2 shrink-0">
                       <span
                         className={`text-[10px] font-bold px-2 py-0.5 rounded-md border font-mono ${
-                          currentStock === 0
-                            ? 'bg-rose-950/60 text-rose-300 border-rose-800/40'
+                          isOutOfStock
+                            ? 'bg-rose-950/60 text-rose-300 border-rose-800/40 uppercase'
                             : isLowStock
                             ? 'bg-amber-950/60 text-amber-300 border-amber-800/40'
                             : 'bg-emerald-950/40 text-emerald-300 border-emerald-800/40'
                         }`}
                       >
-                        Stock: {currentStock} {product.unit}
+                        {isOutOfStock ? 'Sem Stock (0)' : `Stock: ${currentStock} ${product.unit}`}
                       </span>
                       <span className="text-[10px] font-mono text-neutral-400 bg-[#0d0d0d] px-1.5 py-0.5 rounded-md border border-[#262626]">
                         IVA {product.taxRate}%
@@ -495,7 +546,7 @@ export const POSModule: React.FC = () => {
                     {/* Price & Quick Add Button */}
                     <div className="flex items-center space-x-3 shrink-0">
                       <div className="text-right">
-                        <div className="text-sm sm:text-base font-bold font-mono text-[#c5a47e]">
+                        <div className={`text-sm sm:text-base font-bold font-mono ${isOutOfStock ? 'text-neutral-500' : 'text-[#c5a47e]'}`}>
                           {formatCurrency(product.price)}
                         </div>
                         <div className="text-[10px] text-neutral-500">/{product.unit}</div>
@@ -503,18 +554,28 @@ export const POSModule: React.FC = () => {
 
                       <button
                         type="button"
+                        disabled={isOutOfStock}
                         onClick={(e) => {
                           e.stopPropagation();
+                          if (isOutOfStock) {
+                            sound.playError();
+                            notify(`Venda não permitida: O artigo "${product.name}" está sem stock ou esgotado (Stock: 0).`, 'error');
+                            return;
+                          }
                           addToCart(product);
                         }}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center space-x-1 transition-all cursor-pointer ${
-                          inCart
-                            ? 'bg-[#c5a47e] text-neutral-950 shadow-xs'
-                            : 'bg-[#1f1f1f] hover:bg-[#c5a47e] text-neutral-200 hover:text-neutral-950 border border-[#333]'
+                        className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center space-x-1 transition-all ${
+                          isOutOfStock
+                            ? 'bg-rose-950/30 text-rose-400/50 border border-rose-900/30 cursor-not-allowed'
+                            : inCart
+                            ? 'bg-[#c5a47e] text-neutral-950 shadow-xs cursor-pointer'
+                            : 'bg-[#1f1f1f] hover:bg-[#c5a47e] text-neutral-200 hover:text-neutral-950 border border-[#333] cursor-pointer'
                         }`}
                       >
                         <Plus className="w-3.5 h-3.5" />
-                        <span className="hidden sm:inline">{inCart ? `+1 (${inCart.quantity})` : 'Adicionar'}</span>
+                        <span className="hidden sm:inline">
+                          {isOutOfStock ? 'Esgotado' : inCart ? `+1 (${inCart.quantity})` : 'Adicionar'}
+                        </span>
                       </button>
                     </div>
                   </div>
@@ -775,92 +836,119 @@ export const POSModule: React.FC = () => {
               </p>
             </div>
           ) : (
-            cart.map((item) => (
-              <div
-                key={item.productId}
-                className="bg-[#141414] rounded-lg p-2.5 border border-[#262626] flex flex-col gap-1.5"
-              >
-                <div className="flex items-start justify-between">
-                  <div className="flex-1 pr-2">
-                    <span className="text-xs font-medium text-[#e5e5e5] line-clamp-1">
-                      {item.productName}
-                    </span>
-                    <span className="text-[10px] text-neutral-400 font-mono">
-                      {item.sku} &bull; {formatCurrency(item.unitPrice)} (IVA {item.taxRate}%)
-                    </span>
-                  </div>
+            cart.map((item) => {
+              const isCustom = item.productId.startsWith('custom-');
+              const itemStock = isCustom ? 9999 : getProductStock(item.productId);
+              const isStockError = !isCustom && (itemStock <= 0 || item.quantity > itemStock);
 
-                  <span className="text-xs font-mono font-bold text-[#c5a47e]">
-                    {formatCurrency(item.total)}
-                  </span>
-                </div>
-
-                {/* Controls: Quantity +/- with direct typed input & Item Discount */}
-                <div className="flex items-center justify-between pt-1 border-t border-[#262626]">
-                  <div className="flex items-center space-x-1">
-                    <button
-                      type="button"
-                      onClick={() => updateCartQuantity(item.productId, item.quantity - 1)}
-                      className="w-6 h-6 rounded-md bg-[#1a1a1a] border border-[#262626] flex items-center justify-center text-neutral-300 hover:bg-[#262626] active:scale-95 transition-colors cursor-pointer"
-                      title="Diminuir quantidade (-1)"
-                    >
-                      <Minus className="w-3 h-3" />
-                    </button>
-
-                    <input
-                      type="number"
-                      min="0.001"
-                      step="any"
-                      value={item.quantity}
-                      onChange={(e) => {
-                        const val = parseFloat(e.target.value);
-                        if (!isNaN(val) && val > 0) {
-                          updateCartQuantity(item.productId, val);
-                        }
-                      }}
-                      onFocus={(e) => e.target.select()}
-                      className="w-14 text-center text-xs font-bold font-mono text-[#c5a47e] bg-[#0d0d0d] border border-[#333333] hover:border-[#c5a47e]/60 focus:border-[#c5a47e] rounded-md py-0.5 px-1 focus:outline-hidden focus:ring-1 focus:ring-[#c5a47e]/50 transition-colors"
-                      title="Clique ou selecione para digitar a quantidade a vender"
-                    />
-
-                    <button
-                      type="button"
-                      onClick={() => updateCartQuantity(item.productId, item.quantity + 1)}
-                      className="w-6 h-6 rounded-md bg-[#1a1a1a] border border-[#262626] flex items-center justify-center text-neutral-300 hover:bg-[#262626] active:scale-95 transition-colors cursor-pointer"
-                      title="Aumentar quantidade (+1)"
-                    >
-                      <Plus className="w-3 h-3" />
-                    </button>
-                  </div>
-
-                  {/* Line Discount selector */}
-                  <div className="flex items-center space-x-2">
-                    <div className="flex items-center space-x-1">
-                      <span className="text-[10px] text-neutral-400">Desc:</span>
-                      <select
-                        value={item.discountPercent}
-                        onChange={(e) => updateCartDiscount(item.productId, Number(e.target.value))}
-                        className="bg-[#0d0d0d] border border-[#262626] rounded-xs text-[10px] px-1 py-0.5 font-semibold text-neutral-300 focus:outline-hidden"
-                      >
-                        <option value="0">0%</option>
-                        <option value="5">5%</option>
-                        <option value="10">10%</option>
-                        <option value="15">15%</option>
-                        <option value="20">20%</option>
-                        <option value="50">50%</option>
-                      </select>
+              return (
+                <div
+                  key={item.productId}
+                  className={`bg-[#141414] rounded-lg p-2.5 border flex flex-col gap-1.5 transition-colors ${
+                    isStockError ? 'border-rose-700/80 bg-rose-950/20' : 'border-[#262626]'
+                  }`}
+                >
+                  <div className="flex items-start justify-between">
+                    <div className="flex-1 pr-2">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-xs font-medium text-[#e5e5e5] line-clamp-1">
+                          {item.productName}
+                        </span>
+                        {isStockError && (
+                          <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-rose-600 text-white animate-pulse shrink-0 font-mono">
+                            {itemStock <= 0 ? 'STOCK ZERO' : `MAX: ${itemStock}`}
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2 mt-0.5">
+                        <span className="text-[10px] text-neutral-400 font-mono">
+                          {item.sku} &bull; {formatCurrency(item.unitPrice)} (IVA {item.taxRate}%)
+                        </span>
+                        {!isCustom && (
+                          <span className={`text-[10px] font-mono ${itemStock <= 0 ? 'text-rose-400 font-bold' : 'text-neutral-500'}`}>
+                            Stock Disp.: {itemStock}
+                          </span>
+                        )}
+                      </div>
                     </div>
 
-                    <button
-                      onClick={() => removeFromCart(item.productId)}
-                      className="text-neutral-400 hover:text-rose-400 p-1 transition-colors"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
+                    <span className="text-xs font-mono font-bold text-[#c5a47e]">
+                      {formatCurrency(item.total)}
+                    </span>
+                  </div>
+
+                  {/* Controls: Quantity +/- with direct typed input & Item Discount */}
+                  <div className="flex items-center justify-between pt-1 border-t border-[#262626]">
+                    <div className="flex items-center space-x-1">
+                      <button
+                        type="button"
+                        onClick={() => updateCartQuantity(item.productId, item.quantity - 1)}
+                        className="w-6 h-6 rounded-md bg-[#1a1a1a] border border-[#262626] flex items-center justify-center text-neutral-300 hover:bg-[#262626] active:scale-95 transition-colors cursor-pointer"
+                        title="Diminuir quantidade (-1)"
+                      >
+                        <Minus className="w-3 h-3" />
+                      </button>
+
+                      <input
+                        type="number"
+                        min="0.001"
+                        step="any"
+                        value={item.quantity}
+                        onChange={(e) => {
+                          const val = parseFloat(e.target.value);
+                          if (!isNaN(val) && val > 0) {
+                            updateCartQuantity(item.productId, val);
+                          }
+                        }}
+                        onFocus={(e) => e.target.select()}
+                        className="w-14 text-center text-xs font-bold font-mono text-[#c5a47e] bg-[#0d0d0d] border border-[#333333] hover:border-[#c5a47e]/60 focus:border-[#c5a47e] rounded-md py-0.5 px-1 focus:outline-hidden focus:ring-1 focus:ring-[#c5a47e]/50 transition-colors"
+                        title="Clique ou selecione para digitar a quantidade a vender"
+                      />
+
+                      <button
+                        type="button"
+                        disabled={!isCustom && item.quantity >= itemStock}
+                        onClick={() => updateCartQuantity(item.productId, item.quantity + 1)}
+                        className={`w-6 h-6 rounded-md border flex items-center justify-center transition-colors ${
+                          !isCustom && item.quantity >= itemStock
+                            ? 'bg-[#141414] border-[#222] text-neutral-600 cursor-not-allowed'
+                            : 'bg-[#1a1a1a] border-[#262626] text-neutral-300 hover:bg-[#262626] active:scale-95 cursor-pointer'
+                        }`}
+                        title={!isCustom && item.quantity >= itemStock ? 'Limite de stock atingido' : 'Aumentar quantidade (+1)'}
+                      >
+                        <Plus className="w-3 h-3" />
+                      </button>
+                    </div>
+
+                    {/* Line Discount selector */}
+                    <div className="flex items-center space-x-2">
+                      <div className="flex items-center space-x-1">
+                        <span className="text-[10px] text-neutral-400">Desc:</span>
+                        <select
+                          value={item.discountPercent}
+                          onChange={(e) => updateCartDiscount(item.productId, Number(e.target.value))}
+                          className="bg-[#0d0d0d] border border-[#262626] rounded-xs text-[10px] px-1 py-0.5 font-semibold text-neutral-300 focus:outline-hidden"
+                        >
+                          <option value="0">0%</option>
+                          <option value="5">5%</option>
+                          <option value="10">10%</option>
+                          <option value="15">15%</option>
+                          <option value="20">20%</option>
+                          <option value="50">50%</option>
+                        </select>
+                      </div>
+
+                      <button
+                        onClick={() => removeFromCart(item.productId)}
+                        className="text-neutral-400 hover:text-rose-400 p-1 transition-colors cursor-pointer"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))
+              );
+            })
           )}
         </div>
 
@@ -916,6 +1004,15 @@ export const POSModule: React.FC = () => {
               </span>
             </div>
 
+            {hasStockErrors && (
+              <div className="mt-2 p-2.5 rounded-lg bg-rose-500/15 border border-rose-500/40 text-rose-300 text-xs flex items-center gap-2">
+                <ShieldAlert className="w-4 h-4 text-rose-400 shrink-0" />
+                <span className="leading-tight">
+                  <strong>Venda Bloqueada:</strong> Existem artigos com stock insuficiente ou a zero no cesto.
+                </span>
+              </div>
+            )}
+
             {!isOnline && (
               <div
                 onClick={() => setShowOfflineSyncModal(true)}
@@ -933,21 +1030,28 @@ export const POSModule: React.FC = () => {
           {/* Checkout Button */}
           <button
             onClick={() => {
+              if (hasStockErrors) {
+                sound.playError();
+                notify('Não é possível cobrar: Corrija os artigos com stock zero ou insuficiente no cesto.', 'error');
+                return;
+              }
               if (!activeShift) {
                 setShowShiftModal(true);
               } else {
                 setShowPaymentModal(true);
               }
             }}
-            disabled={cart.length === 0}
+            disabled={cart.length === 0 || hasStockErrors}
             className={`w-full py-3.5 rounded-xl font-bold text-xs uppercase tracking-widest transition-all flex items-center justify-center space-x-2 ${
-              cart.length > 0
+              cart.length > 0 && !hasStockErrors
                 ? 'bg-[#c5a47e] hover:bg-[#d4b896] text-black shadow-lg cursor-pointer active:scale-98'
-                : 'bg-[#1a1a1a] text-neutral-400 border border-[#262626] cursor-not-allowed'
+                : 'bg-[#1a1a1a] text-neutral-500 border border-[#262626] cursor-not-allowed'
             }`}
           >
             <Sparkles className="w-4 h-4" />
-            <span>PAGAR / COBRAR (F12)</span>
+            <span>
+              {hasStockErrors ? 'BLOQUEADO: SEM STOCK' : 'PAGAR / COBRAR (F12)'}
+            </span>
           </button>
         </div>
       </div>

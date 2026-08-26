@@ -814,6 +814,136 @@ export async function pushRecordToSupabase(
 
 /**
  * ============================================================================
+ * PUXAR UMA TABELA ESPECÍFICA DO SUPABASE (SINGLE TABLE PULL)
+ * ============================================================================
+ */
+export async function pullTableFromSupabase(table: TableSyncName): Promise<{
+  success: boolean;
+  data: any[];
+  count: number;
+  error?: string;
+}> {
+  let mapper: (row: any) => any = (r) => r;
+  switch (table) {
+    case 'produtos': mapper = mapSupabaseToProduct; break;
+    case 'clientes': mapper = mapSupabaseToCustomer; break;
+    case 'fornecedores': mapper = mapSupabaseToSupplier; break;
+    case 'categorias': mapper = mapSupabaseToCategory; break;
+    case 'vendas': mapper = mapSupabaseToSale; break;
+    case 'usuarios': mapper = mapSupabaseToUser; break;
+    case 'armazens': mapper = mapSupabaseToWarehouse; break;
+    case 'stock': mapper = mapSupabaseToStock; break;
+    case 'contas_pagar': mapper = mapSupabaseToAccountPayable; break;
+    case 'contas_receber': mapper = mapSupabaseToAccountReceivable; break;
+    case 'turnos_caixa': mapper = mapSupabaseToShift; break;
+  }
+
+  try {
+    const { data, error } = await supabase.from(table).select('*');
+    if (error) {
+      const errorMsg = error.code === '42P01' || error.message?.includes('does not exist')
+        ? `Tabela "${table}" ainda não existe no Supabase. Execute o script SQL no Supabase.`
+        : `Erro ao ler "${table}": ${error.message}`;
+      
+      addSyncLog({
+        table,
+        action: 'ERROR',
+        origin: 'LOCAL_APP',
+        description: errorMsg,
+        status: 'error',
+      });
+      return { success: false, data: [], count: 0, error: errorMsg };
+    }
+
+    const mapped = Array.isArray(data) ? data.map(mapper) : [];
+    addSyncLog({
+      table,
+      action: 'PULL',
+      origin: 'LOCAL_APP',
+      description: `Puxados ${mapped.length} registos da tabela "${table}" do Supabase com sucesso.`,
+      status: 'success',
+    });
+    return { success: true, data: mapped, count: mapped.length };
+  } catch (err: any) {
+    const errorMsg = err?.message || String(err);
+    return { success: false, data: [], count: 0, error: errorMsg };
+  }
+}
+
+/**
+ * ============================================================================
+ * ENVIAR UMA TABELA ESPECÍFICA PARA O SUPABASE (SINGLE TABLE PUSH)
+ * ============================================================================
+ */
+export async function pushTableToSupabase(table: TableSyncName, items: any[]): Promise<{
+  success: boolean;
+  count: number;
+  error?: string;
+}> {
+  if (!items || items.length === 0) {
+    return { success: true, count: 0 };
+  }
+
+  let mapper: (item: any) => any = (i) => i;
+  switch (table) {
+    case 'produtos': mapper = mapProductToSupabase; break;
+    case 'clientes': mapper = mapCustomerToSupabase; break;
+    case 'fornecedores': mapper = mapSupplierToSupabase; break;
+    case 'categorias': mapper = mapCategoryToSupabase; break;
+    case 'vendas': mapper = mapSaleToSupabase; break;
+    case 'usuarios': mapper = mapUserToSupabase; break;
+    case 'armazens': mapper = mapWarehouseToSupabase; break;
+    case 'stock': mapper = mapStockToSupabase; break;
+    case 'contas_pagar': mapper = mapAccountPayableToSupabase; break;
+    case 'contas_receber': mapper = mapAccountReceivableToSupabase; break;
+    case 'turnos_caixa': mapper = mapShiftToSupabase; break;
+  }
+
+  try {
+    const payload = items.map(mapper);
+    // Batch in chunks of 50 to avoid request size limits
+    const CHUNK_SIZE = 50;
+    let uploadedCount = 0;
+
+    for (let i = 0; i < payload.length; i += CHUNK_SIZE) {
+      const chunk = payload.slice(i, i + CHUNK_SIZE);
+      const { error } = await supabase.from(table).upsert(chunk);
+      if (error) {
+        let cleanMsg = error.message;
+        if (error.code === '42P01' || error.message?.includes('does not exist')) {
+          cleanMsg = `Tabela "${table}" não existe no Supabase. Crie as tabelas com o script SQL.`;
+        } else if (error.code === '42501' || error.message?.includes('row-level security') || error.message?.includes('policy')) {
+          cleanMsg = `Bloqueado por RLS na tabela "${table}". Verifique as políticas de acesso no Supabase.`;
+        }
+        addSyncLog({
+          table,
+          action: 'ERROR',
+          origin: 'LOCAL_APP',
+          description: `Erro ao enviar para "${table}": ${cleanMsg}`,
+          status: 'error',
+        });
+        return { success: false, count: uploadedCount, error: cleanMsg };
+      }
+      uploadedCount += chunk.length;
+    }
+
+    addSyncLog({
+      table,
+      action: 'PUSH',
+      origin: 'LOCAL_APP',
+      description: `Enviados ${uploadedCount} registos da tabela "${table}" para o Supabase com sucesso.`,
+      status: 'success',
+    });
+
+    return { success: true, count: uploadedCount };
+  } catch (err: any) {
+    const errorMsg = err?.message || String(err);
+    return { success: false, count: 0, error: errorMsg };
+  }
+}
+
+/**
+ * ============================================================================
  * PUXAR TODAS AS TABELAS DO SUPABASE (FULL PULL RECONCILIATION)
  * ============================================================================
  */
@@ -835,55 +965,67 @@ export async function pullAllFromSupabase(): Promise<{
     shifts?: CashShift[];
   };
   errors: string[];
+  tableResults: Record<string, { count: number; error?: string; status: 'ok' | 'error' | 'empty' }>;
 }> {
   const result: any = {
     success: true,
     counts: {},
     data: {},
     errors: [],
+    tableResults: {},
   };
 
   const fetchTable = async (table: TableSyncName, mapper: (row: any) => any, key: string) => {
     try {
       const { data, error } = await supabase.from(table).select('*');
       if (error) {
-        if (error.code === '42P01' || error.message?.includes('does not exist')) {
-          result.errors.push(`Tabela "${table}" ainda não existe no Supabase.`);
-        } else {
-          result.errors.push(`Erro na tabela "${table}": ${error.message}`);
-        }
+        const errorMsg = (error.code === '42P01' || error.message?.includes('does not exist'))
+          ? `Tabela "${table}" ainda não existe no Supabase (execute o script SQL).`
+          : `Erro na tabela "${table}": ${error.message}`;
+        result.errors.push(errorMsg);
         result.counts[table] = 0;
+        result.tableResults[table] = { count: 0, error: errorMsg, status: 'error' };
         return;
       }
       if (Array.isArray(data)) {
         result.data[key] = data.map(mapper);
         result.counts[table] = data.length;
+        result.tableResults[table] = {
+          count: data.length,
+          status: data.length > 0 ? 'ok' : 'empty',
+        };
       }
     } catch (e: any) {
-      result.errors.push(`Falha ao ler ${table}: ${e.message || e}`);
+      const errTxt = `Falha ao ler ${table}: ${e.message || e}`;
+      result.errors.push(errTxt);
+      result.tableResults[table] = { count: 0, error: errTxt, status: 'error' };
     }
   };
 
   await Promise.all([
+    fetchTable('usuarios', mapSupabaseToUser, 'users'),
+    fetchTable('categorias', mapSupabaseToCategory, 'categories'),
     fetchTable('produtos', mapSupabaseToProduct, 'products'),
     fetchTable('clientes', mapSupabaseToCustomer, 'customers'),
     fetchTable('fornecedores', mapSupabaseToSupplier, 'suppliers'),
-    fetchTable('categorias', mapSupabaseToCategory, 'categories'),
-    fetchTable('vendas', mapSupabaseToSale, 'sales'),
-    fetchTable('usuarios', mapSupabaseToUser, 'users'),
     fetchTable('armazens', mapSupabaseToWarehouse, 'warehouses'),
     fetchTable('stock', mapSupabaseToStock, 'stock'),
+    fetchTable('vendas', mapSupabaseToSale, 'sales'),
     fetchTable('contas_pagar', mapSupabaseToAccountPayable, 'accountsPayable'),
     fetchTable('contas_receber', mapSupabaseToAccountReceivable, 'accountsReceivable'),
     fetchTable('turnos_caixa', mapSupabaseToShift, 'shifts'),
   ]);
 
+  result.success = result.errors.length === 0;
+
   addSyncLog({
     table: 'ALL',
     action: 'PULL',
     origin: 'LOCAL_APP',
-    description: `Sincronização completa concluída. Dados obtidos do Supabase.`,
-    status: result.errors.length > 0 && Object.keys(result.counts).length === 0 ? 'error' : 'success',
+    description: result.success
+      ? `Sincronização completa concluída com sucesso (${Object.values(result.counts).reduce((a: any, b: any) => a + b, 0)} registos obtidos).`
+      : `Sincronização concluída com avisos em ${result.errors.length} tabelas.`,
+    status: result.success ? 'success' : 'info',
   });
 
   return result;
@@ -911,53 +1053,78 @@ export async function pushAllToSupabase(localData: {
   success: boolean;
   uploaded: Record<string, number>;
   errors: string[];
+  tableResults: Record<string, { count: number; error?: string; status: 'ok' | 'error' | 'empty' }>;
 }> {
   const result = {
     success: true,
     uploaded: {} as Record<string, number>,
     errors: [] as string[],
+    tableResults: {} as Record<string, { count: number; error?: string; status: 'ok' | 'error' | 'empty' }>,
   };
 
   const uploadBatch = async (table: TableSyncName, items: any[], mapper: (item: any) => any) => {
     if (!items || items.length === 0) {
       result.uploaded[table] = 0;
+      result.tableResults[table] = { count: 0, status: 'empty' };
       return;
     }
     try {
       const payload = items.map(mapper);
-      const { error } = await supabase.from(table).upsert(payload);
-      if (error) {
-        result.errors.push(`Erro ao enviar para "${table}": ${error.message}`);
-        result.uploaded[table] = 0;
-      } else {
-        result.uploaded[table] = payload.length;
+      const CHUNK_SIZE = 50;
+      let totalForTable = 0;
+
+      for (let i = 0; i < payload.length; i += CHUNK_SIZE) {
+        const chunk = payload.slice(i, i + CHUNK_SIZE);
+        const { error } = await supabase.from(table).upsert(chunk);
+        if (error) {
+          let errorMsg = `Erro na tabela "${table}": ${error.message}`;
+          if (error.code === '42P01' || error.message?.includes('does not exist')) {
+            errorMsg = `Tabela "${table}" ainda não existe no Supabase. Execute o script SQL no Supabase.`;
+          } else if (error.code === '42501' || error.message?.includes('row-level security') || error.message?.includes('policy')) {
+            errorMsg = `Permissão negada (RLS) na tabela "${table}". Verifique as políticas de segurança.`;
+          }
+          result.errors.push(errorMsg);
+          result.uploaded[table] = totalForTable;
+          result.tableResults[table] = { count: totalForTable, error: errorMsg, status: 'error' };
+          return;
+        }
+        totalForTable += chunk.length;
       }
+
+      result.uploaded[table] = totalForTable;
+      result.tableResults[table] = { count: totalForTable, status: 'ok' };
     } catch (e: any) {
-      result.errors.push(`Erro ao exportar ${table}: ${e.message || e}`);
+      const errTxt = `Erro ao exportar ${table}: ${e.message || e}`;
+      result.errors.push(errTxt);
       result.uploaded[table] = 0;
+      result.tableResults[table] = { count: 0, error: errTxt, status: 'error' };
     }
   };
 
-  await Promise.all([
-    uploadBatch('produtos', localData.products, mapProductToSupabase),
-    uploadBatch('clientes', localData.customers, mapCustomerToSupabase),
-    uploadBatch('fornecedores', localData.suppliers, mapSupplierToSupabase),
-    uploadBatch('categorias', localData.categories, mapCategoryToSupabase),
-    uploadBatch('vendas', localData.sales, mapSaleToSupabase),
-    uploadBatch('usuarios', localData.users, mapUserToSupabase),
-    uploadBatch('armazens', localData.warehouses, mapWarehouseToSupabase),
-    uploadBatch('stock', localData.stock, mapStockToSupabase),
-    uploadBatch('contas_pagar', localData.accountsPayable, mapAccountPayableToSupabase),
-    uploadBatch('contas_receber', localData.accountsReceivable, mapAccountReceivableToSupabase),
-    uploadBatch('turnos_caixa', localData.shifts, mapShiftToSupabase),
-  ]);
+  // Upload in logical sequence: references first
+  await uploadBatch('usuarios', localData.users, mapUserToSupabase);
+  await uploadBatch('categorias', localData.categories, mapCategoryToSupabase);
+  await uploadBatch('armazens', localData.warehouses, mapWarehouseToSupabase);
+  await uploadBatch('fornecedores', localData.suppliers, mapSupplierToSupabase);
+  await uploadBatch('clientes', localData.customers, mapCustomerToSupabase);
+  await uploadBatch('produtos', localData.products, mapProductToSupabase);
+  await uploadBatch('stock', localData.stock, mapStockToSupabase);
+  await uploadBatch('vendas', localData.sales, mapSaleToSupabase);
+  await uploadBatch('contas_pagar', localData.accountsPayable, mapAccountPayableToSupabase);
+  await uploadBatch('contas_receber', localData.accountsReceivable, mapAccountReceivableToSupabase);
+  await uploadBatch('turnos_caixa', localData.shifts, mapShiftToSupabase);
 
+  result.success = result.errors.length === 0;
+
+  const totalCount = Object.values(result.uploaded).reduce((a, b) => a + b, 0);
   addSyncLog({
     table: 'ALL',
     action: 'PUSH',
     origin: 'LOCAL_APP',
-    description: `Exportação total para o Supabase concluída (${Object.values(result.uploaded).reduce((a, b) => a + b, 0)} registos enviados).`,
-    status: result.errors.length === 0 ? 'success' : 'info',
+    description: result.success
+      ? `Exportação total para o Supabase concluída com sucesso (${totalCount} registos enviados em 11 tabelas).`
+      : `Exportação para o Supabase concluída com ${result.errors.length} erro(s). ${totalCount} registos enviados.`,
+    status: result.success ? 'success' : 'error',
   });
 
   return result;

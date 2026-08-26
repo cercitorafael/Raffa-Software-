@@ -27,6 +27,9 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ onClose, onSuccess }
     globalDiscount,
     selectedCustomer,
     completeSale,
+    getAvailableStock,
+    currentStore,
+    notify,
     isOnline,
     currentCompany,
     currencyDefinition,
@@ -38,6 +41,14 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ onClose, onSuccess }
   const [cashTendered, setCashTendered] = useState<number>(0);
   const [payments, setPayments] = useState<PaymentRecord[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
+
+  // Cart stock check
+  const invalidStockItems = cart.filter((item) => {
+    if (item.productId.startsWith('custom-')) return false;
+    const available = getAvailableStock(item.productId, currentStore?.defaultWarehouseId);
+    return available <= 0 || item.quantity > available;
+  });
+  const hasStockErrors = invalidStockItems.length > 0;
 
   // Customer custom info on invoice
   const [isEditingCustomerInfo, setIsEditingCustomerInfo] = useState(false);
@@ -141,6 +152,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ onClose, onSuccess }
   const change = calculateChange();
   const canComplete =
     !isProcessing &&
+    !hasStockErrors &&
     (payments.length > 0
       ? totalPaidSoFar >= totalToPay - 0.001
       : selectedMethod === 'dinheiro'

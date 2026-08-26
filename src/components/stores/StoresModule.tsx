@@ -50,7 +50,7 @@ export const StoresModule: React.FC = () => {
     notify,
     currentUser,
     hasPermission,
-    switchRole,
+    setActiveNavTab,
   } = useApp();
 
   const canReadStores = hasPermission('stores', 'read');
@@ -72,10 +72,10 @@ export const StoresModule: React.FC = () => {
         </div>
         <div className="pt-2 flex items-center space-x-3">
           <button
-            onClick={() => switchRole('admin')}
+            onClick={() => setActiveNavTab('pos')}
             className="px-4 py-2 bg-[#c5a47e] hover:bg-[#b5946e] text-neutral-950 font-bold text-xs rounded-xl cursor-pointer shadow-md transition-colors"
           >
-            Alternar p/ Perfil Administrador
+            Voltar ao Ponto de Venda
           </button>
         </div>
       </div>

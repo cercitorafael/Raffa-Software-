@@ -56,6 +56,7 @@ export const DocumentsModule: React.FC = () => {
     omnichannelOrders,
     currencyDefinition,
     formatCurrency,
+    getAvailableStock,
     updateOrderStatus,
     convertOrderToSale,
     cancelInvoice,
@@ -65,7 +66,7 @@ export const DocumentsModule: React.FC = () => {
     requestConfirm,
     notify,
     hasPermission,
-    switchRole,
+    setActiveNavTab,
     updateCompany,
   } = useApp();
 
@@ -121,10 +122,10 @@ export const DocumentsModule: React.FC = () => {
         </div>
         <div className="pt-2 flex items-center space-x-3">
           <button
-            onClick={() => switchRole('admin')}
+            onClick={() => setActiveNavTab('pos')}
             className="px-4 py-2 bg-[#c5a47e] hover:bg-[#b5946e] text-neutral-950 font-bold text-xs rounded-xl cursor-pointer shadow-md transition-colors"
           >
-            Alternar p/ Perfil Administrador
+            Voltar ao Ponto de Venda
           </button>
         </div>
       </div>
@@ -198,6 +199,27 @@ export const DocumentsModule: React.FC = () => {
     if (selectedProductId) {
       const prod = products.find((p) => p.id === selectedProductId);
       if (!prod) return;
+
+      // Check stock availability if document type affects physical inventory (e.g. FS, FT, FR, GT, VD)
+      const isInventoryDocument = !['ORC', 'PF', 'NC'].includes(docType);
+      if (isInventoryDocument) {
+        const available = getAvailableStock(prod.id, currentStore.defaultWarehouseId);
+        if (available <= 0) {
+          sound.playError();
+          notify(`Artigo sem stock: Não é possível adicionar "${prod.name}" porque o stock atual é 0 ou insuficiente.`, 'error');
+          return;
+        }
+
+        const existingQty = docItems
+          .filter((i) => i.productId === prod.id)
+          .reduce((sum, i) => sum + i.quantity, 0);
+
+        if (existingQty + itemQty > available) {
+          sound.playError();
+          notify(`Stock insuficiente para "${prod.name}": Disponível: ${available}, Já no documento: ${existingQty}, Tentativa: ${itemQty}.`, 'error');
+          return;
+        }
+      }
 
       const rate = prod.taxRate || 23;
       const unitPrice = prod.price;
@@ -281,6 +303,30 @@ export const DocumentsModule: React.FC = () => {
     if (docType === 'FT' && (!customerNif || customerNif === '999999990')) {
       notify('Para emissão de Fatura (FT), é obrigatório indicar o NIF do cliente.', 'warning');
       return;
+    }
+
+    // Strict stock verification for inventory documents (FS, FT, FR, GT, VD)
+    const isInventoryDocument = !['ORC', 'PF', 'NC'].includes(docType);
+    if (isInventoryDocument) {
+      for (const item of docItems) {
+        if (item.productId && !item.productId.startsWith('custom-')) {
+          const available = getAvailableStock(item.productId, currentStore.defaultWarehouseId);
+          if (available <= 0) {
+            sound.playError();
+            notify(`Emissão cancelada: O artigo "${item.productName}" está com stock zero ou esgotado.`, 'error');
+            return;
+          }
+          const totalReqQty = docItems
+            .filter((i) => i.productId === item.productId)
+            .reduce((sum, i) => sum + i.quantity, 0);
+
+          if (totalReqQty > available) {
+            sound.playError();
+            notify(`Emissão cancelada: Stock insuficiente para "${item.productName}". Disponível: ${available}, Requerido: ${totalReqQty}.`, 'error');
+            return;
+          }
+        }
+      }
     }
 
     const seq = salesHistory.length + 1;
@@ -801,11 +847,15 @@ export const DocumentsModule: React.FC = () => {
                     className="w-full px-3 py-2 bg-[#181818] border border-[#2a2a2a] rounded-xl text-white focus:outline-hidden focus:border-[#c5a47e] cursor-pointer"
                   >
                     <option value="">-- Escolher artigo do catálogo --</option>
-                    {products.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.name} ({p.sku}) - {formatCurrency(p.price)} (IVA {p.taxRate}%)
-                      </option>
-                    ))}
+                    {products.map((p) => {
+                      const avail = getAvailableStock(p.id, currentStore.defaultWarehouseId);
+                      const isOutOfStock = avail <= 0;
+                      return (
+                        <option key={p.id} value={p.id} disabled={!['ORC', 'PF', 'NC'].includes(docType) && isOutOfStock}>
+                          {p.name} ({p.sku}) - {formatCurrency(p.price)} (IVA {p.taxRate}%) — {isOutOfStock ? '🔴 SEM STOCK (0)' : `🟢 Stock: ${avail}`}
+                        </option>
+                      );
+                    })}
                   </select>
                 </div>
 

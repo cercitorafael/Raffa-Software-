@@ -269,28 +269,63 @@ export async function eliminarUsuario(
 }
 
 /**
- * TESTE DE CONEXÃO AO SUPABASE
+ * TESTE DE CONEXÃO AO SUPABASE E DIAGNÓSTICO
  */
 export async function testarConexaoSupabase(): Promise<{
   conectado: boolean;
   mensagem: string;
   tabelaExiste?: boolean;
+  detalhes?: {
+    urlValida: boolean;
+    chaveValida: boolean;
+    pingOk: boolean;
+    erro?: string;
+  };
 }> {
+  const creds = getSupabaseCredentials();
+  if (!isValidHttpUrl(creds.url)) {
+    return {
+      conectado: false,
+      mensagem: 'A URL do Supabase é inválida ou está mal formatada.',
+      detalhes: { urlValida: false, chaveValida: false, pingOk: false, erro: 'URL inválida' },
+    };
+  }
+
+  if (!creds.key || creds.key.trim().length < 10) {
+    return {
+      conectado: false,
+      mensagem: 'A chave anon do Supabase parece inválida ou demasiado curta.',
+      detalhes: { urlValida: true, chaveValida: false, pingOk: false, erro: 'Chave inválida' },
+    };
+  }
+
   try {
     const { data, error } = await supabase.from('usuarios').select('id').limit(1);
 
     if (error) {
-      // Código PGRST204 ou PGRST116 ou 42P01 indica que a tabela ainda não foi criada no banco
-      if (error.code === '42P01' || error.message?.includes('relation "usuarios" does not exist')) {
+      // Código 42P01 indica que o banco está acessível mas a tabela ainda não foi criada
+      if (error.code === '42P01' || error.message?.includes('relation "usuarios" does not exist') || error.message?.includes('does not exist')) {
         return {
           conectado: true,
-          mensagem: 'Conectado ao Supabase com sucesso! (A tabela "usuarios" ainda precisa de ser criada no SQL Editor).',
+          mensagem: 'Conectado ao Supabase! Porém as tabelas ainda precisam de ser criadas (execute o script SQL).',
           tabelaExiste: false,
+          detalhes: { urlValida: true, chaveValida: true, pingOk: true, erro: 'Tabelas não criadas (42P01)' },
         };
       }
+
+      // Erro de autorização / RLS / Key inválida
+      if (error.code === 'PGRST301' || error.message?.includes('JWT') || error.message?.includes('apikey') || error.message?.includes('unauthorized')) {
+        return {
+          conectado: false,
+          mensagem: `Chave de API inválida ou expirada: ${error.message}`,
+          detalhes: { urlValida: true, chaveValida: false, pingOk: false, erro: error.message },
+        };
+      }
+
       return {
         conectado: false,
-        mensagem: `Erro na resposta do Supabase: ${error.message}`,
+        mensagem: `Erro na resposta do Supabase: ${error.message} (Código: ${error.code || 'N/A'})`,
+        detalhes: { urlValida: true, chaveValida: true, pingOk: false, erro: error.message },
       };
     }
 
@@ -298,13 +333,116 @@ export async function testarConexaoSupabase(): Promise<{
       conectado: true,
       mensagem: 'Conexão ativa com o Supabase e tabela "usuarios" operacional!',
       tabelaExiste: true,
+      detalhes: { urlValida: true, chaveValida: true, pingOk: true },
     };
   } catch (err: any) {
     return {
       conectado: false,
-      mensagem: `Falha ao conectar: ${err.message || err}`,
+      mensagem: `Falha de rede ao conectar ao Supabase: ${err.message || err}`,
+      detalhes: { urlValida: true, chaveValida: true, pingOk: false, erro: err?.message || String(err) },
     };
   }
+}
+
+export interface TableDiagnosticResult {
+  table: string;
+  label: string;
+  exists: boolean;
+  canRead: boolean;
+  canWrite: boolean;
+  rowCount: number;
+  error?: string;
+}
+
+export async function diagnosticarTodasTabelasSupabase(): Promise<{
+  allPassed: boolean;
+  totalTables: number;
+  existingTables: number;
+  tables: Record<string, TableDiagnosticResult>;
+  summaryMessage: string;
+}> {
+  const tableList: { name: string; label: string }[] = [
+    { name: 'usuarios', label: 'Utilizadores' },
+    { name: 'categorias', label: 'Categorias' },
+    { name: 'produtos', label: 'Produtos / Artigos' },
+    { name: 'clientes', label: 'Clientes' },
+    { name: 'fornecedores', label: 'Fornecedores' },
+    { name: 'armazens', label: 'Armazéns' },
+    { name: 'stock', label: 'Stock / Inventário' },
+    { name: 'vendas', label: 'Vendas & Faturação' },
+    { name: 'contas_pagar', label: 'Contas a Pagar' },
+    { name: 'contas_receber', label: 'Contas a Receber' },
+    { name: 'turnos_caixa', label: 'Turnos de Caixa' },
+  ];
+
+  const results: Record<string, TableDiagnosticResult> = {};
+  let existingCount = 0;
+
+  for (const t of tableList) {
+    try {
+      const { data, error, count } = await supabase
+        .from(t.name)
+        .select('*', { count: 'exact', head: true });
+
+      if (error) {
+        if (error.code === '42P01' || error.message?.includes('does not exist')) {
+          results[t.name] = {
+            table: t.name,
+            label: t.label,
+            exists: false,
+            canRead: false,
+            canWrite: false,
+            rowCount: 0,
+            error: 'Tabela ainda não criada no banco de dados (execute o script SQL no Supabase).',
+          };
+        } else {
+          results[t.name] = {
+            table: t.name,
+            label: t.label,
+            exists: true, // table might exist but RLS blocked
+            canRead: false,
+            canWrite: false,
+            rowCount: 0,
+            error: `Erro ao ler: ${error.message} (Verifique as políticas RLS no Supabase)`,
+          };
+          existingCount++;
+        }
+      } else {
+        results[t.name] = {
+          table: t.name,
+          label: t.label,
+          exists: true,
+          canRead: true,
+          canWrite: true,
+          rowCount: typeof count === 'number' ? count : (Array.isArray(data) ? (data as any[]).length : 0),
+        };
+        existingCount++;
+      }
+    } catch (e: any) {
+      results[t.name] = {
+        table: t.name,
+        label: t.label,
+        exists: false,
+        canRead: false,
+        canWrite: false,
+        rowCount: 0,
+        error: e.message || 'Erro inesperado na verificação',
+      };
+    }
+  }
+
+  const allPassed = existingCount === tableList.length && Object.values(results).every((r) => r.canRead);
+  const summaryMessage = allPassed
+    ? `Todas as ${tableList.length} tabelas do OmniERP & POS estão criadas e operacionais no Supabase!`
+    : `${existingCount} de ${tableList.length} tabelas estão acessíveis. ${tableList.length - existingCount} precisam de ser criadas executando o script SQL.`;
+
+  return {
+    allPassed,
+    totalTables: tableList.length,
+    existingTables: existingCount,
+    tables: results,
+    summaryMessage,
+  };
 }
 
 /**
