@@ -11,6 +11,8 @@ import {
   AccountPayable,
   AccountReceivable,
   CashShift,
+  Company,
+  Store,
 } from '../types';
 
 export interface SupabaseSyncLog {
@@ -25,6 +27,8 @@ export interface SupabaseSyncLog {
 }
 
 export type TableSyncName =
+  | 'empresas'
+  | 'lojas'
   | 'produtos'
   | 'clientes'
   | 'fornecedores'
@@ -38,6 +42,8 @@ export type TableSyncName =
   | 'turnos_caixa';
 
 export interface RealtimeSyncCallbacks {
+  onCompanyChange?: (event: 'INSERT' | 'UPDATE' | 'DELETE', item: Partial<Company>, rawOld?: any) => void;
+  onStoreChange?: (event: 'INSERT' | 'UPDATE' | 'DELETE', item: Partial<Store>, rawOld?: any) => void;
   onProductChange?: (event: 'INSERT' | 'UPDATE' | 'DELETE', item: Partial<Product>, rawOld?: any) => void;
   onCustomerChange?: (event: 'INSERT' | 'UPDATE' | 'DELETE', item: Partial<Customer>, rawOld?: any) => void;
   onSupplierChange?: (event: 'INSERT' | 'UPDATE' | 'DELETE', item: Partial<Supplier>, rawOld?: any) => void;
@@ -84,6 +90,98 @@ export function clearSyncLogs() {
 /**
  * Mapeamentos entre o Modelo da Aplicação e as Tabelas do Supabase
  */
+
+export function mapCompanyToSupabase(c: Partial<Company>) {
+  return {
+    id: c.id || 'comp-1',
+    name: c.name || 'Empresa Exemplo',
+    trade_name: c.tradeName || null,
+    tax_number: c.taxNumber || null,
+    address: c.address || null,
+    city: c.city || null,
+    postal_code: c.postalCode || null,
+    country: c.country || 'Moçambique',
+    currency: c.currency || 'MZN',
+    currency_symbol: c.currencySymbol || 'Mt',
+    currency_position: c.currencyPosition || 'suffix',
+    currency_decimals: c.currencyDecimals !== undefined ? c.currencyDecimals : 2,
+    phone: c.phone || null,
+    mobile: c.mobile || null,
+    email: c.email || null,
+    website: c.website || null,
+    logo_url: c.logoUrl || null,
+    software_cert_number: c.softwareCertNumber || '0000/AT',
+    saft_version: c.saftVersion || '1.04_01',
+    share_capital: c.shareCapital || null,
+    commercial_registry_number: c.commercialRegistryNumber || null,
+    default_iban: c.defaultIban || null,
+    default_bank: c.defaultBank || null,
+    active_invoice_template_id: c.activeInvoiceTemplateId || 'tmpl-agro-vendus',
+    invoice_templates: Array.isArray(c.invoiceTemplates) ? c.invoiceTemplates : [],
+    updated_at: new Date().toISOString(),
+  };
+}
+
+export function mapSupabaseToCompany(row: any): Company {
+  return {
+    id: String(row.id || 'comp-1'),
+    name: row.name || 'Empresa',
+    tradeName: row.trade_name || row.name || '',
+    taxNumber: row.tax_number || '',
+    address: row.address || '',
+    city: row.city || '',
+    postalCode: row.postal_code || '',
+    country: row.country || 'Moçambique',
+    currency: row.currency || 'MZN',
+    currencySymbol: row.currency_symbol || 'Mt',
+    currencyPosition: (row.currency_position === 'prefix' ? 'prefix' : 'suffix'),
+    currencyDecimals: Number(row.currency_decimals) || 2,
+    phone: row.phone || '',
+    mobile: row.mobile || '',
+    email: row.email || '',
+    website: row.website || '',
+    logoUrl: row.logo_url || '',
+    softwareCertNumber: row.software_cert_number || '0000/AT',
+    saftVersion: row.saft_version || '1.04_01',
+    shareCapital: row.share_capital || '',
+    commercialRegistryNumber: row.commercial_registry_number || '',
+    defaultIban: row.default_iban || '',
+    defaultBank: row.default_bank || '',
+    activeInvoiceTemplateId: row.active_invoice_template_id || 'tmpl-agro-vendus',
+    invoiceTemplates: Array.isArray(row.invoice_templates) ? row.invoice_templates : undefined,
+  };
+}
+
+export function mapStoreToSupabase(s: Partial<Store>) {
+  return {
+    id: s.id || 'store-1',
+    company_id: s.companyId || 'comp-1',
+    code: s.code || 'LOJA-01',
+    name: s.name || 'Loja Principal',
+    address: s.address || null,
+    city: s.city || null,
+    phone: s.phone || null,
+    manager_id: s.managerId || null,
+    default_warehouse_id: s.defaultWarehouseId || null,
+    terminals_count: s.terminalsCount || 1,
+    updated_at: new Date().toISOString(),
+  };
+}
+
+export function mapSupabaseToStore(row: any): Store {
+  return {
+    id: String(row.id),
+    companyId: row.company_id || 'comp-1',
+    code: row.code || 'LOJA-01',
+    name: row.name || 'Loja',
+    address: row.address || '',
+    city: row.city || '',
+    phone: row.phone || '',
+    managerId: row.manager_id || 'usr-admin',
+    defaultWarehouseId: row.default_warehouse_id || 'wh-1',
+    terminalsCount: Number(row.terminals_count) || 1,
+  };
+}
 
 export function mapProductToSupabase(p: Partial<Product>) {
   return {
@@ -535,6 +633,8 @@ export function startSupabaseRealtimeSync(callbacks: RealtimeSyncCallbacks) {
   const channel = supabase.channel('erp-pos-realtime-master');
 
   const registeredTables: TableSyncName[] = [
+    'empresas',
+    'lojas',
     'produtos',
     'clientes',
     'fornecedores',
@@ -614,6 +714,20 @@ function handleRealtimeEvent(tableName: TableSyncName, payload: any) {
   });
 
   switch (tableName) {
+    case 'empresas':
+      if (currentCallbacks.onCompanyChange) {
+        const item = eventType === 'DELETE' ? { id: String(rawId) } : mapSupabaseToCompany(newRecord);
+        currentCallbacks.onCompanyChange(eventType, item, oldRecord);
+      }
+      break;
+
+    case 'lojas':
+      if (currentCallbacks.onStoreChange) {
+        const item = eventType === 'DELETE' ? { id: String(rawId) } : mapSupabaseToStore(newRecord);
+        currentCallbacks.onStoreChange(eventType, item, oldRecord);
+      }
+      break;
+
     case 'produtos':
       if (currentCallbacks.onProductChange) {
         const item = eventType === 'DELETE' ? { id: String(rawId) } : mapSupabaseToProduct(newRecord);
@@ -739,6 +853,12 @@ export async function pushRecordToSupabase(
 
     // Map according to table
     switch (table) {
+      case 'empresas':
+        payload = mapCompanyToSupabase(record);
+        break;
+      case 'lojas':
+        payload = mapStoreToSupabase(record);
+        break;
       case 'produtos':
         payload = mapProductToSupabase(record);
         break;
@@ -825,6 +945,8 @@ export async function pullTableFromSupabase(table: TableSyncName): Promise<{
 }> {
   let mapper: (row: any) => any = (r) => r;
   switch (table) {
+    case 'empresas': mapper = mapSupabaseToCompany; break;
+    case 'lojas': mapper = mapSupabaseToStore; break;
     case 'produtos': mapper = mapSupabaseToProduct; break;
     case 'clientes': mapper = mapSupabaseToCustomer; break;
     case 'fornecedores': mapper = mapSupabaseToSupplier; break;
@@ -886,6 +1008,8 @@ export async function pushTableToSupabase(table: TableSyncName, items: any[]): P
 
   let mapper: (item: any) => any = (i) => i;
   switch (table) {
+    case 'empresas': mapper = mapCompanyToSupabase; break;
+    case 'lojas': mapper = mapStoreToSupabase; break;
     case 'produtos': mapper = mapProductToSupabase; break;
     case 'clientes': mapper = mapCustomerToSupabase; break;
     case 'fornecedores': mapper = mapSupplierToSupabase; break;
@@ -952,6 +1076,8 @@ export async function pullAllFromSupabase(): Promise<{
   success: boolean;
   counts: Record<string, number>;
   data: {
+    companies?: Company[];
+    stores?: Store[];
     products?: Product[];
     customers?: Customer[];
     suppliers?: Supplier[];
@@ -1003,6 +1129,8 @@ export async function pullAllFromSupabase(): Promise<{
   };
 
   await Promise.all([
+    fetchTable('empresas', mapSupabaseToCompany, 'companies'),
+    fetchTable('lojas', mapSupabaseToStore, 'stores'),
     fetchTable('usuarios', mapSupabaseToUser, 'users'),
     fetchTable('categorias', mapSupabaseToCategory, 'categories'),
     fetchTable('produtos', mapSupabaseToProduct, 'products'),
@@ -1038,6 +1166,8 @@ export async function pullAllFromSupabase(): Promise<{
  */
 
 export async function pushAllToSupabase(localData: {
+  companies?: Company[];
+  stores?: Store[];
   products: Product[];
   customers: Customer[];
   suppliers: Supplier[];
@@ -1062,7 +1192,7 @@ export async function pushAllToSupabase(localData: {
     tableResults: {} as Record<string, { count: number; error?: string; status: 'ok' | 'error' | 'empty' }>,
   };
 
-  const uploadBatch = async (table: TableSyncName, items: any[], mapper: (item: any) => any) => {
+  const uploadBatch = async (table: TableSyncName, items: any[] | undefined, mapper: (item: any) => any) => {
     if (!items || items.length === 0) {
       result.uploaded[table] = 0;
       result.tableResults[table] = { count: 0, status: 'empty' };
@@ -1101,7 +1231,9 @@ export async function pushAllToSupabase(localData: {
     }
   };
 
-  // Upload in logical sequence: references first
+  // Upload in logical sequence: companies & stores first, then users, etc.
+  await uploadBatch('empresas', localData.companies, mapCompanyToSupabase);
+  await uploadBatch('lojas', localData.stores, mapStoreToSupabase);
   await uploadBatch('usuarios', localData.users, mapUserToSupabase);
   await uploadBatch('categorias', localData.categories, mapCategoryToSupabase);
   await uploadBatch('armazens', localData.warehouses, mapWarehouseToSupabase);
@@ -1122,7 +1254,7 @@ export async function pushAllToSupabase(localData: {
     action: 'PUSH',
     origin: 'LOCAL_APP',
     description: result.success
-      ? `Exportação total para o Supabase concluída com sucesso (${totalCount} registos enviados em 11 tabelas).`
+      ? `Exportação total para o Supabase concluída com sucesso (${totalCount} registos enviados em 13 tabelas).`
       : `Exportação para o Supabase concluída com ${result.errors.length} erro(s). ${totalCount} registos enviados.`,
     status: result.success ? 'success' : 'error',
   });

@@ -94,7 +94,14 @@ export const UserPermissionsMatrix: React.FC = () => {
         setCanCloseShiftWithDifference(false);
       }
     } else {
-      if (targetUser?.permissions) {
+      if (targetUser?.role === 'admin' || targetUser?.roleId === 'admin') {
+        setCurrentPermissions({ ...defaultPermissionsByRole.admin });
+        setMaxDiscountWithoutSupervisor(100);
+        setCanCancelInvoiceWithoutPin(true);
+        setCanViewCostPrices(true);
+        setCanOpenDrawerWithoutSale(true);
+        setCanCloseShiftWithDifference(true);
+      } else if (targetUser?.permissions) {
         setCurrentPermissions({ ...targetUser.permissions });
       } else if (targetUser?.role) {
         setCurrentPermissions({ ...defaultPermissionsByRole[targetUser.role] });

@@ -189,6 +189,7 @@ export const Sidebar: React.FC = () => {
   const handleNavClick = (item: typeof menuItems[0]) => {
     const isAllowed =
       currentUser.role === 'admin' ||
+      currentUser.roleId === 'admin' ||
       item.roles.includes(currentUser.role) ||
       (item.permissionModule && hasPermission(item.permissionModule, 'read'));
 
@@ -249,6 +250,7 @@ export const Sidebar: React.FC = () => {
           const isActive = activeNavTab === item.id;
           const hasAccess =
             currentUser.role === 'admin' ||
+            currentUser.roleId === 'admin' ||
             item.roles.includes(currentUser.role) ||
             (item.permissionModule && hasPermission(item.permissionModule, 'read'));
 

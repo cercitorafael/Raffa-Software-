@@ -362,6 +362,8 @@ export async function diagnosticarTodasTabelasSupabase(): Promise<{
   summaryMessage: string;
 }> {
   const tableList: { name: string; label: string }[] = [
+    { name: 'empresas', label: 'Empresa & Logótipo' },
+    { name: 'lojas', label: 'Lojas & Filiais' },
     { name: 'usuarios', label: 'Utilizadores' },
     { name: 'categorias', label: 'Categorias' },
     { name: 'produtos', label: 'Produtos / Artigos' },
@@ -454,7 +456,54 @@ export const SUPABASE_SQL_SCHEMA = `-- =========================================
 -- Execute este script no SQL Editor do seu projeto Supabase (supabase.com/dashboard)
 -- ==============================================================================
 
--- 1. TABELA DE UTILIZADORES
+-- 1. TABELA DE EMPRESAS & CONFIGURAÇÃO FISCAL
+CREATE TABLE IF NOT EXISTS public.empresas (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    trade_name TEXT,
+    tax_number TEXT,
+    address TEXT,
+    city TEXT,
+    postal_code TEXT,
+    country TEXT DEFAULT 'Moçambique',
+    currency TEXT DEFAULT 'MZN',
+    currency_symbol TEXT DEFAULT 'Mt',
+    currency_position TEXT DEFAULT 'suffix',
+    currency_decimals NUMERIC DEFAULT 2,
+    phone TEXT,
+    mobile TEXT,
+    email TEXT,
+    website TEXT,
+    logo_url TEXT,
+    software_cert_number TEXT DEFAULT '0000/AT',
+    saft_version TEXT DEFAULT '1.04_01',
+    share_capital TEXT,
+    commercial_registry_number TEXT,
+    default_iban TEXT,
+    default_bank TEXT,
+    active_invoice_template_id TEXT,
+    invoice_templates JSONB DEFAULT '[]'::jsonb,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+-- 2. TABELA DE LOJAS & FILIAIS
+CREATE TABLE IF NOT EXISTS public.lojas (
+    id TEXT PRIMARY KEY,
+    company_id TEXT DEFAULT 'comp-1',
+    code TEXT,
+    name TEXT NOT NULL,
+    address TEXT,
+    city TEXT,
+    phone TEXT,
+    manager_id TEXT,
+    default_warehouse_id TEXT,
+    terminals_count NUMERIC DEFAULT 1,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+-- 3. TABELA DE UTILIZADORES
 CREATE TABLE IF NOT EXISTS public.usuarios (
     id TEXT PRIMARY KEY,
     company_id TEXT DEFAULT 'comp-1',
@@ -475,7 +524,7 @@ CREATE TABLE IF NOT EXISTS public.usuarios (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
--- 2. TABELA DE CATEGORIAS
+-- 4. TABELA DE CATEGORIAS
 CREATE TABLE IF NOT EXISTS public.categorias (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
@@ -485,7 +534,7 @@ CREATE TABLE IF NOT EXISTS public.categorias (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
--- 3. TABELA DE PRODUTOS / ARTIGOS
+-- 5. TABELA DE PRODUTOS / ARTIGOS
 CREATE TABLE IF NOT EXISTS public.produtos (
     id TEXT PRIMARY KEY,
     company_id TEXT DEFAULT 'comp-1',
@@ -507,7 +556,7 @@ CREATE TABLE IF NOT EXISTS public.produtos (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
--- 4. TABELA DE CLIENTES
+-- 6. TABELA DE CLIENTES
 CREATE TABLE IF NOT EXISTS public.clientes (
     id TEXT PRIMARY KEY,
     company_id TEXT DEFAULT 'comp-1',
@@ -528,7 +577,7 @@ CREATE TABLE IF NOT EXISTS public.clientes (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
--- 5. TABELA DE FORNECEDORES
+-- 7. TABELA DE FORNECEDORES
 CREATE TABLE IF NOT EXISTS public.fornecedores (
     id TEXT PRIMARY KEY,
     company_id TEXT DEFAULT 'comp-1',
@@ -547,7 +596,7 @@ CREATE TABLE IF NOT EXISTS public.fornecedores (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
--- 6. TABELA DE ARMAZÉNS
+-- 8. TABELA DE ARMAZÉNS
 CREATE TABLE IF NOT EXISTS public.armazens (
     id TEXT PRIMARY KEY,
     company_id TEXT DEFAULT 'comp-1',
@@ -560,7 +609,7 @@ CREATE TABLE IF NOT EXISTS public.armazens (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
--- 7. TABELA DE STOCK / INVENTÁRIO
+-- 9. TABELA DE STOCK / INVENTÁRIO
 CREATE TABLE IF NOT EXISTS public.stock (
     id TEXT PRIMARY KEY,
     product_id TEXT NOT NULL,
@@ -574,7 +623,7 @@ CREATE TABLE IF NOT EXISTS public.stock (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
--- 8. TABELA DE VENDAS & FATURAÇÃO
+-- 10. TABELA DE VENDAS & FATURAÇÃO
 CREATE TABLE IF NOT EXISTS public.vendas (
     id TEXT PRIMARY KEY,
     company_id TEXT DEFAULT 'comp-1',
@@ -604,7 +653,7 @@ CREATE TABLE IF NOT EXISTS public.vendas (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
--- 9. TABELA DE CONTAS A PAGAR
+-- 11. TABELA DE CONTAS A PAGAR
 CREATE TABLE IF NOT EXISTS public.contas_pagar (
     id TEXT PRIMARY KEY,
     company_id TEXT DEFAULT 'comp-1',
@@ -622,7 +671,7 @@ CREATE TABLE IF NOT EXISTS public.contas_pagar (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
--- 10. TABELA DE CONTAS A RECEBER
+-- 12. TABELA DE CONTAS A RECEBER
 CREATE TABLE IF NOT EXISTS public.contas_receber (
     id TEXT PRIMARY KEY,
     company_id TEXT DEFAULT 'comp-1',
@@ -639,7 +688,7 @@ CREATE TABLE IF NOT EXISTS public.contas_receber (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
--- 11. TABELA DE TURNOS DE CAIXA
+-- 13. TABELA DE TURNOS DE CAIXA
 CREATE TABLE IF NOT EXISTS public.turnos_caixa (
     id TEXT PRIMARY KEY,
     company_id TEXT DEFAULT 'comp-1',
@@ -672,6 +721,8 @@ CREATE TABLE IF NOT EXISTS public.turnos_caixa (
 -- ==============================================================================
 -- REPLICA IDENTITY FULL (Essencial para receber dados completos em eventos DELETE no Realtime)
 -- ==============================================================================
+ALTER TABLE public.empresas REPLICA IDENTITY FULL;
+ALTER TABLE public.lojas REPLICA IDENTITY FULL;
 ALTER TABLE public.usuarios REPLICA IDENTITY FULL;
 ALTER TABLE public.categorias REPLICA IDENTITY FULL;
 ALTER TABLE public.produtos REPLICA IDENTITY FULL;
@@ -691,8 +742,8 @@ DO $$
 DECLARE
     t text;
     tables text[] := ARRAY[
-        'usuarios', 'categorias', 'produtos', 'clientes', 
-        'fornecedores', 'armazens', 'stock', 'vendas', 
+        'empresas', 'lojas', 'usuarios', 'categorias', 'produtos', 
+        'clientes', 'fornecedores', 'armazens', 'stock', 'vendas', 
         'contas_pagar', 'contas_receber', 'turnos_caixa'
     ];
 BEGIN
@@ -710,8 +761,8 @@ DO $$
 DECLARE
     t text;
     tables text[] := ARRAY[
-        'usuarios', 'categorias', 'produtos', 'clientes', 
-        'fornecedores', 'armazens', 'stock', 'vendas', 
+        'empresas', 'lojas', 'usuarios', 'categorias', 'produtos', 
+        'clientes', 'fornecedores', 'armazens', 'stock', 'vendas', 
         'contas_pagar', 'contas_receber', 'turnos_caixa'
     ];
 BEGIN

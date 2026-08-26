@@ -925,6 +925,52 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       onLogAdded: (log) => {
         setSupabaseSyncLogs((prev) => [log, ...prev].slice(0, 150));
       },
+      onCompanyChange: (event, item, rawOld) => {
+        if (event === 'DELETE') {
+          const idToDelete = item.id || rawOld?.id;
+          if (idToDelete) {
+            setCompanies((prev) => prev.filter((c) => String(c.id) !== String(idToDelete)));
+            notify(`🗑️ Empresa removida no Supabase (${rawOld?.name || idToDelete})`, 'info');
+          }
+        } else if (item.id) {
+          setCompanies((prev) => {
+            const exists = prev.some((c) => String(c.id) === String(item.id));
+            if (exists) {
+              return prev.map((c) => (String(c.id) === String(item.id) ? ({ ...c, ...item } as Company) : c));
+            }
+            return [...prev, item as Company];
+          });
+          setCurrentCompany((prev) => {
+            if (String(prev.id) === String(item.id) || prev.id === 'comp-1') {
+              return { ...prev, ...item } as Company;
+            }
+            return prev;
+          });
+        }
+      },
+      onStoreChange: (event, item, rawOld) => {
+        if (event === 'DELETE') {
+          const idToDelete = item.id || rawOld?.id;
+          if (idToDelete) {
+            setStores((prev) => prev.filter((s) => String(s.id) !== String(idToDelete)));
+            notify(`🗑️ Loja removida no Supabase (${rawOld?.name || idToDelete})`, 'info');
+          }
+        } else if (item.id) {
+          setStores((prev) => {
+            const exists = prev.some((s) => String(s.id) === String(item.id));
+            if (exists) {
+              return prev.map((s) => (String(s.id) === String(item.id) ? ({ ...s, ...item } as Store) : s));
+            }
+            return [...prev, item as Store];
+          });
+          setCurrentStore((prev) => {
+            if (String(prev.id) === String(item.id) || prev.id === 'store-1') {
+              return { ...prev, ...item } as Store;
+            }
+            return prev;
+          });
+        }
+      },
       onProductChange: (event, item, rawOld) => {
         if (event === 'DELETE') {
           const idToDelete = item.id || rawOld?.id;
@@ -1120,6 +1166,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const pullFromSupabase = async () => {
     notify('A sincronizar dados a partir do Supabase...', 'info');
     const res = await pullAllFromSupabase();
+    if (res.data.companies && res.data.companies.length > 0) {
+      setCompanies(res.data.companies);
+      const matched = res.data.companies.find((c) => c.id === currentCompany.id) || res.data.companies[0];
+      if (matched) setCurrentCompany(matched);
+    }
+    if (res.data.stores && res.data.stores.length > 0) {
+      setStores(res.data.stores);
+      const matchedStore = res.data.stores.find((s) => s.id === currentStore.id) || res.data.stores[0];
+      if (matchedStore) setCurrentStore(matchedStore);
+    }
     if (res.data.products && res.data.products.length > 0) setProducts(res.data.products);
     if (res.data.customers && res.data.customers.length > 0) setCustomers(res.data.customers);
     if (res.data.suppliers && res.data.suppliers.length > 0) setSuppliers(res.data.suppliers);
@@ -1145,6 +1201,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const pushToSupabase = async () => {
     notify('A enviar todos os registos para o Supabase...', 'info');
     const res = await pushAllToSupabase({
+      companies,
+      stores,
       products,
       customers,
       suppliers,
@@ -1221,11 +1279,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // ==================== USER MANAGEMENT & RBAC CRUD ====================
   const addUser = (userData: Omit<User, 'id'>) => {
     const id = `usr-${Date.now()}`;
-    const userRole = userData.role || 'caixa';
-    const permissions = userData.permissions || defaultPermissionsByRole[userRole];
+    const userRole = (userData.role || userData.roleId || 'caixa') as Role;
+    const isAdmin = userRole === 'admin' || userData.roleId === 'admin' || userData.role === 'admin';
+    const permissions = isAdmin
+      ? { ...defaultPermissionsByRole.admin }
+      : userData.permissions || defaultPermissionsByRole[userRole] || defaultPermissionsByRole.caixa;
     const newUser: User = {
       ...userData,
       id,
+      role: isAdmin ? 'admin' : userRole,
+      roleId: isAdmin ? 'admin' : (userData.roleId || userRole),
       permissions,
       isActive: userData.isActive !== undefined ? userData.isActive : true,
       createdAt: userData.createdAt || new Date().toISOString().split('T')[0],
@@ -1246,7 +1309,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       prev.map((u) => {
         if (u.id === id) {
           const updated = { ...u, ...updates };
-          if (updates.role && !updates.permissions) {
+          const isAdmin =
+            updated.role === 'admin' ||
+            updated.roleId === 'admin' ||
+            updates.role === 'admin' ||
+            updates.roleId === 'admin';
+          if (isAdmin) {
+            updated.role = 'admin';
+            updated.roleId = 'admin';
+            updated.permissions = { ...defaultPermissionsByRole.admin };
+          } else if (updates.role && !updates.permissions) {
             updated.permissions = defaultPermissionsByRole[updates.role] || u.permissions;
           }
           if (currentUser.id === id) {
@@ -1557,7 +1629,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   );
 
   const hasPermission = (module: keyof UserPermissions, action: keyof ModulePermission): boolean => {
-    if (currentUser.role === 'admin') return true;
+    if (currentUser.role === 'admin' || currentUser.roleId === 'admin') return true;
     if (!currentUser.permissions) {
       const rolePerms = defaultPermissionsByRole[currentUser.role];
       if (!rolePerms) return false;
@@ -1614,6 +1686,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const id = `comp-${Date.now()}`;
     const newComp: Company = { ...comp, id };
     setCompanies((prev) => [...prev, newComp]);
+    pushRecordToSupabase('empresas', 'insert', newComp);
     emitEvent('POS', 'company.created', { companyId: id, name: newComp.name });
     sound.playSuccessChime();
   };
@@ -1621,19 +1694,39 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const updateCompany = (idOrUpdates: string | Partial<Company>, updates?: Partial<Company>) => {
     if (typeof idOrUpdates === 'string') {
       const id = idOrUpdates;
+      let updatedObj: Company | undefined;
       setCompanies((prev) =>
-        prev.map((c) => (c.id === id ? { ...c, ...updates } : c))
+        prev.map((c) => {
+          if (c.id === id) {
+            updatedObj = { ...c, ...updates };
+            return updatedObj;
+          }
+          return c;
+        })
       );
       if (currentCompany.id === id && updates) {
         setCurrentCompany((prev) => ({ ...prev, ...updates }));
       }
+      if (updatedObj) {
+        pushRecordToSupabase('empresas', 'update', updatedObj);
+      } else {
+        pushRecordToSupabase('empresas', 'update', { id, ...updates });
+      }
       emitEvent('POS', 'company.updated', { companyId: id, updates });
     } else {
       const updatesObj = idOrUpdates;
+      let updatedObj: Company = { ...currentCompany, ...updatesObj };
       setCompanies((prev) =>
-        prev.map((c) => (c.id === currentCompany.id ? { ...c, ...updatesObj } : c))
+        prev.map((c) => {
+          if (c.id === currentCompany.id) {
+            updatedObj = { ...c, ...updatesObj };
+            return updatedObj;
+          }
+          return c;
+        })
       );
       setCurrentCompany((prev) => ({ ...prev, ...updatesObj }));
+      pushRecordToSupabase('empresas', 'update', updatedObj);
       emitEvent('POS', 'company.updated', { companyId: currentCompany.id, updates: updatesObj });
     }
     sound.playSuccessChime();
@@ -1646,6 +1739,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
     const target = companies.find((c) => c.id === id);
     setCompanies((prev) => prev.filter((c) => c.id !== id));
+    pushRecordToSupabase('empresas', 'delete', { id });
     if (currentCompany.id === id) {
       const nextComp = companies.find((c) => c.id !== id) || initialCompanies[0];
       setCurrentCompany(nextComp);
@@ -1659,16 +1753,29 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const id = `store-${Date.now()}`;
     const newStore: Store = { ...store, id };
     setStores((prev) => [...prev, newStore]);
+    pushRecordToSupabase('lojas', 'insert', newStore);
     emitEvent('POS', 'store.created', { storeId: id, name: newStore.name });
     sound.playSuccessChime();
   };
 
   const updateStore = (id: string, updates: Partial<Store>) => {
+    let updatedStore: Store | undefined;
     setStores((prev) =>
-      prev.map((s) => (s.id === id ? { ...s, ...updates } : s))
+      prev.map((s) => {
+        if (s.id === id) {
+          updatedStore = { ...s, ...updates };
+          return updatedStore;
+        }
+        return s;
+      })
     );
     if (currentStore.id === id) {
       setCurrentStore((prev) => ({ ...prev, ...updates }));
+    }
+    if (updatedStore) {
+      pushRecordToSupabase('lojas', 'update', updatedStore);
+    } else {
+      pushRecordToSupabase('lojas', 'update', { id, ...updates });
     }
     emitEvent('POS', 'store.updated', { storeId: id, updates });
     sound.playSuccessChime();
@@ -1681,6 +1788,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
     const target = stores.find((s) => s.id === id);
     setStores((prev) => prev.filter((s) => s.id !== id));
+    pushRecordToSupabase('lojas', 'delete', { id });
     if (currentStore.id === id) {
       const nextStore = stores.find((s) => s.id !== id) || initialStores[0];
       setCurrentStore(nextStore);
