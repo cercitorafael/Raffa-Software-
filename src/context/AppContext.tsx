@@ -106,7 +106,10 @@ import {
   upsertUserProfile,
   UserProfile,
   supabase,
+  registrarEmpresaEUsuarioCliente,
+  buscarEmpresaEUsuarioPorLogin,
 } from '../lib/supabase';
+import { INDUSTRY_PRESETS, IndustryPreset } from '../data/industryPresets';
 
 export interface CartItem extends SaleItem {
   image?: string;
@@ -128,13 +131,41 @@ export interface AppContextType {
   syncConnectedUserProfile: () => Promise<string | undefined>;
   saveUserProfile: (profile: Partial<UserProfile>) => Promise<UserProfile | null>;
 
-  // Tenancy & RBAC
+  // Tenancy & Multi-Enterprise Registration
   companies: Company[];
   currentCompany: Company;
   setCurrentCompany: (c: Company) => void;
   addCompany: (comp: Omit<Company, 'id'>) => void;
   updateCompany: (idOrUpdates: string | Partial<Company>, comp?: Partial<Company>) => void;
   deleteCompany: (id: string) => void;
+  generateNextCompanyId: () => string;
+  registerClientCompany: (params: {
+    company: {
+      id?: string;
+      name: string;
+      tradeName?: string;
+      industry?: string;
+      sector?: string;
+      taxNumber?: string;
+      address?: string;
+      city?: string;
+      phone?: string;
+      email?: string;
+      currency?: string;
+      logoUrl?: string;
+    };
+    adminUser: {
+      name: string;
+      email: string;
+      username?: string;
+      pin?: string;
+      phone?: string;
+      password?: string;
+      nif?: string;
+    };
+    storeName?: string;
+    autoLogin?: boolean;
+  }) => Promise<{ success: boolean; companyId: string; user: User; error?: string }>;
   currencyDefinition: CurrencyDefinition;
   supportedCurrencies: CurrencyDefinition[];
   formatCurrency: (amount: number, customCurrency?: string) => string;
@@ -172,7 +203,7 @@ export interface AppContextType {
   // Authentication & Security
   isAuthenticated: boolean;
   isScreenLocked: boolean;
-  login: (credentials: { identifier: string; pinOrPassword?: string; companyId?: string; storeId?: string }) => { success: boolean; error?: string };
+  login: (credentials: { identifier: string; pinOrPassword?: string; companyId?: string; storeId?: string }) => Promise<{ success: boolean; error?: string }>;
   loginWithPin: (pin: string, userId?: string, companyId?: string, storeId?: string) => { success: boolean; error?: string };
   quickLogin: (user: User, companyId?: string, storeId?: string) => void;
   logout: () => void;
@@ -1254,7 +1285,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const syncConnectedUserProfile = useCallback(async (): Promise<string | undefined> => {
     try {
-      const profile = await getUserFullProfile();
+      const { user, profile } = await getUserFullProfile();
       if (profile) {
         setCurrentUserProfile(profile);
         if (profile.company_id) {
@@ -1269,15 +1300,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             );
             if (!found) {
               const newComp: Company = {
-                id: companyKey.startsWith('comp-') ? companyKey : `comp-${Date.now()}`,
+                id: companyKey.startsWith('comp-') || companyKey.startsWith('empresa-') ? companyKey : `comp-${Date.now()}`,
                 name: companyKey,
                 tradeName: companyKey,
                 taxNumber: '400000000',
                 address: 'Sede Principal',
                 city: 'Maputo',
+                postalCode: '1100',
                 country: 'Moçambique',
                 phone: '+258 84 000 0000',
-                email: profile.email || 'empresa@raffapower.mz',
+                email: profile.email || user?.email || 'empresa@raffapower.mz',
                 currency: 'MZN',
                 currencySymbol: 'MT',
                 currencyPosition: 'suffix',
@@ -1302,7 +1334,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             }
             return {
               ...prev,
-              id: companyKey.startsWith('comp-') ? companyKey : prev.id,
+              id: companyKey.startsWith('comp-') || companyKey.startsWith('empresa-') ? companyKey : prev.id,
               name: companyKey,
               tradeName: companyKey,
             };
@@ -1319,19 +1351,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, []);
 
   const saveUserProfile = useCallback(async (profileData: Partial<UserProfile>): Promise<UserProfile | null> => {
-    const result = await upsertUserProfile(profileData);
-    if (result.profile) {
-      setCurrentUserProfile(result.profile);
-      if (result.profile.company_id) {
+    const userId = profileData.id || supabaseAuthUser?.id || currentUser?.id || 'usr-default';
+    const result = await upsertUserProfile({ ...profileData, id: userId });
+    if (result.data) {
+      setCurrentUserProfile(result.data);
+      if (result.data.company_id) {
         await syncConnectedUserProfile();
       }
       notify('Perfil Supabase guardado com sucesso!', 'success');
-      return result.profile;
+      return result.data;
     } else {
       notify(`Erro ao guardar perfil: ${result.error?.message || 'Erro desconhecido'}`, 'error');
       return null;
     }
-  }, [syncConnectedUserProfile, notify]);
+  }, [supabaseAuthUser?.id, currentUser?.id, syncConnectedUserProfile, notify]);
 
   useEffect(() => {
     // Initial fetch of connected auth user and profile
@@ -1519,7 +1552,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // ==================== AUTHENTICATION & SECURITY ====================
   const login = useCallback(
-    ({
+    async ({
       identifier,
       pinOrPassword,
       companyId,
@@ -1529,14 +1562,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       pinOrPassword?: string;
       companyId?: string;
       storeId?: string;
-    }): { success: boolean; error?: string } => {
+    }): Promise<{ success: boolean; error?: string }> => {
       const cleanIdent = identifier.trim().toLowerCase();
       if (!cleanIdent) {
         sound.playError();
         return { success: false, error: 'Por favor introduza o seu Email, Utilizador ou Nome.' };
       }
 
-      const user = users.find(
+      // 1. Procurar na lista local de utilizadores
+      let user = users.find(
         (u) =>
           u.email?.toLowerCase() === cleanIdent ||
           (u.username && u.username.toLowerCase() === cleanIdent) ||
@@ -1549,6 +1583,88 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           (cleanIdent === 'compras' && u.role === 'comprador')
       );
 
+      // 2. Se não encontrar localmente, consultar no Supabase (tabelas usuarios, profiles, empresas)
+      if (!user) {
+        try {
+          const supabaseRes = await buscarEmpresaEUsuarioPorLogin(cleanIdent);
+          if (supabaseRes.user) {
+            const su = supabaseRes.user;
+            const newUserId = su.id || `usr-${Date.now()}`;
+            const userRole = (su.role || su.cargo?.toLowerCase() || 'admin') as Role;
+            const compId = su.company_id || supabaseRes.company?.id || 'comp-1';
+
+            user = {
+              id: newUserId,
+              companyId: compId,
+              storeId: su.store_id || supabaseRes.store?.id || `store-${compId}-sede`,
+              name: su.nome || su.name || su.full_name || 'Utilizador',
+              username: su.username || su.email?.split('@')[0] || cleanIdent,
+              email: su.email || cleanIdent,
+              role: userRole,
+              roleId: userRole,
+              pin: su.pin || '1234',
+              phone: su.telefone || su.phone || '',
+              isActive: su.ativo !== false && su.is_active !== false,
+              createdAt: su.created_at || new Date().toISOString().split('T')[0],
+              permissions: { ...(defaultPermissionsByRole[userRole] || defaultPermissionsByRole.admin) },
+            };
+
+            setUsers((prev) => [user!, ...prev.filter((u) => u.id !== user!.id)]);
+
+            if (supabaseRes.company) {
+              const sc = supabaseRes.company;
+              const newCompObj: Company = {
+                id: sc.id,
+                name: sc.name,
+                tradeName: sc.trade_name || sc.name,
+                industry: sc.industry || 'Comércio Geral',
+                sector: sc.sector || sc.industry || 'Comércio Geral',
+                taxNumber: sc.tax_number || '400000000',
+                address: sc.address || 'Sede',
+                city: sc.city || 'Maputo',
+                postalCode: sc.postal_code || '1100',
+                country: sc.country || 'Moçambique',
+                currency: sc.currency || 'MZN',
+                currencySymbol: sc.currency_symbol || 'Mt',
+                currencyPosition: 'suffix',
+                currencyDecimals: 2,
+                phone: sc.phone || '',
+                email: sc.email || user.email,
+                softwareCertNumber: sc.software_cert_number || '0000/AT',
+                saftVersion: '1.04_01',
+                activeInvoiceTemplateId: 'tmpl-agro-vendus',
+              };
+              setCompanies((prev) => {
+                const exists = prev.some((c) => c.id === newCompObj.id);
+                return exists ? prev.map((c) => (c.id === newCompObj.id ? newCompObj : c)) : [...prev, newCompObj];
+              });
+            }
+
+            if (supabaseRes.store) {
+              const ss = supabaseRes.store;
+              const newStoreObj: Store = {
+                id: ss.id,
+                companyId: ss.company_id || compId,
+                code: ss.code || 'LOJA-01',
+                name: ss.name || 'Loja Principal / Sede',
+                address: ss.address || '',
+                city: ss.city || '',
+                phone: ss.phone || '',
+                managerId: user.id,
+                defaultWarehouseId: ss.default_warehouse_id || `wh-${compId}-default`,
+                terminalsCount: 1,
+              };
+              setStores((prev) => {
+                const exists = prev.some((s) => s.id === newStoreObj.id);
+                return exists ? prev.map((s) => (s.id === newStoreObj.id ? newStoreObj : s)) : [...prev, newStoreObj];
+              });
+            }
+          }
+        } catch (err) {
+          console.warn('Erro ao consultar usuário no Supabase:', err);
+        }
+      }
+
       if (!user) {
         sound.playError();
         return { success: false, error: 'Credenciais inválidas: utilizador não encontrado.' };
@@ -1559,7 +1675,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         return { success: false, error: 'Conta de utilizador inativa. Contacte o Administrador do sistema.' };
       }
 
-      // Check PIN / Password strictly
+      // Validar Senha ou PIN
       const inputPin = pinOrPassword?.trim();
       if (!inputPin) {
         sound.playError();
@@ -1567,7 +1683,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
 
       const validPin = user.pin?.trim() || '1234';
+      const validPassword = user.password?.trim();
       const isMatch =
+        (validPassword && inputPin === validPassword) ||
         inputPin === validPin ||
         inputPin === '1234' ||
         (user.role === 'admin' && (inputPin === 'admin' || inputPin === 'admin123')) ||
@@ -1578,16 +1696,49 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         return { success: false, error: 'Palavra-passe ou PIN incorreto. Verifique as suas credenciais.' };
       }
 
-      if (companyId) {
-        const comp = companies.find((c) => c.id === companyId);
-        if (comp) setCurrentCompany(comp);
+      // === IDENTIFICAR E CARREGAR A EMPRESA VINCULADA AO UTILIZADOR ===
+      const targetCompanyId = user.companyId || companyId || currentCompany.id;
+      let matchedCompany = companies.find((c) => c.id === targetCompanyId);
+
+      if (!matchedCompany && targetCompanyId) {
+        matchedCompany = {
+          id: targetCompanyId,
+          name: targetCompanyId.startsWith('empresa-') ? `Empresa ${user.name}` : `A Minha Empresa, Lda.`,
+          tradeName: targetCompanyId.startsWith('empresa-') ? `Empresa ${user.name}` : `A Minha Empresa`,
+          taxNumber: '400000000',
+          address: 'Avenida Principal, Sede',
+          city: 'Maputo',
+          postalCode: '1100',
+          country: 'Moçambique',
+          currency: 'MZN',
+          currencySymbol: 'Mt',
+          currencyPosition: 'suffix',
+          currencyDecimals: 2,
+          phone: user.phone || '+258 84 000 0000',
+          email: user.email || 'empresa@raffapower.mz',
+          softwareCertNumber: '0000/AT',
+          saftVersion: '1.04_01',
+          activeInvoiceTemplateId: 'tmpl-agro-vendus',
+        };
+        setCompanies((prev) => [...prev, matchedCompany!]);
       }
-      if (storeId) {
-        const st = stores.find((s) => s.id === storeId);
-        if (st) {
-          setCurrentStore(st);
-          const term = terminals.find((t) => t.storeId === st.id);
-          if (term) setCurrentTerminal(term);
+
+      if (matchedCompany) {
+        setCurrentCompany(matchedCompany);
+        saveToStorage('company', matchedCompany);
+      }
+
+      // Vincular Loja e Terminal da Empresa identificada
+      const targetStoreId = user.storeId || storeId;
+      const matchedStore =
+        stores.find((s) => s.id === targetStoreId || s.companyId === targetCompanyId) || stores[0];
+      if (matchedStore) {
+        setCurrentStore(matchedStore);
+        saveToStorage('store', matchedStore);
+        const term = terminals.find((t) => t.storeId === matchedStore.id) || terminals[0];
+        if (term) {
+          setCurrentTerminal(term);
+          saveToStorage('terminal', term);
         }
       }
 
@@ -1601,15 +1752,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         userId: user.id,
         userName: user.name,
         role: user.role,
-        storeId: storeId || currentStore.id,
+        companyId: matchedCompany?.id,
+        companyName: matchedCompany?.name,
+        storeId: matchedStore?.id,
         timestamp: new Date().toISOString(),
       });
 
       sound.playSuccessChime();
-      notify(`Bem-vindo ao OmniERP & POS, ${user.name}!`, 'success');
+      notify(`Bem-vindo, ${user.name}! Empresa: ${matchedCompany?.name || 'Sede'}`, 'success');
       return { success: true };
     },
-    [users, companies, stores, terminals, currentStore.id, notify]
+    [users, companies, stores, terminals, currentCompany.id, notify]
   );
 
   const loginWithPin = useCallback(
@@ -1645,16 +1798,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         return { success: false, error: 'PIN de segurança incorreto.' };
       }
 
-      if (companyId) {
-        const comp = companies.find((c) => c.id === companyId);
-        if (comp) setCurrentCompany(comp);
+      // Identificar automaticamente a empresa do colaborador
+      const targetCompanyId = user.companyId || companyId || currentCompany.id;
+      const matchedCompany = companies.find((c) => c.id === targetCompanyId);
+      if (matchedCompany) {
+        setCurrentCompany(matchedCompany);
+        saveToStorage('company', matchedCompany);
       }
-      if (storeId) {
-        const st = stores.find((s) => s.id === storeId);
-        if (st) {
-          setCurrentStore(st);
-          const term = terminals.find((t) => t.storeId === st.id);
-          if (term) setCurrentTerminal(term);
+
+      const targetStoreId = user.storeId || storeId;
+      const matchedStore = stores.find((s) => s.id === targetStoreId || s.companyId === targetCompanyId) || stores[0];
+      if (matchedStore) {
+        setCurrentStore(matchedStore);
+        saveToStorage('store', matchedStore);
+        const term = terminals.find((t) => t.storeId === matchedStore.id) || terminals[0];
+        if (term) {
+          setCurrentTerminal(term);
+          saveToStorage('terminal', term);
         }
       }
 
@@ -1668,7 +1828,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         userId: user.id,
         userName: user.name,
         role: user.role,
-        storeId: storeId || currentStore.id,
+        companyId: matchedCompany?.id,
+        storeId: matchedStore?.id,
         timestamp: new Date().toISOString(),
       });
 
@@ -1676,21 +1837,27 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       notify(`Operador autenticado: ${user.name} (${user.role.toUpperCase()})`, 'success');
       return { success: true };
     },
-    [users, companies, stores, terminals, currentStore.id, notify]
+    [users, companies, stores, terminals, currentCompany.id, notify]
   );
 
   const quickLogin = useCallback(
     (user: User, companyId?: string, storeId?: string) => {
-      if (companyId) {
-        const comp = companies.find((c) => c.id === companyId);
-        if (comp) setCurrentCompany(comp);
+      const targetCompanyId = user.companyId || companyId || currentCompany.id;
+      const matchedCompany = companies.find((c) => c.id === targetCompanyId);
+      if (matchedCompany) {
+        setCurrentCompany(matchedCompany);
+        saveToStorage('company', matchedCompany);
       }
-      if (storeId) {
-        const st = stores.find((s) => s.id === storeId);
-        if (st) {
-          setCurrentStore(st);
-          const term = terminals.find((t) => t.storeId === st.id);
-          if (term) setCurrentTerminal(term);
+
+      const targetStoreId = user.storeId || storeId;
+      const matchedStore = stores.find((s) => s.id === targetStoreId || s.companyId === targetCompanyId) || stores[0];
+      if (matchedStore) {
+        setCurrentStore(matchedStore);
+        saveToStorage('store', matchedStore);
+        const term = terminals.find((t) => t.storeId === matchedStore.id) || terminals[0];
+        if (term) {
+          setCurrentTerminal(term);
+          saveToStorage('terminal', term);
         }
       }
       setCurrentUser(user);
@@ -1709,7 +1876,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       sound.playSuccessChime();
       notify(`Sessão iniciada como ${user.name}`, 'success');
     },
-    [companies, stores, terminals, notify]
+    [companies, stores, terminals, currentCompany.id, notify]
   );
 
   const logout = useCallback(() => {
@@ -1875,6 +2042,252 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     sound.playSuccessChime();
     notify(`Empresa "${target?.name || id}" eliminada com sucesso.`, 'success');
   };
+
+  /**
+   * Gera o próximo identificador de empresa cliente no padrão 'empresa-cliente-2...', 'empresa-cliente-3...', etc.
+   */
+  const generateNextCompanyId = useCallback((): string => {
+    const pattern = /^empresa-cliente-(\d+)/i;
+    let maxNum = 1;
+    companies.forEach((c) => {
+      const m = c.id.match(pattern);
+      if (m && m[1]) {
+        const n = parseInt(m[1], 10);
+        if (n > maxNum) maxNum = n;
+      }
+    });
+    return `empresa-cliente-${maxNum + 1}`;
+  }, [companies]);
+
+  /**
+   * Cadastra uma nova empresa de qualquer ramo de negócio com todos os dados e usuário Administrador,
+   * garantindo que o company_id seja 'empresa-cliente-2...' (ou 'empresa-cliente-X') sincronizado com Supabase
+   */
+  const registerClientCompany = useCallback(
+    async (params: {
+      company: {
+        id?: string;
+        name: string;
+        tradeName?: string;
+        industry?: string;
+        sector?: string;
+        taxNumber?: string;
+        address?: string;
+        city?: string;
+        phone?: string;
+        email?: string;
+        currency?: string;
+        logoUrl?: string;
+      };
+      adminUser: {
+        name: string;
+        email: string;
+        username?: string;
+        pin?: string;
+        phone?: string;
+        password?: string;
+        nif?: string;
+      };
+      storeName?: string;
+      autoLogin?: boolean;
+    }): Promise<{ success: boolean; companyId: string; user: User; error?: string }> => {
+      try {
+        const companyId = (params.company.id?.trim()) || generateNextCompanyId();
+        const storeId = `store-${companyId}-sede`;
+        const terminalId = `term-${companyId}-01`;
+        const warehouseId = `wh-${companyId}-default`;
+        const userId = `usr-${Date.now()}`;
+
+        // 1. Objeto Company
+        const newComp: Company = {
+          id: companyId,
+          name: params.company.name.trim(),
+          tradeName: params.company.tradeName?.trim() || params.company.name.trim(),
+          industry: params.company.industry || 'Comércio Geral',
+          sector: params.company.sector || params.company.industry || 'Comércio Geral',
+          taxNumber: params.company.taxNumber?.trim() || `4${Math.floor(10000000 + Math.random() * 90000000)}`,
+          address: params.company.address?.trim() || 'Avenida Principal, Sede',
+          city: params.company.city?.trim() || 'Maputo',
+          postalCode: '1100',
+          country: 'Moçambique',
+          currency: params.company.currency || 'MZN',
+          currencySymbol: params.company.currency === 'EUR' ? '€' : params.company.currency === 'USD' ? '$' : 'Mt',
+          currencyPosition: 'suffix',
+          currencyDecimals: 2,
+          phone: params.company.phone?.trim() || '+258 84 000 0000',
+          email: params.company.email?.trim() || params.adminUser.email.trim(),
+          logoUrl: params.company.logoUrl,
+          softwareCertNumber: '0000/AT',
+          saftVersion: '1.04_01',
+          activeInvoiceTemplateId: 'tmpl-agro-vendus',
+        };
+
+        // 2. Loja Sede
+        const newStore: Store = {
+          id: storeId,
+          companyId,
+          code: 'LOJA-01',
+          name: params.storeName?.trim() || 'Loja Principal / Sede',
+          address: newComp.address,
+          city: newComp.city,
+          phone: newComp.phone,
+          managerId: userId,
+          defaultWarehouseId: warehouseId,
+          terminalsCount: 1,
+        };
+
+        // 3. Terminal POS
+        const newTerminal: Terminal = {
+          id: terminalId,
+          storeId,
+          code: 'POS-01',
+          description: 'Caixa Balcão Principal',
+          isActive: true,
+          currentShiftId: null,
+        };
+
+        // 4. Armazém
+        const newWarehouse: Warehouse = {
+          id: warehouseId,
+          companyId,
+          storeId,
+          name: 'Armazém Geral',
+          code: 'ARM-01',
+          location: newComp.city,
+          isDefault: true,
+        };
+
+        // 5. Usuário Administrador (associado explicitamente a companyId = 'empresa-cliente-2...')
+        const newUser: User = {
+          id: userId,
+          companyId,
+          storeId,
+          name: params.adminUser.name.trim(),
+          username: params.adminUser.username?.trim() || params.adminUser.email.split('@')[0],
+          email: params.adminUser.email.trim().toLowerCase(),
+          role: 'admin',
+          roleId: 'admin',
+          pin: params.adminUser.pin?.trim() || '1234',
+          phone: params.adminUser.phone?.trim() || newComp.phone,
+          isActive: true,
+          createdAt: new Date().toISOString().split('T')[0],
+          permissions: { ...defaultPermissionsByRole.admin },
+        };
+
+        // 6. Categorias e produtos iniciais baseados no ramo de negócio escolhido
+        const matchingPreset =
+          INDUSTRY_PRESETS.find(
+            (p) =>
+              p.id === params.company.industry ||
+              p.name.toLowerCase() === params.company.industry?.toLowerCase()
+          ) || INDUSTRY_PRESETS[INDUSTRY_PRESETS.length - 1];
+
+        const newCategories: ProductCategory[] = matchingPreset.defaultCategories.map((c, idx) => ({
+          id: `cat-${companyId}-${idx + 1}`,
+          name: c.name,
+          icon: c.icon,
+          color: c.color,
+        }));
+
+        const initialIndustryProducts: Product[] = matchingPreset.sampleProducts.map((sp, idx) => ({
+          id: `prod-${companyId}-${idx + 1}`,
+          companyId,
+          name: sp.name,
+          sku: `SKU-${idx + 101}`,
+          barcode: `560${idx + 1000000000}`,
+          price: sp.price,
+          costPrice: sp.costPrice,
+          taxRate: sp.taxRate,
+          category: sp.category,
+          unit: sp.unit,
+          minStock: 5,
+          maxStock: 500,
+          hasBatchControl: false,
+          imageUrl: 'https://images.unsplash.com/photo-1556740758-90de374c12ad?w=300',
+        }));
+
+        const initialStockItems: StockItem[] = initialIndustryProducts.map((p, idx) => ({
+          id: `stk-${companyId}-${idx + 1}`,
+          productId: p.id,
+          warehouseId,
+          quantity: 50,
+          reserved: 0,
+          avgCost: p.costPrice,
+        }));
+
+        // Atualizar estado da aplicação
+        setCompanies((prev) => [...prev, newComp]);
+        setCurrentCompany(newComp);
+        setStores((prev) => [...prev, newStore]);
+        setCurrentStore(newStore);
+        setTerminals((prev) => [...prev, newTerminal]);
+        setCurrentTerminal(newTerminal);
+        setWarehouses((prev) => [...prev, newWarehouse]);
+        setUsers((prev) => [newUser, ...prev]);
+        setCategories((prev) => [...newCategories, ...prev]);
+        setProducts((prev) => [...initialIndustryProducts, ...prev]);
+        setStock((prev) => [...initialStockItems, ...prev]);
+
+        // Sincronização automática para o Supabase (empresas, lojas, armazens, usuarios, profiles)
+        await registrarEmpresaEUsuarioCliente({
+          company: {
+            id: companyId,
+            name: newComp.name,
+            tradeName: newComp.tradeName,
+            industry: newComp.industry,
+            taxNumber: newComp.taxNumber,
+            address: newComp.address,
+            city: newComp.city,
+            phone: newComp.phone,
+            email: newComp.email,
+            currency: newComp.currency,
+          },
+          adminUser: {
+            id: userId,
+            name: newUser.name,
+            email: newUser.email,
+            username: newUser.username,
+            pin: newUser.pin,
+            phone: newUser.phone,
+            nif: params.adminUser.nif,
+          },
+          storeName: newStore.name,
+        });
+
+        emitEvent('POS', 'company.registered', {
+          companyId,
+          companyName: newComp.name,
+          industry: newComp.industry,
+          adminUserId: userId,
+          adminName: newUser.name,
+        });
+
+        if (params.autoLogin !== false) {
+          setCurrentUser(newUser);
+          setIsAuthenticated(true);
+          setIsScreenLocked(false);
+          saveToStorage('isAuthenticated', true);
+          saveToStorage('user', newUser);
+          saveToStorage('company', newComp);
+          saveToStorage('store', newStore);
+        }
+
+        sound.playSuccessChime();
+        notify(
+          `Empresa "${newComp.name}" cadastrada com sucesso (ID: ${companyId})! Administrador: ${newUser.name}.`,
+          'success'
+        );
+
+        return { success: true, companyId, user: newUser };
+      } catch (err: any) {
+        console.error('Erro ao cadastrar empresa:', err);
+        sound.playError();
+        notify(`Erro no cadastro da empresa: ${err.message || err}`, 'error');
+        return { success: false, companyId: '', user: null as any, error: err.message || String(err) };
+      }
+    },
+    [generateNextCompanyId, notify]
+  );
 
   const addStore = (store: Omit<Store, 'id'>) => {
     const id = `store-${Date.now()}`;
@@ -4065,6 +4478,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         addCompany,
         updateCompany,
         deleteCompany,
+        generateNextCompanyId,
+        registerClientCompany,
         currencyDefinition: getCurrencyDefinition(currentCompany?.currency),
         supportedCurrencies: SUPPORTED_CURRENCIES,
         formatCurrency: (amount: number, customCurrency?: string) =>

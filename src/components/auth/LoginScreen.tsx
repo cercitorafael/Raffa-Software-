@@ -10,9 +10,13 @@ import {
   RotateCw,
   CheckCircle2,
   ShieldAlert,
+  Building2,
+  Sparkles,
+  PlusCircle,
 } from 'lucide-react';
 import { User, Role } from '../../types';
 import { sound } from '../../utils/audio';
+import { RegisterCompanyModal } from './RegisterCompanyModal';
 
 export const LoginScreen: React.FC = () => {
   const {
@@ -29,13 +33,12 @@ export const LoginScreen: React.FC = () => {
   // - 'credentials': User & Password form
   // - 'pin': POS Touch Numeric Keypad
   const [authMode, setAuthMode] = useState<'credentials' | 'pin'>('credentials');
+  const [showRegisterModal, setShowRegisterModal] = useState<boolean>(false);
 
   // Credentials Mode State
   const [identifier, setIdentifier] = useState<string>('');
   const [password, setPassword] = useState<string>('');
   const [showPassword, setShowPassword] = useState<boolean>(false);
-  const [selectedCompanyId, setSelectedCompanyId] = useState<string>(currentCompany?.id || companies[0]?.id || '');
-  const [selectedStoreId, setSelectedStoreId] = useState<string>(currentStore?.id || stores[0]?.id || '');
   const [credentialsError, setCredentialsError] = useState<string | null>(null);
 
   // PIN Touch Mode State
@@ -45,10 +48,31 @@ export const LoginScreen: React.FC = () => {
 
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
 
-  // Filter stores by selected company
-  const availableStores = stores.filter(
-    (s) => !selectedCompanyId || s.companyId === selectedCompanyId
-  );
+  // Dynamic automatic identification of user and company
+  const detectedUser = users.find((u) => {
+    const clean = identifier.trim().toLowerCase();
+    if (!clean) return false;
+    return (
+      u.email?.toLowerCase() === clean ||
+      (u.username && u.username.toLowerCase() === clean) ||
+      u.name.toLowerCase() === clean ||
+      (clean === 'admin' && u.role === 'admin') ||
+      (clean === 'caixa' && u.role === 'caixa') ||
+      (clean === 'gerente' && u.role === 'gerente') ||
+      (clean === 'financeiro' && u.role === 'financeiro') ||
+      (clean === 'rh' && u.role === 'rh') ||
+      (clean === 'compras' && u.role === 'comprador')
+    );
+  });
+
+  const detectedCompany = detectedUser
+    ? companies.find((c) => c.id === detectedUser.companyId) || {
+        id: detectedUser.companyId || 'comp-1',
+        name: detectedUser.name.includes(' ') ? `Empresa ${detectedUser.name}` : `A Minha Empresa`,
+        tradeName: detectedUser.name,
+        taxNumber: '400000000',
+      }
+    : null;
 
   // Keyboard navigation for PIN mode
   useEffect(() => {
@@ -76,7 +100,7 @@ export const LoginScreen: React.FC = () => {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [authMode, pinInput, selectedUser, selectedCompanyId, selectedStoreId]);
+  }, [authMode, pinInput, selectedUser]);
 
   // Role metadata
   const roleBadges: Record<Role, { name: string; badge: string; color: string; desc: string }> = {
@@ -119,7 +143,7 @@ export const LoginScreen: React.FC = () => {
   };
 
   // Submit Standard Credentials (Login + Password)
-  const handleCredentialsSubmit = (e: React.FormEvent) => {
+  const handleCredentialsSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setCredentialsError(null);
 
@@ -140,19 +164,20 @@ export const LoginScreen: React.FC = () => {
 
     setIsSubmitting(true);
 
-    setTimeout(() => {
-      const result = login({
+    try {
+      const result = await login({
         identifier: cleanIdent,
         pinOrPassword: cleanPass,
-        companyId: selectedCompanyId,
-        storeId: selectedStoreId,
       });
 
       if (!result.success) {
         setCredentialsError(result.error || 'Credenciais inválidas. Verifique o utilizador e a palavra-passe.');
       }
+    } catch (err: any) {
+      setCredentialsError('Erro durante a validação de credenciais.');
+    } finally {
       setIsSubmitting(false);
-    }, 250);
+    }
   };
 
   // Submit Touchscreen PIN
@@ -175,9 +200,7 @@ export const LoginScreen: React.FC = () => {
     setTimeout(() => {
       const result = loginWithPin(
         pinInput.trim(),
-        selectedUser.id,
-        selectedCompanyId,
-        selectedStoreId
+        selectedUser.id
       );
 
       if (!result.success) {
@@ -211,8 +234,87 @@ export const LoginScreen: React.FC = () => {
   return (
     <div className="min-h-screen w-screen bg-[#070707] text-[#e5e5e5] flex flex-col justify-center items-center p-4 md:p-8 overflow-y-auto select-none">
       {/* Main Authentication Container */}
-      <main className="w-full flex items-center justify-center">
-        <div className="w-full max-w-2xl bg-[#121212] border border-[#262626] rounded-2xl shadow-2xl overflow-hidden flex flex-col transition-all">
+      <main className="w-full flex flex-col items-center justify-center max-w-2xl">
+        {/* Top Header Mode Switcher Bar */}
+        <div className="w-full mb-3 flex items-center justify-between bg-[#121212] border border-[#242424] p-1.5 rounded-2xl">
+          <div className="flex items-center space-x-1">
+            <button
+              type="button"
+              onClick={() => {
+                setAuthMode('credentials');
+                setCredentialsError(null);
+                sound.playBeep();
+              }}
+              className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer flex items-center space-x-1.5 ${
+                authMode === 'credentials'
+                  ? 'bg-[#c5a47e] text-neutral-950 shadow-sm'
+                  : 'text-neutral-400 hover:text-neutral-200'
+              }`}
+            >
+              <UserIcon className="w-3.5 h-3.5" />
+              <span>Acesso Geral ERP</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setAuthMode('pin');
+                setPinError(null);
+                sound.playBeep();
+              }}
+              className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer flex items-center space-x-1.5 ${
+                authMode === 'pin'
+                  ? 'bg-[#c5a47e] text-neutral-950 shadow-sm'
+                  : 'text-neutral-400 hover:text-neutral-200'
+              }`}
+            >
+              <KeyRound className="w-3.5 h-3.5" />
+              <span>PIN Operador POS</span>
+            </button>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => {
+              setShowRegisterModal(true);
+              sound.playBeep();
+            }}
+            className="px-3.5 py-1.5 rounded-xl text-xs font-bold bg-[#c5a47e]/15 text-[#c5a47e] hover:bg-[#c5a47e]/25 border border-[#c5a47e]/40 transition-all cursor-pointer flex items-center space-x-1.5"
+          >
+            <PlusCircle className="w-3.5 h-3.5" />
+            <span>Cadastrar Empresa</span>
+          </button>
+        </div>
+
+        {/* Multi-tenant Commercial Pitch Bar */}
+        <div className="w-full mb-3 p-3 bg-gradient-to-r from-[#181818] via-[#141414] to-[#181818] border border-[#262626] rounded-2xl flex items-center justify-between">
+          <div className="flex items-center space-x-2.5">
+            <div className="w-8 h-8 rounded-xl bg-[#c5a47e]/20 border border-[#c5a47e]/40 flex items-center justify-center text-[#c5a47e] shrink-0">
+              <Building2 className="w-4 h-4" />
+            </div>
+            <div>
+              <p className="text-xs font-bold text-neutral-200">
+                Sistema Comercial Multi-Empresas & Ramos
+              </p>
+              <p className="text-[11px] text-neutral-400">
+                Venda este sistema para supermercados, farmácias, restauração, boutiques e mais.
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setShowRegisterModal(true);
+              sound.playBeep();
+            }}
+            className="hidden sm:flex items-center space-x-1 px-3 py-1.5 rounded-xl bg-[#c5a47e] text-neutral-950 text-xs font-bold hover:bg-[#b5946e] transition-all cursor-pointer shadow-sm shrink-0"
+          >
+            <Sparkles className="w-3.5 h-3.5" />
+            <span>Criar Nova Empresa</span>
+          </button>
+        </div>
+
+        <div className="w-full bg-[#121212] border border-[#262626] rounded-2xl shadow-2xl overflow-hidden flex flex-col transition-all">
           {/* ================= MODE 1: LOGIN & SENHA (CREDENTIALS ERP) ================= */}
           {authMode === 'credentials' && (
             <div className="p-6 md:p-8">
@@ -247,6 +349,30 @@ export const LoginScreen: React.FC = () => {
                       className="w-full pl-10 pr-3 py-2.5 bg-[#0a0a0a] border border-[#282828] rounded-xl text-neutral-100 placeholder:text-neutral-600 font-medium focus:outline-hidden focus:border-[#c5a47e] focus:ring-1 focus:ring-[#c5a47e]/30 transition-all text-sm"
                     />
                   </div>
+
+                  {/* Real-time Detected Company Badge */}
+                  {detectedCompany && (
+                    <div className="mt-2 p-2.5 bg-[#c5a47e]/10 border border-[#c5a47e]/30 rounded-xl flex items-center justify-between animate-in fade-in duration-200">
+                      <div className="flex items-center space-x-2.5">
+                        <div className="w-6 h-6 rounded-lg bg-[#c5a47e]/20 flex items-center justify-center text-[#c5a47e] shrink-0">
+                          <Building2 className="w-3.5 h-3.5" />
+                        </div>
+                        <div className="min-w-0">
+                          <span className="text-[10px] uppercase font-bold text-[#c5a47e] tracking-wider block">
+                            Empresa Vinculada
+                          </span>
+                          <span className="text-xs font-bold text-neutral-100 truncate block">
+                            {detectedCompany.tradeName || detectedCompany.name}
+                          </span>
+                        </div>
+                      </div>
+                      {detectedCompany.taxNumber && (
+                        <span className="text-[10px] font-mono font-medium px-2 py-0.5 rounded bg-black/50 text-neutral-300 border border-neutral-700 shrink-0">
+                          NUIT: {detectedCompany.taxNumber}
+                        </span>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 {/* Password Input */}
@@ -278,45 +404,12 @@ export const LoginScreen: React.FC = () => {
                   </div>
                 </div>
 
-                {/* Multi-company and Store selectors */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-                  <div>
-                    <label className="text-[11px] text-neutral-400 font-semibold uppercase block mb-1">
-                      Entidade / Empresa
-                    </label>
-                    <select
-                      value={selectedCompanyId}
-                      onChange={(e) => {
-                        setSelectedCompanyId(e.target.value);
-                        const storeForCompany = stores.find((s) => s.companyId === e.target.value);
-                        if (storeForCompany) setSelectedStoreId(storeForCompany.id);
-                      }}
-                      className="w-full px-3 py-2 bg-[#0a0a0a] border border-[#282828] rounded-xl text-xs text-neutral-200 focus:outline-hidden focus:border-[#c5a47e] cursor-pointer"
-                    >
-                      {companies.map((c) => (
-                        <option key={c.id} value={c.id}>
-                          {c.tradeName || c.name} ({c.taxNumber})
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="text-[11px] text-neutral-400 font-semibold uppercase block mb-1">
-                      Loja / Balcão
-                    </label>
-                    <select
-                      value={selectedStoreId}
-                      onChange={(e) => setSelectedStoreId(e.target.value)}
-                      className="w-full px-3 py-2 bg-[#0a0a0a] border border-[#282828] rounded-xl text-xs text-neutral-200 focus:outline-hidden focus:border-[#c5a47e] cursor-pointer"
-                    >
-                      {availableStores.map((s) => (
-                        <option key={s.id} value={s.id}>
-                          {s.name} ({s.code})
-                        </option>
-                      ))}
-                    </select>
-                  </div>
+                {/* Automatic Company Resolution Notice */}
+                <div className="flex items-center space-x-2 text-[11px] text-neutral-400 bg-[#0a0a0a] p-2.5 rounded-xl border border-[#222222]">
+                  <Building2 className="w-3.5 h-3.5 text-[#c5a47e] shrink-0" />
+                  <span>
+                    A sua empresa e filial são identificadas e carregadas automaticamente a partir do seu login.
+                  </span>
                 </div>
 
                 {/* Submit Action */}
@@ -521,6 +614,15 @@ export const LoginScreen: React.FC = () => {
           )}
         </div>
       </main>
+
+      <RegisterCompanyModal
+        isOpen={showRegisterModal}
+        onClose={() => setShowRegisterModal(false)}
+        onSuccess={(data) => {
+          setIdentifier(data.userEmail);
+          setAuthMode('credentials');
+        }}
+      />
     </div>
   );
 };

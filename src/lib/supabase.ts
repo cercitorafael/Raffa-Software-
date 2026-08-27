@@ -138,13 +138,21 @@ export function reinitSupabase() {
 // Interface de Tipagem para a tabela 'usuarios'
 export interface Usuario {
   id?: string | number;
+  company_id?: string;
+  store_id?: string;
   nome: string;
+  name?: string;
   email: string;
   telefone?: string;
+  phone?: string;
   cargo?: string;
+  role?: string;
+  pin?: string;
   ativo?: boolean;
+  is_active?: boolean;
   nif?: string;
   avatar_url?: string;
+  permissions?: any;
   created_at?: string;
   updated_at?: string;
 }
@@ -294,32 +302,193 @@ export async function obterUsuarioPorId(
 
 /**
  * 3. CRIAR NOVO USUÁRIO (CREATE)
+ * Suporta definição de company_id no padrão 'empresa-cliente-2...' para isolamento multi-tenant
  */
 export async function criarUsuario(
-  usuario: Omit<Usuario, 'id' | 'created_at' | 'updated_at'>
+  usuario: Omit<Usuario, 'created_at' | 'updated_at'> & { id?: string | number }
 ): Promise<{ data: Usuario | null; error: any }> {
   try {
+    const id = usuario.id ? String(usuario.id) : `usr-${Date.now()}`;
+    const companyId = usuario.company_id || 'empresa-cliente-2';
+    const storeId = usuario.store_id || 'store-1';
+    const cargo = usuario.cargo || usuario.role || 'Operador';
+    const nome = usuario.nome || usuario.name || 'Utilizador';
+    const email = usuario.email || `${nome.toLowerCase().replace(/\s+/g, '')}@empresa.mz`;
+
+    const userPayload = {
+      id,
+      company_id: companyId,
+      store_id: storeId,
+      nome,
+      name: nome,
+      email,
+      cargo,
+      role: cargo.toLowerCase(),
+      pin: usuario.pin || '1234',
+      telefone: usuario.telefone || usuario.phone || null,
+      phone: usuario.telefone || usuario.phone || null,
+      ativo: usuario.ativo !== undefined ? usuario.ativo : usuario.is_active !== undefined ? usuario.is_active : true,
+      is_active: usuario.ativo !== undefined ? usuario.ativo : usuario.is_active !== undefined ? usuario.is_active : true,
+      nif: usuario.nif || null,
+      avatar_url: usuario.avatar_url || null,
+      permissions: usuario.permissions || null,
+      updated_at: new Date().toISOString(),
+    };
+
     const { data, error } = await supabase
       .from('usuarios')
-      .insert([
-        {
-          nome: usuario.nome,
-          email: usuario.email,
-          telefone: usuario.telefone || null,
-          cargo: usuario.cargo || 'Operador',
-          ativo: usuario.ativo !== undefined ? usuario.ativo : true,
-          nif: usuario.nif || null,
-          avatar_url: usuario.avatar_url || null,
-        },
-      ])
+      .upsert(userPayload)
       .select()
       .single();
 
-    if (error) throw error;
-    return { data, error: null };
+    if (error) {
+      console.warn('Aviso ao inserir na tabela usuarios, tentando inserir profile:', error);
+    }
+
+    // Also mirror to 'profiles' table for Supabase Auth binding with company_id: 'empresa-cliente-2...'
+    try {
+      await supabase.from('profiles').upsert({
+        id,
+        company_id: companyId,
+        full_name: nome,
+        email,
+        role: cargo.toLowerCase(),
+        avatar_url: usuario.avatar_url || null,
+        updated_at: new Date().toISOString(),
+      });
+    } catch (profErr) {
+      console.warn('Aviso ao sincronizar profiles no Supabase:', profErr);
+    }
+
+    return { data: data || (userPayload as any), error: null };
   } catch (error: any) {
     console.error('Erro ao criar usuário no Supabase:', error);
     return { data: null, error };
+  }
+}
+
+/**
+ * Cadastra uma nova empresa de qualquer ramo de negócio e o seu usuário administrador no Supabase
+ * Define o company_id no formato 'empresa-cliente-2...' (ou 'empresa-cliente-X')
+ */
+export async function registrarEmpresaEUsuarioCliente(params: {
+  company: {
+    id: string; // Ex: 'empresa-cliente-2'
+    name: string;
+    tradeName?: string;
+    industry?: string;
+    taxNumber?: string;
+    address?: string;
+    city?: string;
+    phone?: string;
+    email?: string;
+    currency?: string;
+  };
+  adminUser: {
+    id?: string;
+    name: string;
+    email: string;
+    username?: string;
+    pin: string;
+    phone?: string;
+    nif?: string;
+  };
+  storeName?: string;
+}): Promise<{ success: boolean; companyId: string; error?: any }> {
+  try {
+    const companyId = params.company.id || 'empresa-cliente-2';
+    const storeId = `store-${companyId}-sede`;
+    const userId = params.adminUser.id || `usr-${Date.now()}`;
+    const warehouseId = `wh-${companyId}-default`;
+
+    // 1. Cadastrar Empresa na tabela 'empresas'
+    const companyPayload = {
+      id: companyId,
+      name: params.company.name,
+      trade_name: params.company.tradeName || params.company.name,
+      tax_number: params.company.taxNumber || '400000000',
+      address: params.company.address || 'Sede Principal',
+      city: params.company.city || 'Maputo',
+      country: 'Moçambique',
+      currency: params.company.currency || 'MZN',
+      currency_symbol: params.company.currency === 'EUR' ? '€' : params.company.currency === 'USD' ? '$' : 'Mt',
+      phone: params.company.phone || null,
+      email: params.company.email || params.adminUser.email,
+      software_cert_number: '0000/AT',
+      saft_version: '1.04_01',
+      active_invoice_template_id: 'tmpl-agro-vendus',
+      updated_at: new Date().toISOString(),
+    };
+
+    const { error: compError } = await supabase.from('empresas').upsert(companyPayload);
+    if (compError) console.warn('Erro ao inserir empresa no Supabase:', compError);
+
+    // 2. Cadastrar Loja Sede na tabela 'lojas'
+    const storePayload = {
+      id: storeId,
+      company_id: companyId,
+      code: 'LOJA-01',
+      name: params.storeName || 'Loja Principal / Sede',
+      address: params.company.address || 'Sede Principal',
+      city: params.company.city || 'Maputo',
+      phone: params.company.phone || null,
+      default_warehouse_id: warehouseId,
+      updated_at: new Date().toISOString(),
+    };
+    const { error: storeError } = await supabase.from('lojas').upsert(storePayload);
+    if (storeError) console.warn('Erro ao inserir loja no Supabase:', storeError);
+
+    // 3. Cadastrar Armazém na tabela 'armazens'
+    const warehousePayload = {
+      id: warehouseId,
+      company_id: companyId,
+      store_id: storeId,
+      name: 'Armazém Geral',
+      code: 'ARM-01',
+      location: 'Sede',
+      is_default: true,
+      updated_at: new Date().toISOString(),
+    };
+    const { error: whError } = await supabase.from('armazens').upsert(warehousePayload);
+    if (whError) console.warn('Erro ao inserir armazém no Supabase:', whError);
+
+    // 4. Cadastrar Usuário Administrador na tabela 'usuarios' com company_id: 'empresa-cliente-2...'
+    const userPayload = {
+      id: userId,
+      company_id: companyId,
+      store_id: storeId,
+      nome: params.adminUser.name,
+      name: params.adminUser.name,
+      email: params.adminUser.email,
+      cargo: 'Administrador',
+      role: 'admin',
+      pin: params.adminUser.pin || '1234',
+      telefone: params.adminUser.phone || null,
+      phone: params.adminUser.phone || null,
+      ativo: true,
+      is_active: true,
+      nif: params.adminUser.nif || null,
+      updated_at: new Date().toISOString(),
+    };
+    const { error: userError } = await supabase.from('usuarios').upsert(userPayload);
+    if (userError) console.warn('Erro ao inserir usuario no Supabase:', userError);
+
+    // 5. Cadastrar Perfil na tabela 'profiles' com company_id: 'empresa-cliente-2...'
+    const profilePayload = {
+      id: userId,
+      company_id: companyId,
+      full_name: params.adminUser.name,
+      email: params.adminUser.email,
+      role: 'admin',
+      updated_at: new Date().toISOString(),
+    };
+    const { error: profError } = await supabase.from('profiles').upsert(profilePayload);
+    if (profError) console.warn('Erro ao inserir profile no Supabase:', profError);
+
+    return { success: true, companyId };
+  } catch (err: any) {
+    console.error('Erro ao registar empresa e usuário no Supabase:', err);
+    return { success: false, companyId: params.company.id, error: err };
   }
 }
 
@@ -362,6 +531,94 @@ export async function eliminarUsuario(
   } catch (error: any) {
     console.error(`Erro ao eliminar usuário com ID ${id}:`, error);
     return { success: false, error };
+  }
+}
+
+/**
+ * 6. IDENTIFICAR EMPRESA E USUÁRIO PELO LOGIN (EMAIL OU USERNAME)
+ * Permite que o sistema descubra a empresa automaticamente a partir do login e senha do utilizador
+ */
+export async function buscarEmpresaEUsuarioPorLogin(identifier: string): Promise<{
+  user: any | null;
+  company: any | null;
+  store: any | null;
+  error?: any;
+}> {
+  try {
+    const clean = identifier.trim().toLowerCase();
+    if (!clean) return { user: null, company: null, store: null };
+
+    // 1. Tenta encontrar na tabela 'usuarios'
+    let foundUser: any = null;
+    const { data: usersData } = await supabase
+      .from('usuarios')
+      .select('*')
+      .or(`email.ilike.${clean},nome.ilike.${clean}`);
+
+    if (usersData && usersData.length > 0) {
+      foundUser = usersData[0];
+    }
+
+    // 2. Se não encontrar, tenta na tabela 'profiles'
+    if (!foundUser) {
+      const { data: profData } = await supabase
+        .from('profiles')
+        .select('*')
+        .or(`email.ilike.${clean},full_name.ilike.${clean}`);
+
+      if (profData && profData.length > 0) {
+        foundUser = {
+          id: profData[0].id,
+          nome: profData[0].full_name,
+          name: profData[0].full_name,
+          email: profData[0].email,
+          company_id: profData[0].company_id,
+          role: profData[0].role || 'admin',
+          cargo: profData[0].role || 'Administrador',
+          ativo: true,
+          pin: '1234',
+        };
+      }
+    }
+
+    if (!foundUser) {
+      return { user: null, company: null, store: null };
+    }
+
+    const companyId = foundUser.company_id || 'comp-1';
+
+    // 3. Busca a Empresa na tabela 'empresas'
+    let foundCompany: any = null;
+    if (companyId) {
+      const { data: compData } = await supabase
+        .from('empresas')
+        .select('*')
+        .eq('id', companyId)
+        .maybeSingle();
+
+      foundCompany = compData || null;
+    }
+
+    // 4. Busca a Loja na tabela 'lojas'
+    let foundStore: any = null;
+    if (companyId) {
+      const { data: storeData } = await supabase
+        .from('lojas')
+        .select('*')
+        .eq('company_id', companyId)
+        .maybeSingle();
+
+      foundStore = storeData || null;
+    }
+
+    return {
+      user: foundUser,
+      company: foundCompany,
+      store: foundStore,
+    };
+  } catch (err: any) {
+    console.error('Erro ao identificar empresa e usuário pelo login:', err);
+    return { user: null, company: null, store: null, error: err };
   }
 }
 

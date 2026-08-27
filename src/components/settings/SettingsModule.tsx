@@ -44,17 +44,22 @@ import {
   Globe,
   ArrowRightLeft,
   Info,
+  Eye,
+  EyeOff,
+  Copy,
 } from 'lucide-react';
 import { User, Store, POSTerminal, Role, AppTheme } from '../../types';
 import { CompanyBrandingSection } from './CompanyBrandingSection';
 import { InvoiceTemplatesSection } from './InvoiceTemplatesSection';
 import { UserPermissionsMatrix } from './UserPermissionsMatrix';
+import { RegisterCompanyModal } from '../auth/RegisterCompanyModal';
 
 interface SettingsModuleProps {
   initialTab?: 'company' | 'branding' | 'templates' | 'saft' | 'users' | 'roles' | 'stores' | 'sync' | 'theme' | 'language';
 }
 
 export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'company' }) => {
+  const [showRegisterCompanyModal, setShowRegisterCompanyModal] = useState(false);
   const {
     currentCompany,
     updateCompany,
@@ -229,10 +234,14 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
   // User Management Modals
   const [showNewUserModal, setShowNewUserModal] = useState(false);
   const [editingUser, setEditingUser] = useState<User | null>(null);
+  const [showPasswordMap, setShowPasswordMap] = useState<Record<string, boolean>>({});
+  const [copiedPasswordUserId, setCopiedPasswordUserId] = useState<string | null>(null);
+  const [showFormPassword, setShowFormPassword] = useState(false);
   const [userForm, setUserForm] = useState({
     name: '',
     username: '',
     email: '',
+    password: '',
     roleId: roles?.[0]?.id || 'admin',
     storeIds: [currentStore?.id || 'store-lis-1'],
     pin: '1234',
@@ -316,6 +325,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
         name: userForm.name,
         username: userForm.username,
         email: userForm.email,
+        password: userForm.password || editingUser.password || '123456',
         role: userForm.roleId as Role,
         roleId: userForm.roleId,
         storeId: userForm.storeIds?.[0] || currentStore?.id || 'store-lis-1',
@@ -324,12 +334,14 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
         isActive: userForm.isActive,
       });
       setEditingUser(null);
+      notify(`Utilizador "${userForm.name}" atualizado com sucesso.`, 'success');
     } else {
       addUser({
         companyId: currentCompany?.id || 'comp-main',
         name: userForm.name,
         username: userForm.username,
         email: userForm.email || `${userForm.username}@empresa.pt`,
+        password: userForm.password || '123456',
         role: userForm.roleId as Role,
         roleId: userForm.roleId,
         storeId: userForm.storeIds?.[0] || currentStore?.id || 'store-lis-1',
@@ -338,6 +350,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
         isActive: userForm.isActive,
       } as any);
       setShowNewUserModal(false);
+      notify(`Utilizador "${userForm.name}" criado com sucesso.`, 'success');
     }
   };
 
@@ -633,12 +646,22 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
         {activeTab === 'company' && (
           <div className="max-w-4xl mx-auto space-y-6">
             <div className="bg-[#141414] rounded-xl border border-[#262626] p-6 shadow-sm">
-              <div className="flex items-center space-x-2 pb-4 border-b border-[#262626]">
-                <Building className="w-5 h-5 text-[#c5a47e]" />
-                <div>
-                  <h4 className="text-sm font-serif font-bold text-[#e5e5e5]">Identificação da Entidade Fiscal</h4>
-                  <p className="text-xs text-neutral-400">Dados legais impressos nos documentos fiscais e exportação SAF-T</p>
+              <div className="flex items-center justify-between pb-4 border-b border-[#262626]">
+                <div className="flex items-center space-x-2">
+                  <Building className="w-5 h-5 text-[#c5a47e]" />
+                  <div>
+                    <h4 className="text-sm font-serif font-bold text-[#e5e5e5]">Identificação da Entidade Fiscal</h4>
+                    <p className="text-xs text-neutral-400">Dados legais impressos nos documentos fiscais e exportação SAF-T</p>
+                  </div>
                 </div>
+                <button
+                  type="button"
+                  onClick={() => setShowRegisterCompanyModal(true)}
+                  className="px-3.5 py-1.5 bg-[#c5a47e]/15 hover:bg-[#c5a47e]/25 text-[#c5a47e] border border-[#c5a47e]/40 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center space-x-1.5 shadow-sm"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>+ Cadastrar Nova Empresa Cliente</span>
+                </button>
               </div>
 
               <form onSubmit={handleSaveCompany} className="mt-6 space-y-4">
@@ -1347,6 +1370,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
                     <th className="px-4 py-3">Username</th>
                     <th className="px-4 py-3">Perfil de Acesso</th>
                     <th className="px-4 py-3">Lojas Autorizadas</th>
+                    <th className="px-4 py-3 text-center">Senha / Palavra-passe</th>
                     <th className="px-4 py-3 text-center">PIN POS</th>
                     <th className="px-4 py-3 text-center">Estado / Sessão</th>
                     <th className="px-4 py-3 text-right">Ações</th>
@@ -1362,6 +1386,8 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
                       ? [u.storeId]
                       : [currentStore?.id || 'store-lis-1'];
                     const displayUsername = u.username || (u.name || 'user').toLowerCase().replace(/\s+/g, '.');
+                    const userPass = u.password || (u.role === 'admin' ? 'admin' : u.pin || '1234');
+                    const isPasswordVisible = !!showPasswordMap[u.id];
 
                     return (
                       <tr
@@ -1397,7 +1423,47 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
                         <td className="px-4 py-3 text-neutral-400">
                           {userStores.map((sid) => (stores || []).find((s) => s.id === sid)?.name || sid).join(', ')}
                         </td>
-                        <td className="px-4 py-3 text-center font-mono text-neutral-400">••••</td>
+                        <td className="px-4 py-3 text-center">
+                          <div className="inline-flex items-center justify-center space-x-1.5 bg-[#0a0a0a] px-2.5 py-1 rounded-lg border border-[#262626]">
+                            <span className="font-mono text-xs font-semibold text-neutral-200">
+                              {isPasswordVisible ? userPass : '••••••••'}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setShowPasswordMap((prev) => ({ ...prev, [u.id]: !prev[u.id] }));
+                              }}
+                              className="p-1 hover:bg-neutral-800 text-neutral-400 hover:text-neutral-200 rounded transition-colors cursor-pointer"
+                              title={isPasswordVisible ? 'Ocultar palavra-passe' : 'Ver palavra-passe'}
+                            >
+                              {isPasswordVisible ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                navigator.clipboard.writeText(userPass);
+                                setCopiedPasswordUserId(u.id);
+                                notify(`Palavra-passe de ${u.name} copiada!`, 'success');
+                                setTimeout(() => setCopiedPasswordUserId(null), 2000);
+                              }}
+                              className={`p-1 rounded transition-colors cursor-pointer ${
+                                copiedPasswordUserId === u.id
+                                  ? 'text-emerald-400 bg-emerald-500/20'
+                                  : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800'
+                              }`}
+                              title="Copiar palavra-passe"
+                            >
+                              <Copy className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </td>
+                        <td className="px-4 py-3 text-center font-mono text-neutral-400">
+                          <span className="bg-[#0a0a0a] px-2 py-0.5 rounded border border-[#262626] text-[11px]">
+                            {u.pin || '••••'}
+                          </span>
+                        </td>
                         <td className="px-4 py-3 text-center">
                           <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium uppercase ${
                             u.isActive ? 'bg-emerald-500/10 text-emerald-400' : 'bg-rose-500/10 text-rose-400'
@@ -1419,6 +1485,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
                                   name: u.name,
                                   username: displayUsername,
                                   email: u.email,
+                                  password: u.password || (u.role === 'admin' ? 'admin' : u.pin || '1234'),
                                   roleId: u.roleId || u.role || 'caixa',
                                   storeIds: userStores,
                                   pin: u.pin || '1234',
@@ -1705,16 +1772,39 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
                 />
               </div>
 
+              <div>
+                <label className="block text-xs font-medium text-neutral-300 mb-1">Nome de Utilizador (Login) *</label>
+                <input
+                  type="text"
+                  required
+                  value={userForm.username}
+                  onChange={(e) => setUserForm({ ...userForm, username: e.target.value })}
+                  placeholder="ex: manuel.silva"
+                  className="w-full bg-[#0d0d0d] border border-[#262626] rounded-md px-3 py-2 text-xs text-neutral-200 font-mono focus:outline-hidden"
+                />
+              </div>
+
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs font-medium text-neutral-300 mb-1">Nome de Utilizador *</label>
-                  <input
-                    type="text"
-                    required
-                    value={userForm.username}
-                    onChange={(e) => setUserForm({ ...userForm, username: e.target.value })}
-                    className="w-full bg-[#0d0d0d] border border-[#262626] rounded-md px-3 py-2 text-xs text-neutral-200 font-mono focus:outline-hidden"
-                  />
+                  <label className="block text-xs font-medium text-neutral-300 mb-1">Palavra-passe / Senha *</label>
+                  <div className="relative">
+                    <input
+                      type={showFormPassword ? 'text' : 'password'}
+                      required
+                      value={userForm.password}
+                      onChange={(e) => setUserForm({ ...userForm, password: e.target.value })}
+                      placeholder="Palavra-passe de login"
+                      className="w-full bg-[#0d0d0d] border border-[#262626] rounded-md pl-3 pr-8 py-2 text-xs text-neutral-200 font-mono focus:outline-hidden"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowFormPassword(!showFormPassword)}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-200 cursor-pointer"
+                      title={showFormPassword ? 'Ocultar palavra-passe' : 'Ver palavra-passe'}
+                    >
+                      {showFormPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                    </button>
+                  </div>
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-neutral-300 mb-1">PIN POS (4 dígitos)</label>
@@ -1969,6 +2059,11 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
           </div>
         </div>
       )}
+
+      <RegisterCompanyModal
+        isOpen={showRegisterCompanyModal}
+        onClose={() => setShowRegisterCompanyModal(false)}
+      />
     </div>
   );
 };

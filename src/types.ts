@@ -45,6 +45,7 @@ export interface User {
   name: string;
   username?: string;
   email: string;
+  password?: string;
   role: Role;
   roleId?: string;
   storeId?: string;
@@ -123,6 +124,8 @@ export interface Company {
   id: string;
   name: string;
   tradeName: string;
+  industry?: string; // Ramo de Atividade (Restauração, Supermercado, Farmácia, etc.)
+  sector?: string;
   taxNumber: string; // NIF / NIPC / NUIT
   address: string;
   city: string;
