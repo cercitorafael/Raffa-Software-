@@ -177,22 +177,22 @@ export const Navbar: React.FC<{ onOpenShiftModal: () => void }> = ({ onOpenShift
         >
           {/* Registered Company Display (Locked to registered user company - no switching allowed) */}
           <div
-            id="navbar-company-display"
-            className="flex items-center bg-[#141414] border border-[#262626] rounded-lg px-2.5 py-1 space-x-2 text-xs text-[#e5e5e5] shrink-0 select-none shadow-xs"
-            title={`Empresa Registada: ${currentCompany.name} (NUIT: ${currentCompany.taxNumber})`}
-          >
-            <Building2 className="w-3.5 h-3.5 text-[#c5a47e] shrink-0" />
-            <div className="flex items-center space-x-1.5 max-w-[220px]">
-              <span className="font-semibold text-[#e5e5e5] truncate">
-                {currentCompany.tradeName || currentCompany.name}
-              </span>
-              {currentCompany.taxNumber && (
-                <span className="text-[10px] px-1.5 py-0.2 rounded bg-[#c5a47e]/15 text-[#c5a47e] font-mono border border-[#c5a47e]/30 shrink-0">
-                  {currentCompany.taxNumber}
-                </span>
-              )}
-            </div>
-          </div>
+  id="navbar-company-display"
+  className="flex items-center bg-[#141414] border border-[#262626] rounded-lg px-2.5 py-1 space-x-2 text-xs text-[#e5e5e5] shrink-0 select-none shadow-xs"
+  title={`Empresa Registada: ${currentCompany.name} (NUIT: ${currentCompany.taxNumber})`}
+>
+  <Building2 className="w-3.5 h-3.5 text-[#c5a47e] shrink-0" />
+  <div className="flex items-center space-x-1.5 max-w-[220px]">
+    <span className="font-semibold text-[#e5e5e5] truncate">
+      {currentCompany.tradeName || currentCompany.name}
+    </span>
+    {currentCompany.taxNumber && (
+      <span className="text-[10px] px-1.5 py-0.2 rounded bg-[#c5a47e]/15 text-[#c5a47e]">
+        {currentCompany.taxNumber}
+      </span>
+    )}
+  </div>
+</div>
 
           {/* Store Selector */}
           <div className="flex items-center bg-[#141414] hover:bg-[#1a1a1a] border border-[#262626] hover:border-[#383838] rounded-lg px-2.5 py-1 space-x-1.5 text-xs text-[#e5e5e5] shrink-0 transition-colors">
