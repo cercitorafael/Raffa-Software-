@@ -149,6 +149,103 @@ export interface Usuario {
   updated_at?: string;
 }
 
+// Interface de Tipagem para a tabela 'profiles' (Supabase Auth Multi-tenant)
+export interface UserProfile {
+  id: string;
+  company_id?: string;
+  full_name?: string;
+  email?: string;
+  role?: string;
+  avatar_url?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+/**
+ * ============================================================================
+ * FUNÇÃO DE AUTENTICAÇÃO E PERFIL DO USUÁRIO CONECTADO (MULTI-EMPRESA)
+ * ============================================================================
+ */
+
+/**
+ * Busca os dados do usuário conectado no Supabase Auth e retorna o seu company_id
+ * Exemplo: Retorna 'RAFFA ALIADOS DO CAMPO, LDA', 'comp-1' ou a empresa associada ao perfil
+ */
+export async function getUserProfile(): Promise<string | undefined> {
+  try {
+    const { data: { user } } = await supabase.auth.getUser();
+
+    if (user) {
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('company_id')
+        .eq('id', user.id)
+        .single();
+
+      return profile?.company_id; // Retorna 'RAFFA ALIADOS DO CAMPO, LDA' ou a empresa do cliente
+    }
+  } catch (err) {
+    console.warn('Erro ao obter company_id do usuário conectado:', err);
+  }
+  return undefined;
+}
+
+/**
+ * Busca o objeto completo do usuário autenticado no Supabase e seu registro na tabela profiles
+ */
+export async function getUserFullProfile(): Promise<{
+  user: any | null;
+  profile: UserProfile | null;
+  companyId: string | null;
+  error: any | null;
+}> {
+  try {
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
+    if (authError || !user) {
+      return { user: null, profile: null, companyId: null, error: authError };
+    }
+
+    const { data: profile, error: profError } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', user.id)
+      .maybeSingle();
+
+    return {
+      user,
+      profile: profile || null,
+      companyId: profile?.company_id || null,
+      error: profError || null,
+    };
+  } catch (err: any) {
+    return { user: null, profile: null, companyId: null, error: err };
+  }
+}
+
+/**
+ * Cria ou atualiza o perfil do utilizador no Supabase associando a empresa
+ */
+export async function upsertUserProfile(
+  profileData: Partial<UserProfile> & { id: string }
+): Promise<{ data: UserProfile | null; error: any }> {
+  try {
+    const { data, error } = await supabase
+      .from('profiles')
+      .upsert({
+        ...profileData,
+        updated_at: new Date().toISOString(),
+      })
+      .select()
+      .single();
+
+    if (error) throw error;
+    return { data, error: null };
+  } catch (error: any) {
+    console.error('Erro ao guardar perfil no Supabase:', error);
+    return { data: null, error };
+  }
+}
+
 /**
  * ============================================================================
  * FUNÇÕES CRUD PARA A TABELA 'usuarios' NO SUPABASE
@@ -362,6 +459,7 @@ export async function diagnosticarTodasTabelasSupabase(): Promise<{
   summaryMessage: string;
 }> {
   const tableList: { name: string; label: string }[] = [
+    { name: 'profiles', label: 'Perfis de Autenticação (Auth Multi-Tenant)' },
     { name: 'empresas', label: 'Empresa & Logótipo' },
     { name: 'lojas', label: 'Lojas & Filiais' },
     { name: 'usuarios', label: 'Utilizadores' },
@@ -452,9 +550,22 @@ export async function diagnosticarTodasTabelasSupabase(): Promise<{
  * (Inclui Realtime, RLS e suporte a REPLICA IDENTITY FULL para que exclusões sejam capturadas em tempo real)
  */
 export const SUPABASE_SQL_SCHEMA = `-- ==============================================================================
--- SCHEMA COMPLETO POS & ERP ENTERPRISE PARA SUPABASE
+-- SCHEMA COMPLETO POS & ERP ENTERPRISE PARA SUPABASE (MULTI-TENANT & AUTH)
 -- Execute este script no SQL Editor do seu projeto Supabase (supabase.com/dashboard)
 -- ==============================================================================
+
+-- 0. TABELA DE PERFIS DE UTILIZADOR (Supabase Auth & Multi-Tenancy)
+-- Vincula o usuário autenticado (auth.users) à sua empresa correspondente
+CREATE TABLE IF NOT EXISTS public.profiles (
+    id TEXT PRIMARY KEY,
+    company_id TEXT DEFAULT 'RAFFA ALIADOS DO CAMPO, LDA',
+    full_name TEXT,
+    email TEXT,
+    role TEXT DEFAULT 'admin',
+    avatar_url TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
 
 -- 1. TABELA DE EMPRESAS & CONFIGURAÇÃO FISCAL
 CREATE TABLE IF NOT EXISTS public.empresas (
@@ -721,6 +832,7 @@ CREATE TABLE IF NOT EXISTS public.turnos_caixa (
 -- ==============================================================================
 -- REPLICA IDENTITY FULL (Essencial para receber dados completos em eventos DELETE no Realtime)
 -- ==============================================================================
+ALTER TABLE public.profiles REPLICA IDENTITY FULL;
 ALTER TABLE public.empresas REPLICA IDENTITY FULL;
 ALTER TABLE public.lojas REPLICA IDENTITY FULL;
 ALTER TABLE public.usuarios REPLICA IDENTITY FULL;
@@ -742,7 +854,7 @@ DO $$
 DECLARE
     t text;
     tables text[] := ARRAY[
-        'empresas', 'lojas', 'usuarios', 'categorias', 'produtos', 
+        'profiles', 'empresas', 'lojas', 'usuarios', 'categorias', 'produtos', 
         'clientes', 'fornecedores', 'armazens', 'stock', 'vendas', 
         'contas_pagar', 'contas_receber', 'turnos_caixa'
     ];
@@ -761,7 +873,7 @@ DO $$
 DECLARE
     t text;
     tables text[] := ARRAY[
-        'empresas', 'lojas', 'usuarios', 'categorias', 'produtos', 
+        'profiles', 'empresas', 'lojas', 'usuarios', 'categorias', 'produtos', 
         'clientes', 'fornecedores', 'armazens', 'stock', 'vendas', 
         'contas_pagar', 'contas_receber', 'turnos_caixa'
     ];

@@ -100,6 +100,13 @@ import {
   clearSyncLogs,
   SupabaseSyncLog,
 } from '../lib/supabaseSync';
+import {
+  getUserProfile,
+  getUserFullProfile,
+  upsertUserProfile,
+  UserProfile,
+  supabase,
+} from '../lib/supabase';
 
 export interface CartItem extends SaleItem {
   image?: string;
@@ -113,6 +120,13 @@ export interface AppContextType {
   pushToSupabase: () => Promise<any>;
   reconnectSupabaseRealtime: () => void;
   clearSupabaseLogs: () => void;
+
+  // Supabase Auth & Multi-Tenant Profile Binding
+  supabaseAuthUser: any | null;
+  currentUserProfile: UserProfile | null;
+  getUserProfile: () => Promise<string | undefined>;
+  syncConnectedUserProfile: () => Promise<string | undefined>;
+  saveUserProfile: (profile: Partial<UserProfile>) => Promise<UserProfile | null>;
 
   // Tenancy & RBAC
   companies: Company[];
@@ -1229,6 +1243,119 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     clearSyncLogs();
     setSupabaseSyncLogs([]);
   };
+
+  // ==================== SUPABASE AUTH & MULTI-TENANT PROFILES ====================
+  const [supabaseAuthUser, setSupabaseAuthUser] = useState<any | null>(null);
+  const [currentUserProfile, setCurrentUserProfile] = useState<UserProfile | null>(null);
+
+  const handleGetUserProfile = useCallback(async (): Promise<string | undefined> => {
+    return await getUserProfile();
+  }, []);
+
+  const syncConnectedUserProfile = useCallback(async (): Promise<string | undefined> => {
+    try {
+      const profile = await getUserFullProfile();
+      if (profile) {
+        setCurrentUserProfile(profile);
+        if (profile.company_id) {
+          const companyKey = profile.company_id.trim();
+          
+          setCompanies((prev) => {
+            const found = prev.find(
+              (c) =>
+                c.id === companyKey ||
+                c.name.toLowerCase() === companyKey.toLowerCase() ||
+                (c.tradeName && c.tradeName.toLowerCase() === companyKey.toLowerCase())
+            );
+            if (!found) {
+              const newComp: Company = {
+                id: companyKey.startsWith('comp-') ? companyKey : `comp-${Date.now()}`,
+                name: companyKey,
+                tradeName: companyKey,
+                taxNumber: '400000000',
+                address: 'Sede Principal',
+                city: 'Maputo',
+                country: 'Moçambique',
+                phone: '+258 84 000 0000',
+                email: profile.email || 'empresa@raffapower.mz',
+                currency: 'MZN',
+                currencySymbol: 'MT',
+                currencyPosition: 'suffix',
+                currencyDecimals: 2,
+                softwareCertNumber: '0000/AT',
+                saftVersion: '1.04_01',
+                activeInvoiceTemplateId: 'tpl-1',
+                invoiceTemplates: [],
+              };
+              return [...prev, newComp];
+            }
+            return prev;
+          });
+
+          setCurrentCompany((prev) => {
+            if (
+              prev.id === companyKey ||
+              prev.name.toLowerCase() === companyKey.toLowerCase() ||
+              (prev.tradeName && prev.tradeName.toLowerCase() === companyKey.toLowerCase())
+            ) {
+              return prev;
+            }
+            return {
+              ...prev,
+              id: companyKey.startsWith('comp-') ? companyKey : prev.id,
+              name: companyKey,
+              tradeName: companyKey,
+            };
+          });
+
+          return profile.company_id;
+        }
+      }
+      return undefined;
+    } catch (err) {
+      console.warn('Erro ao sincronizar perfil do usuário Supabase:', err);
+      return undefined;
+    }
+  }, []);
+
+  const saveUserProfile = useCallback(async (profileData: Partial<UserProfile>): Promise<UserProfile | null> => {
+    const result = await upsertUserProfile(profileData);
+    if (result.profile) {
+      setCurrentUserProfile(result.profile);
+      if (result.profile.company_id) {
+        await syncConnectedUserProfile();
+      }
+      notify('Perfil Supabase guardado com sucesso!', 'success');
+      return result.profile;
+    } else {
+      notify(`Erro ao guardar perfil: ${result.error?.message || 'Erro desconhecido'}`, 'error');
+      return null;
+    }
+  }, [syncConnectedUserProfile, notify]);
+
+  useEffect(() => {
+    // Initial fetch of connected auth user and profile
+    supabase.auth.getUser().then(({ data }) => {
+      setSupabaseAuthUser(data?.user || null);
+      if (data?.user) {
+        syncConnectedUserProfile();
+      }
+    });
+
+    // Listen to Supabase Auth state changes
+    const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSupabaseAuthUser(session?.user || null);
+      if (session?.user) {
+        syncConnectedUserProfile();
+      } else {
+        setCurrentUserProfile(null);
+      }
+    });
+
+    return () => {
+      authListener?.subscription?.unsubscribe();
+    };
+  }, [syncConnectedUserProfile]);
   const emitEvent = (
     service: SystemEvent['service'],
     eventType: string,
@@ -3923,6 +4050,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         pushToSupabase,
         reconnectSupabaseRealtime,
         clearSupabaseLogs,
+
+        // Supabase Auth & Multi-Tenant Profile Binding
+        supabaseAuthUser,
+        currentUserProfile,
+        getUserProfile: handleGetUserProfile,
+        syncConnectedUserProfile,
+        saveUserProfile,
 
         // Tenancy & RBAC
         companies,
