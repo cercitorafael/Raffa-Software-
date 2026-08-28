@@ -148,6 +148,8 @@ export interface Usuario {
   cargo?: string;
   role?: string;
   pin?: string;
+  password?: string;
+  senha?: string;
   ativo?: boolean;
   is_active?: boolean;
   nif?: string;
@@ -882,6 +884,8 @@ CREATE TABLE IF NOT EXISTS public.usuarios (
     cargo TEXT DEFAULT 'caixa',
     role TEXT DEFAULT 'caixa',
     pin TEXT DEFAULT '1234',
+    password TEXT DEFAULT '1234',
+    senha TEXT DEFAULT '1234',
     telefone TEXT,
     phone TEXT,
     ativo BOOLEAN DEFAULT true,
