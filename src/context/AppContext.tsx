@@ -120,8 +120,8 @@ export interface AppContextType {
   // Supabase Real-time Sync & Cloud Storage
   supabaseRealtimeStatus: 'connected' | 'connecting' | 'disconnected' | 'error';
   supabaseSyncLogs: SupabaseSyncLog[];
-  pullFromSupabase: () => Promise<any>;
-  pushToSupabase: () => Promise<any>;
+  pullFromSupabase: (options?: { companyId?: string; profileId?: string }) => Promise<any>;
+  pushToSupabase: (options?: { companyId?: string; profileId?: string }) => Promise<any>;
   reconnectSupabaseRealtime: () => void;
   clearSupabaseLogs: () => void;
 
@@ -1212,9 +1212,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
   }, [reconnectSupabaseRealtime]);
 
-  const pullFromSupabase = async () => {
-    notify('A sincronizar dados a partir do Supabase...', 'info');
-    const res = await pullAllFromSupabase();
+  const pullFromSupabase = async (options?: { companyId?: string; profileId?: string }) => {
+    const scopeTxt = options?.companyId && options.companyId !== 'ALL' ? ` para a empresa [${options.companyId}]` : '';
+    notify(`A sincronizar dados a partir do Supabase${scopeTxt}...`, 'info');
+    const res = await pullAllFromSupabase(options);
     if (res.data.companies && res.data.companies.length > 0) {
       setCompanies(res.data.companies);
       const matched = res.data.companies.find((c) => c.id === currentCompany.id) || res.data.companies[0];
@@ -1239,7 +1240,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     const totalPulled = Object.values(res.counts).reduce((a, b) => a + b, 0);
     if (totalPulled > 0 || res.errors.length === 0) {
-      notify(`Sincronização concluída: ${totalPulled} registos sincronizados do Supabase.`, 'success');
+      notify(`Sincronização concluída: ${totalPulled} registos sincronizados do Supabase${scopeTxt}.`, 'success');
       sound.playSuccessChime();
     } else {
       notify(`Aviso: ${res.errors[0] || 'Nenhum dado encontrado no Supabase.'}`, 'warning');
@@ -1247,26 +1248,36 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return res;
   };
 
-  const pushToSupabase = async () => {
-    notify('A enviar todos os registos para o Supabase...', 'info');
+  const pushToSupabase = async (options?: { companyId?: string; profileId?: string }) => {
+    const scopeTxt = options?.companyId && options.companyId !== 'ALL' ? ` para a empresa [${options.companyId}]` : '';
+    notify(`A exportar registos para o Supabase${scopeTxt}...`, 'info');
+    
+    // Filter or tag items by company if companyId is selected
+    const filterByCompany = <T,>(items: T[]): T[] => {
+      if (!options?.companyId || options.companyId === 'ALL') return items;
+      return items.filter((item: any) => !item?.companyId || item.companyId === options.companyId);
+    };
+
     const res = await pushAllToSupabase({
-      companies,
-      stores,
-      products,
-      customers,
-      suppliers,
-      categories,
-      sales: salesHistory,
-      users,
-      warehouses,
-      stock,
-      accountsPayable,
-      accountsReceivable,
+      companies: options?.companyId && options.companyId !== 'ALL'
+        ? companies.filter((c) => c.id === options.companyId)
+        : companies,
+      stores: filterByCompany(stores),
+      products: filterByCompany(products),
+      customers: filterByCompany(customers),
+      suppliers: filterByCompany(suppliers),
+      categories: filterByCompany(categories),
+      sales: filterByCompany(salesHistory),
+      users: filterByCompany(users),
+      warehouses: filterByCompany(warehouses),
+      stock: filterByCompany(stock),
+      accountsPayable: filterByCompany(accountsPayable),
+      accountsReceivable: filterByCompany(accountsReceivable),
       shifts: shiftsHistory,
-    });
+    }, options);
     const totalSent = Object.values(res.uploaded).reduce((a, b) => a + b, 0);
     if (res.errors.length === 0) {
-      notify(`Sucesso: ${totalSent} registos exportados e atualizados no Supabase!`, 'success');
+      notify(`Sucesso: ${totalSent} registos exportados e atualizados no Supabase${scopeTxt}!`, 'success');
       sound.playSuccessChime();
     } else {
       notify(`Enviados ${totalSent} registos. Aviso: ${res.errors[0]}`, 'warning');

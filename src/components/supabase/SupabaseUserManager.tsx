@@ -41,6 +41,9 @@ import {
   Filter,
   AlertCircle,
   Wrench,
+  Building,
+  UserCheck,
+  Globe,
 } from 'lucide-react';
 import {
   supabase,
@@ -61,7 +64,6 @@ import {
   resetSupabaseCredentials,
 } from '../../lib/supabase';
 import { useApp } from '../../context/AppContext';
-import { OwnerSecurityGate } from '../auth/OwnerSecurityGate';
 import {
   SupabaseSyncLog,
   TableSyncName,
@@ -77,6 +79,11 @@ export const SupabaseUserManager: React.FC = () => {
     reconnectSupabaseRealtime,
     pullFromSupabase,
     pushToSupabase,
+    companies,
+    currentCompany,
+    stores,
+    currentStore,
+    currentUser,
     products,
     customers,
     suppliers,
@@ -95,6 +102,10 @@ export const SupabaseUserManager: React.FC = () => {
   const [syncingAll, setSyncingAll] = useState(false);
   const [pushingAll, setPushingAll] = useState(false);
   const [diagnosing, setDiagnosing] = useState(false);
+
+  // Multi-Tenant Scoping Filters for Import / Export
+  const [selectedCompanyId, setSelectedCompanyId] = useState<string>(currentCompany?.id || 'ALL');
+  const [selectedProfileId, setSelectedProfileId] = useState<string>('ALL');
 
   const [connStatus, setConnStatus] = useState<{
     tested: boolean;
@@ -118,7 +129,7 @@ export const SupabaseUserManager: React.FC = () => {
     ran: false,
     allPassed: false,
     existingTables: 0,
-    totalTables: 11,
+    totalTables: 14,
     tables: {},
     summaryMessage: '',
   });
@@ -282,13 +293,18 @@ export const SupabaseUserManager: React.FC = () => {
   const handlePullFromSupabase = async () => {
     setSyncingAll(true);
     try {
-      const res = await pullFromSupabase();
+      const options = {
+        companyId: selectedCompanyId !== 'ALL' ? selectedCompanyId : undefined,
+        profileId: selectedProfileId !== 'ALL' ? selectedProfileId : undefined,
+      };
+      const res = await pullFromSupabase(options);
       await fetchUsuarios();
       await handleRunFullDiagnostics();
+      const scopeLabel = selectedCompanyId !== 'ALL' ? ` (Empresa: ${selectedCompanyId})` : ' (Global)';
       setSyncReport({
         isOpen: true,
         type: 'pull',
-        title: 'Relatório de Importação (Pull do Supabase)',
+        title: `Relatório de Importação (Pull do Supabase)${scopeLabel}`,
         totalSuccess: Object.values(res.counts || {}).reduce((a: any, b: any) => a + b, 0),
         results: res.tableResults || {},
         errors: res.errors || [],
@@ -301,13 +317,18 @@ export const SupabaseUserManager: React.FC = () => {
   const handlePushToSupabase = async () => {
     setPushingAll(true);
     try {
-      const res = await pushToSupabase();
+      const options = {
+        companyId: selectedCompanyId !== 'ALL' ? selectedCompanyId : undefined,
+        profileId: selectedProfileId !== 'ALL' ? selectedProfileId : undefined,
+      };
+      const res = await pushToSupabase(options);
       await fetchUsuarios();
       await handleRunFullDiagnostics();
+      const scopeLabel = selectedCompanyId !== 'ALL' ? ` (Empresa: ${selectedCompanyId})` : ' (Global)';
       setSyncReport({
         isOpen: true,
         type: 'push',
-        title: 'Relatório de Exportação (Push para o Supabase)',
+        title: `Relatório de Exportação (Push para o Supabase)${scopeLabel}`,
         totalSuccess: Object.values(res.uploaded || {}).reduce((a: any, b: any) => a + b, 0),
         results: res.tableResults || {},
         errors: res.errors || [],
@@ -320,9 +341,10 @@ export const SupabaseUserManager: React.FC = () => {
   // Push single table
   const handlePushSingleTable = async (tableName: TableSyncName, localItems: any[]) => {
     setTableActionLoading((prev) => ({ ...prev, [tableName]: true }));
+    const companyScope = selectedCompanyId !== 'ALL' ? selectedCompanyId : undefined;
     notify(`A enviar ${localItems.length} registos de "${tableName}" para o Supabase...`, 'info');
     try {
-      const res = await pushTableToSupabase(tableName, localItems);
+      const res = await pushTableToSupabase(tableName, localItems, { companyId: companyScope });
       if (res.success) {
         notify(`Sucesso: ${res.count} registos de "${tableName}" enviados para o Supabase!`, 'success');
         handleRunFullDiagnostics();
@@ -339,9 +361,11 @@ export const SupabaseUserManager: React.FC = () => {
   // Pull single table
   const handlePullSingleTable = async (tableName: TableSyncName) => {
     setTableActionLoading((prev) => ({ ...prev, [tableName]: true }));
+    const companyScope = selectedCompanyId !== 'ALL' ? selectedCompanyId : undefined;
+    const profileScope = selectedProfileId !== 'ALL' ? selectedProfileId : undefined;
     notify(`A puxar dados de "${tableName}" do Supabase...`, 'info');
     try {
-      const res = await pullTableFromSupabase(tableName);
+      const res = await pullTableFromSupabase(tableName, { companyId: companyScope, profileId: profileScope });
       if (res.success) {
         notify(`Puxados ${res.count} registos de "${tableName}" do Supabase!`, 'success');
         handleRunFullDiagnostics();
@@ -477,12 +501,15 @@ const { data, error } = await supabase.from('produtos').upsert([
     localItems: any[];
     localCount: number;
   }[] = [
+    { name: 'profiles', label: 'Perfis de Autenticação (Profiles)', icon: UserCheck, localItems: users, localCount: users.length },
+    { name: 'empresas', label: 'Empresas & Filiais', icon: Building, localItems: companies, localCount: companies.length },
+    { name: 'lojas', label: 'Lojas & Unidades Físicas', icon: StoreIcon, localItems: stores, localCount: stores.length },
     { name: 'produtos', label: 'Produtos & Artigos', icon: Boxes, localItems: products, localCount: products.length },
     { name: 'clientes', label: 'Clientes & CRM', icon: UsersIcon, localItems: customers, localCount: customers.length },
     { name: 'fornecedores', label: 'Fornecedores', icon: Truck, localItems: suppliers, localCount: suppliers.length },
     { name: 'categorias', label: 'Categorias de Produtos', icon: Layers, localItems: categories, localCount: categories.length },
     { name: 'vendas', label: 'Vendas & Faturas', icon: ShoppingBag, localItems: salesHistory, localCount: salesHistory.length },
-    { name: 'armazens', label: 'Armazéns & Lojas', icon: StoreIcon, localItems: warehouses, localCount: warehouses.length },
+    { name: 'armazens', label: 'Armazéns & Depósitos', icon: StoreIcon, localItems: warehouses, localCount: warehouses.length },
     { name: 'stock', label: 'Itens em Stock', icon: Boxes, localItems: stock, localCount: stock.length },
     { name: 'contas_pagar', label: 'Contas a Pagar', icon: Receipt, localItems: accountsPayable, localCount: accountsPayable.length },
     { name: 'contas_receber', label: 'Contas a Receber', icon: Receipt, localItems: accountsReceivable, localCount: accountsReceivable.length },
@@ -634,7 +661,7 @@ const { data, error } = await supabase.from('produtos').upsert([
           }`}
         >
           <Layers className="w-3.5 h-3.5" />
-          <span>Matriz de Tabelas ERP (11 Tabelas)</span>
+          <span>Matriz de Tabelas ERP (14 Tabelas)</span>
         </button>
 
         <button
@@ -646,7 +673,7 @@ const { data, error } = await supabase.from('produtos').upsert([
           }`}
         >
           <Wrench className="w-3.5 h-3.5" />
-          <span>Diagnóstico & Saúde ({tableDiagnostics.existingTables}/11 Prontas)</span>
+          <span>Diagnóstico & Saúde ({tableDiagnostics.existingTables}/14 Prontas)</span>
         </button>
 
         <button
@@ -703,33 +730,94 @@ const { data, error } = await supabase.from('produtos').upsert([
         {/* TAB: MATRIZ DE TABELAS ERP (PRINCIPAL) */}
         {activeTab === 'tabelas' && (
           <div className="space-y-4">
-            <div className="p-4 bg-[#141414] border border-[#262626] rounded-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
-              <div>
-                <h3 className="text-sm font-bold text-white flex items-center space-x-2">
-                  <Layers className="w-4 h-4 text-[#c5a47e]" />
-                  <span>Sincronização e Envio por Tabela</span>
-                </h3>
-                <p className="text-xs text-neutral-400 mt-0.5">
-                  Pode carregar ou puxar tabelas individualmente ou clicar em <strong>"Carregar para Supabase"</strong> no topo.
-                </p>
+            {/* Multi-Tenant Scoping Bar */}
+            <div className="p-4 bg-[#141414] border border-[#262626] rounded-xl space-y-3">
+              <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-3 pb-3 border-b border-[#222]">
+                <div>
+                  <h3 className="text-sm font-bold text-white flex items-center space-x-2">
+                    <Building className="w-4 h-4 text-[#c5a47e]" />
+                    <span>Escopo Multi-Tenant: Empresa & Perfis (Profiles)</span>
+                  </h3>
+                  <p className="text-xs text-neutral-400 mt-0.5">
+                    Filtre a importação e exportação de dados para uma empresa ou perfil de utilizador específico no Supabase.
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={handlePushToSupabase}
+                    disabled={pushingAll}
+                    className="px-3.5 py-1.5 bg-[#c5a47e] hover:bg-[#b5946e] text-black font-bold text-xs rounded-lg flex items-center space-x-1.5 shadow-md cursor-pointer disabled:opacity-50"
+                    title={`Exportar todas as tabelas para o Supabase no escopo selecionado (${selectedCompanyId !== 'ALL' ? selectedCompanyId : 'Global'})`}
+                  >
+                    <ArrowUpFromLine className={`w-3.5 h-3.5 ${pushingAll ? 'animate-bounce' : ''}`} />
+                    <span>{pushingAll ? 'A Exportar...' : 'Exportar Escopo p/ Nuvem (Push)'}</span>
+                  </button>
+                  <button
+                    onClick={handlePullFromSupabase}
+                    disabled={syncingAll}
+                    className="px-3.5 py-1.5 bg-[#1f1f1f] hover:bg-[#2a2a2a] text-white border border-[#333] text-xs font-semibold rounded-lg flex items-center space-x-1.5 cursor-pointer disabled:opacity-50"
+                    title={`Importar todas as tabelas do Supabase no escopo selecionado (${selectedCompanyId !== 'ALL' ? selectedCompanyId : 'Global'})`}
+                  >
+                    <ArrowDownToLine className={`w-3.5 h-3.5 text-[#c5a47e] ${syncingAll ? 'animate-bounce' : ''}`} />
+                    <span>{syncingAll ? 'A Importar...' : 'Importar Escopo da Nuvem (Pull)'}</span>
+                  </button>
+                </div>
               </div>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={handlePushToSupabase}
-                  disabled={pushingAll}
-                  className="px-3.5 py-1.5 bg-[#c5a47e] hover:bg-[#b5946e] text-black font-bold text-xs rounded-lg flex items-center space-x-1.5 shadow-md cursor-pointer disabled:opacity-50"
-                >
-                  <ArrowUpFromLine className="w-3.5 h-3.5" />
-                  <span>{pushingAll ? 'A Enviar...' : 'Carregar Todas as Tabelas'}</span>
-                </button>
-                <button
-                  onClick={handlePullFromSupabase}
-                  disabled={syncingAll}
-                  className="px-3.5 py-1.5 bg-[#1f1f1f] hover:bg-[#2a2a2a] text-white border border-[#333] text-xs font-semibold rounded-lg flex items-center space-x-1.5 cursor-pointer disabled:opacity-50"
-                >
-                  <ArrowDownToLine className="w-3.5 h-3.5 text-[#c5a47e]" />
-                  <span>{syncingAll ? 'A Puxar...' : 'Puxar Todas as Tabelas'}</span>
-                </button>
+
+              {/* Selectors for Company and Profile */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 text-xs">
+                <div>
+                  <label className="block text-neutral-400 font-medium mb-1 flex items-center space-x-1.5">
+                    <Building className="w-3.5 h-3.5 text-[#c5a47e]" />
+                    <span>Filtrar por Empresa (company_id)</span>
+                  </label>
+                  <select
+                    value={selectedCompanyId}
+                    onChange={(e) => setSelectedCompanyId(e.target.value)}
+                    className="w-full bg-[#0d0d0d] border border-[#2a2a2a] rounded-lg px-3 py-2 text-xs text-neutral-200 focus:outline-hidden focus:border-[#c5a47e]"
+                  >
+                    <option value="ALL">🌐 Todas as Empresas (Global / Multi-Empresas)</option>
+                    {(companies || []).map((c) => (
+                      <option key={c.id} value={c.id}>
+                        🏢 {c.name || c.tradeName} ({c.id})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-neutral-400 font-medium mb-1 flex items-center space-x-1.5">
+                    <UserCheck className="w-3.5 h-3.5 text-[#c5a47e]" />
+                    <span>Filtrar por Perfil / Utilizador (profile_id)</span>
+                  </label>
+                  <select
+                    value={selectedProfileId}
+                    onChange={(e) => setSelectedProfileId(e.target.value)}
+                    className="w-full bg-[#0d0d0d] border border-[#2a2a2a] rounded-lg px-3 py-2 text-xs text-neutral-200 focus:outline-hidden focus:border-[#c5a47e]"
+                  >
+                    <option value="ALL">👥 Todos os Perfis (Global)</option>
+                    {(users || []).map((u) => (
+                      <option key={u.id} value={u.id}>
+                        👤 {u.name} ({u.email || u.username || u.role})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="flex items-end">
+                  <div className="w-full p-2 bg-[#0a0a0a] rounded-lg border border-[#222] flex items-center justify-between">
+                    <div>
+                      <span className="text-[10px] text-neutral-500 uppercase font-mono block">Escopo Atual</span>
+                      <span className="text-xs font-semibold text-[#c5a47e]">
+                        {selectedCompanyId === 'ALL' ? 'Multi-Empresas Global' : `Empresa: ${selectedCompanyId}`}
+                      </span>
+                    </div>
+                    <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-emerald-950/40 text-emerald-300 border border-emerald-500/30">
+                      Multi-Tenant Ativo
+                    </span>
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -1025,13 +1113,8 @@ const { data, error } = await supabase.from('produtos').upsert([
 
         {/* TAB: USUÁRIOS CRUD */}
         {activeTab === 'usuarios' && (
-          <OwnerSecurityGate
-            title="Tabela de Utilizadores (Supabase Cloud)"
-            subtitle="Introduza o código mestre do proprietário para aceder à tabela de utilizadores e sincronização de credenciais."
-            moduleName="Tabela de Utilizadores"
-          >
-            <div className="space-y-4">
-              <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
+          <div className="space-y-4">
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
                 <div className="relative w-full sm:w-80">
                   <Search className="w-4 h-4 text-neutral-500 absolute left-3 top-1/2 -translate-y-1/2" />
                   <input
@@ -1202,7 +1285,6 @@ const { data, error } = await supabase.from('produtos').upsert([
                 </table>
               </div>
             </div>
-          </OwnerSecurityGate>
         )}
 
         {/* TAB: SQL SCHEMA */}

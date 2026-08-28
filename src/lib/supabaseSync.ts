@@ -1,4 +1,4 @@
-import { supabase, isValidHttpUrl, DEFAULT_SUPABASE_URL, DEFAULT_SUPABASE_ANON_KEY } from './supabase';
+import { supabase, isValidHttpUrl, DEFAULT_SUPABASE_URL, DEFAULT_SUPABASE_ANON_KEY, UserProfile } from './supabase';
 import {
   Product,
   Customer,
@@ -27,6 +27,7 @@ export interface SupabaseSyncLog {
 }
 
 export type TableSyncName =
+  | 'profiles'
   | 'empresas'
   | 'lojas'
   | 'produtos'
@@ -42,6 +43,7 @@ export type TableSyncName =
   | 'turnos_caixa';
 
 export interface RealtimeSyncCallbacks {
+  onProfileChange?: (event: 'INSERT' | 'UPDATE' | 'DELETE', item: Partial<UserProfile>, rawOld?: any) => void;
   onCompanyChange?: (event: 'INSERT' | 'UPDATE' | 'DELETE', item: Partial<Company>, rawOld?: any) => void;
   onStoreChange?: (event: 'INSERT' | 'UPDATE' | 'DELETE', item: Partial<Store>, rawOld?: any) => void;
   onProductChange?: (event: 'INSERT' | 'UPDATE' | 'DELETE', item: Partial<Product>, rawOld?: any) => void;
@@ -90,6 +92,31 @@ export function clearSyncLogs() {
 /**
  * Mapeamentos entre o Modelo da Aplicação e as Tabelas do Supabase
  */
+
+export function mapProfileToSupabase(p: Partial<UserProfile>) {
+  return {
+    id: p.id,
+    company_id: p.company_id || 'comp-1',
+    full_name: p.full_name || '',
+    email: p.email || '',
+    role: p.role || 'caixa',
+    avatar_url: p.avatar_url || null,
+    updated_at: new Date().toISOString(),
+  };
+}
+
+export function mapSupabaseToProfile(row: any): UserProfile {
+  return {
+    id: String(row.id),
+    company_id: row.company_id || 'comp-1',
+    full_name: row.full_name || row.name || row.nome || 'Utilizador',
+    email: row.email || '',
+    role: row.role || row.cargo || 'caixa',
+    avatar_url: row.avatar_url || '',
+    created_at: row.created_at || new Date().toISOString(),
+    updated_at: row.updated_at || new Date().toISOString(),
+  };
+}
 
 export function mapCompanyToSupabase(c: Partial<Company>) {
   return {
@@ -636,6 +663,7 @@ export function startSupabaseRealtimeSync(callbacks: RealtimeSyncCallbacks) {
   const channel = supabase.channel('erp-pos-realtime-master');
 
   const registeredTables: TableSyncName[] = [
+    'profiles',
     'empresas',
     'lojas',
     'produtos',
@@ -717,6 +745,13 @@ function handleRealtimeEvent(tableName: TableSyncName, payload: any) {
   });
 
   switch (tableName) {
+    case 'profiles':
+      if (currentCallbacks.onProfileChange) {
+        const item = eventType === 'DELETE' ? { id: String(rawId) } : mapSupabaseToProfile(newRecord);
+        currentCallbacks.onProfileChange(eventType, item, oldRecord);
+      }
+      break;
+
     case 'empresas':
       if (currentCallbacks.onCompanyChange) {
         const item = eventType === 'DELETE' ? { id: String(rawId) } : mapSupabaseToCompany(newRecord);
@@ -856,6 +891,9 @@ export async function pushRecordToSupabase(
 
     // Map according to table
     switch (table) {
+      case 'profiles':
+        payload = mapProfileToSupabase(record);
+        break;
       case 'empresas':
         payload = mapCompanyToSupabase(record);
         break;
@@ -940,7 +978,10 @@ export async function pushRecordToSupabase(
  * PUXAR UMA TABELA ESPECÍFICA DO SUPABASE (SINGLE TABLE PULL)
  * ============================================================================
  */
-export async function pullTableFromSupabase(table: TableSyncName): Promise<{
+export async function pullTableFromSupabase(
+  table: TableSyncName,
+  options?: { companyId?: string; profileId?: string }
+): Promise<{
   success: boolean;
   data: any[];
   count: number;
@@ -948,6 +989,7 @@ export async function pullTableFromSupabase(table: TableSyncName): Promise<{
 }> {
   let mapper: (row: any) => any = (r) => r;
   switch (table) {
+    case 'profiles': mapper = mapSupabaseToProfile; break;
     case 'empresas': mapper = mapSupabaseToCompany; break;
     case 'lojas': mapper = mapSupabaseToStore; break;
     case 'produtos': mapper = mapSupabaseToProduct; break;
@@ -964,7 +1006,23 @@ export async function pullTableFromSupabase(table: TableSyncName): Promise<{
   }
 
   try {
-    const { data, error } = await supabase.from(table).select('*');
+    let query: any = supabase.from(table).select('*');
+    
+    // Apply Company scoping
+    if (options?.companyId && options.companyId !== 'ALL') {
+      if (table === 'empresas') {
+        query = query.eq('id', options.companyId);
+      } else {
+        query = query.eq('company_id', options.companyId);
+      }
+    }
+
+    // Apply Profile scoping
+    if (options?.profileId && options.profileId !== 'ALL' && table === 'profiles') {
+      query = query.eq('id', options.profileId);
+    }
+
+    const { data, error } = await query;
     if (error) {
       const errorMsg = error.code === '42P01' || error.message?.includes('does not exist')
         ? `Tabela "${table}" ainda não existe no Supabase. Execute o script SQL no Supabase.`
@@ -981,11 +1039,14 @@ export async function pullTableFromSupabase(table: TableSyncName): Promise<{
     }
 
     const mapped = Array.isArray(data) ? data.map(mapper) : [];
+    const scopeDesc = options?.companyId && options.companyId !== 'ALL'
+      ? ` (Empresa: ${options.companyId})`
+      : '';
     addSyncLog({
       table,
       action: 'PULL',
       origin: 'LOCAL_APP',
-      description: `Puxados ${mapped.length} registos da tabela "${table}" do Supabase com sucesso.`,
+      description: `Puxados ${mapped.length} registos da tabela "${table}" do Supabase${scopeDesc}.`,
       status: 'success',
     });
     return { success: true, data: mapped, count: mapped.length };
@@ -1000,7 +1061,11 @@ export async function pullTableFromSupabase(table: TableSyncName): Promise<{
  * ENVIAR UMA TABELA ESPECÍFICA PARA O SUPABASE (SINGLE TABLE PUSH)
  * ============================================================================
  */
-export async function pushTableToSupabase(table: TableSyncName, items: any[]): Promise<{
+export async function pushTableToSupabase(
+  table: TableSyncName,
+  items: any[],
+  options?: { companyId?: string }
+): Promise<{
   success: boolean;
   count: number;
   error?: string;
@@ -1011,6 +1076,7 @@ export async function pushTableToSupabase(table: TableSyncName, items: any[]): P
 
   let mapper: (item: any) => any = (i) => i;
   switch (table) {
+    case 'profiles': mapper = mapProfileToSupabase; break;
     case 'empresas': mapper = mapCompanyToSupabase; break;
     case 'lojas': mapper = mapStoreToSupabase; break;
     case 'produtos': mapper = mapProductToSupabase; break;
@@ -1027,7 +1093,18 @@ export async function pushTableToSupabase(table: TableSyncName, items: any[]): P
   }
 
   try {
-    const payload = items.map(mapper);
+    let payload = items.map(mapper);
+
+    // If scoped by company, ensure company_id is stamped
+    if (options?.companyId && options.companyId !== 'ALL') {
+      payload = payload.map((row) => {
+        if (table === 'empresas') {
+          return { ...row, id: row.id || options.companyId };
+        }
+        return { ...row, company_id: options.companyId };
+      });
+    }
+
     // Batch in chunks of 50 to avoid request size limits
     const CHUNK_SIZE = 50;
     let uploadedCount = 0;
@@ -1054,11 +1131,14 @@ export async function pushTableToSupabase(table: TableSyncName, items: any[]): P
       uploadedCount += chunk.length;
     }
 
+    const scopeDesc = options?.companyId && options.companyId !== 'ALL'
+      ? ` (Empresa: ${options.companyId})`
+      : '';
     addSyncLog({
       table,
       action: 'PUSH',
       origin: 'LOCAL_APP',
-      description: `Enviados ${uploadedCount} registos da tabela "${table}" para o Supabase com sucesso.`,
+      description: `Enviados ${uploadedCount} registos da tabela "${table}" para o Supabase com sucesso${scopeDesc}.`,
       status: 'success',
     });
 
@@ -1075,10 +1155,14 @@ export async function pushTableToSupabase(table: TableSyncName, items: any[]): P
  * ============================================================================
  */
 
-export async function pullAllFromSupabase(): Promise<{
+export async function pullAllFromSupabase(options?: {
+  companyId?: string;
+  profileId?: string;
+}): Promise<{
   success: boolean;
   counts: Record<string, number>;
   data: {
+    profiles?: UserProfile[];
     companies?: Company[];
     stores?: Store[];
     products?: Product[];
@@ -1106,7 +1190,23 @@ export async function pullAllFromSupabase(): Promise<{
 
   const fetchTable = async (table: TableSyncName, mapper: (row: any) => any, key: string) => {
     try {
-      const { data, error } = await supabase.from(table).select('*');
+      let query: any = supabase.from(table).select('*');
+      
+      // Apply multi-tenant company filter if specified
+      if (options?.companyId && options.companyId !== 'ALL') {
+        if (table === 'empresas') {
+          query = query.eq('id', options.companyId);
+        } else {
+          query = query.eq('company_id', options.companyId);
+        }
+      }
+
+      // Apply profile filter if specified for profiles table
+      if (options?.profileId && options.profileId !== 'ALL' && table === 'profiles') {
+        query = query.eq('id', options.profileId);
+      }
+
+      const { data, error } = await query;
       if (error) {
         const errorMsg = (error.code === '42P01' || error.message?.includes('does not exist'))
           ? `Tabela "${table}" ainda não existe no Supabase (execute o script SQL).`
@@ -1132,6 +1232,7 @@ export async function pullAllFromSupabase(): Promise<{
   };
 
   await Promise.all([
+    fetchTable('profiles', mapSupabaseToProfile, 'profiles'),
     fetchTable('empresas', mapSupabaseToCompany, 'companies'),
     fetchTable('lojas', mapSupabaseToStore, 'stores'),
     fetchTable('usuarios', mapSupabaseToUser, 'users'),
@@ -1149,13 +1250,17 @@ export async function pullAllFromSupabase(): Promise<{
 
   result.success = result.errors.length === 0;
 
+  const scopeMsg = options?.companyId && options.companyId !== 'ALL'
+    ? ` [Empresa: ${options.companyId}]`
+    : ' [Geral - Todas Empresas]';
+
   addSyncLog({
     table: 'ALL',
     action: 'PULL',
     origin: 'LOCAL_APP',
     description: result.success
-      ? `Sincronização completa concluída com sucesso (${Object.values(result.counts).reduce((a: any, b: any) => a + b, 0)} registos obtidos).`
-      : `Sincronização concluída com avisos em ${result.errors.length} tabelas.`,
+      ? `Sincronização completa concluída com sucesso (${Object.values(result.counts).reduce((a: any, b: any) => a + b, 0)} registos obtidos)${scopeMsg}.`
+      : `Sincronização concluída com avisos em ${result.errors.length} tabelas${scopeMsg}.`,
     status: result.success ? 'success' : 'info',
   });
 
@@ -1168,21 +1273,28 @@ export async function pullAllFromSupabase(): Promise<{
  * ============================================================================
  */
 
-export async function pushAllToSupabase(localData: {
-  companies?: Company[];
-  stores?: Store[];
-  products: Product[];
-  customers: Customer[];
-  suppliers: Supplier[];
-  categories: ProductCategory[];
-  sales: Sale[];
-  users: User[];
-  warehouses: Warehouse[];
-  stock: StockItem[];
-  accountsPayable: AccountPayable[];
-  accountsReceivable: AccountReceivable[];
-  shifts: CashShift[];
-}): Promise<{
+export async function pushAllToSupabase(
+  localData: {
+    profiles?: UserProfile[];
+    companies?: Company[];
+    stores?: Store[];
+    products: Product[];
+    customers: Customer[];
+    suppliers: Supplier[];
+    categories: ProductCategory[];
+    sales: Sale[];
+    users: User[];
+    warehouses: Warehouse[];
+    stock: StockItem[];
+    accountsPayable: AccountPayable[];
+    accountsReceivable: AccountReceivable[];
+    shifts: CashShift[];
+  },
+  options?: {
+    companyId?: string;
+    profileId?: string;
+  }
+): Promise<{
   success: boolean;
   uploaded: Record<string, number>;
   errors: string[];
@@ -1202,7 +1314,18 @@ export async function pushAllToSupabase(localData: {
       return;
     }
     try {
-      const payload = items.map(mapper);
+      let payload = items.map(mapper);
+
+      // Multi-tenant scope tagging
+      if (options?.companyId && options.companyId !== 'ALL') {
+        payload = payload.map((row) => {
+          if (table === 'empresas') {
+            return { ...row, id: row.id || options.companyId };
+          }
+          return { ...row, company_id: options.companyId };
+        });
+      }
+
       const CHUNK_SIZE = 50;
       let totalForTable = 0;
 
@@ -1234,7 +1357,19 @@ export async function pushAllToSupabase(localData: {
     }
   };
 
-  // Upload in logical sequence: companies & stores first, then users, etc.
+  // Derive profiles from users if not explicitly provided
+  const profilesToSync: Partial<UserProfile>[] = localData.profiles && localData.profiles.length > 0
+    ? localData.profiles
+    : (localData.users || []).map((u) => ({
+        id: u.id,
+        company_id: u.companyId || options?.companyId || 'comp-1',
+        full_name: u.name || 'Utilizador',
+        email: u.email || `${u.id}@empresa.mz`,
+        role: (u.role || 'caixa') as any,
+      }));
+
+  // Upload in logical sequence: profiles, companies & stores first, then users, etc.
+  await uploadBatch('profiles', profilesToSync, mapProfileToSupabase);
   await uploadBatch('empresas', localData.companies, mapCompanyToSupabase);
   await uploadBatch('lojas', localData.stores, mapStoreToSupabase);
   await uploadBatch('usuarios', localData.users, mapUserToSupabase);
@@ -1252,13 +1387,17 @@ export async function pushAllToSupabase(localData: {
   result.success = result.errors.length === 0;
 
   const totalCount = Object.values(result.uploaded).reduce((a, b) => a + b, 0);
+  const scopeMsg = options?.companyId && options.companyId !== 'ALL'
+    ? ` [Empresa: ${options.companyId}]`
+    : ' [Geral - Todas Empresas]';
+
   addSyncLog({
     table: 'ALL',
     action: 'PUSH',
     origin: 'LOCAL_APP',
     description: result.success
-      ? `Exportação total para o Supabase concluída com sucesso (${totalCount} registos enviados em 13 tabelas).`
-      : `Exportação para o Supabase concluída com ${result.errors.length} erro(s). ${totalCount} registos enviados.`,
+      ? `Exportação total para o Supabase concluída com sucesso (${totalCount} registos enviados em 14 tabelas)${scopeMsg}.`
+      : `Exportação para o Supabase concluída com ${result.errors.length} erro(s). ${totalCount} registos enviados${scopeMsg}.`,
     status: result.success ? 'success' : 'error',
   });
 

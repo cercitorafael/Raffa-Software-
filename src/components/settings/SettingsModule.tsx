@@ -54,7 +54,6 @@ import { InvoiceTemplatesSection } from './InvoiceTemplatesSection';
 import { UserPermissionsMatrix } from './UserPermissionsMatrix';
 import { VatSettingsSection } from './VatSettingsSection';
 import { RegisterCompanyModal } from '../auth/RegisterCompanyModal';
-import { OwnerSecurityGate } from '../auth/OwnerSecurityGate';
 
 interface SettingsModuleProps {
   initialTab?: 'company' | 'vat' | 'branding' | 'templates' | 'saft' | 'users' | 'roles' | 'stores' | 'sync' | 'theme' | 'language';
@@ -1331,13 +1330,8 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
 
         {/* ================= TAB 3: USER MANAGEMENT (CRUD) ================= */}
         {activeTab === 'users' && (
-          <OwnerSecurityGate
-            title="Gestão de Utilizadores do Sistema"
-            subtitle="Introduza o código mestre do proprietário para aceder à listagem, credenciais, PINs e perfis dos utilizadores."
-            moduleName="Gestão de Utilizadores"
-          >
-            <div className="space-y-4">
-              {/* Active Session Banner */}
+          <div className="space-y-4">
+            {/* Active Session Banner */}
               <div className="bg-[#141414] p-4 rounded-xl border border-[#262626] flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div className="flex items-center space-x-3">
                   <div className="w-10 h-10 rounded-full bg-[#c5a47e]/20 border border-[#c5a47e]/40 flex items-center justify-center text-[#c5a47e] font-bold text-sm">
@@ -1542,7 +1536,6 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
                 </table>
               </div>
             </div>
-          </OwnerSecurityGate>
         )}
 
         {/* ================= TAB 4: RBAC PERMISSIONS & RESTRICTIONS ================= */}
