@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
-import { Sale, SaleItem, OmnichannelOrder, OmnichannelOrderStatus, PaymentMethod } from '../../types';
+import { Sale, SaleItem, OmnichannelOrder, OmnichannelOrderStatus, PaymentMethod, InvoiceType } from '../../types';
 import {
   FileText,
   FileSpreadsheet,
@@ -36,9 +36,18 @@ import {
   Send,
   CreditCard,
   Wallet,
+  Info,
+  Check,
+  RotateCcw,
 } from 'lucide-react';
 import { sound } from '../../utils/audio';
-import { printThermalReceipt, printInvoiceDocument, downloadInvoicePdf, getActiveInvoiceTemplate } from '../../utils/print';
+import {
+  printThermalReceipt,
+  printInvoiceDocument,
+  downloadInvoicePdf,
+  getActiveInvoiceTemplate,
+  getDocumentTitle,
+} from '../../utils/print';
 import { defaultInvoiceTemplates } from '../../mockData';
 
 export const DocumentsModule: React.FC = () => {
@@ -133,7 +142,7 @@ export const DocumentsModule: React.FC = () => {
   }
 
   // ================= STATE FOR NEW DOCUMENT ISSUANCE =================
-  const [docType, setDocType] = useState<'FT' | 'FS' | 'FR' | 'NC' | 'ORC' | 'GT'>('FT');
+  const [docType, setDocType] = useState<InvoiceType>('FT');
   const [selectedCustomerId, setSelectedCustomerId] = useState<string>('');
   const [customerNif, setCustomerNif] = useState<string>('999999990');
   const [customerName, setCustomerName] = useState<string>('Consumidor Final');
@@ -144,14 +153,25 @@ export const DocumentsModule: React.FC = () => {
   const [selectedSeries, setSelectedSeries] = useState<string>('2026A');
   const [documentNotes, setDocumentNotes] = useState<string>('');
 
-  // Transport Guide Specifics
+  // Transport & Delivery Guide Specifics (GT / GR)
   const [transportOrigin, setTransportOrigin] = useState<string>(currentStore.address || 'Armazém Central, Lisboa');
   const [transportDestination, setTransportDestination] = useState<string>('Morada do Cliente');
   const [vehiclePlate, setVehiclePlate] = useState<string>('99-AA-00');
+  const [driverName, setDriverName] = useState<string>('');
 
-  // Credit Note Specifics
+  // Credit Note Specifics (NC) & Debit Note (ND) & Receipt (RC)
   const [originInvoiceNumber, setOriginInvoiceNumber] = useState<string>('');
   const [ncReason, setNcReason] = useState<string>('Devolução de Artigo / Acordo Comercial');
+  const [ncRestock, setNcRestock] = useState<boolean>(true);
+  const [ndReason, setNdReason] = useState<string>('Correção de Preço / Débito Adicional de Serviços');
+
+  // Modal for issuing Credit Note from Archive list
+  const [creditNoteModalDoc, setCreditNoteModalDoc] = useState<Sale | null>(null);
+  const [creditNoteModalReason, setCreditNoteModalReason] = useState<string>('Devolução de Mercadoria / Anulação');
+  const [creditNoteModalRestock, setCreditNoteModalRestock] = useState<boolean>(true);
+
+  // Quotation & Proforma Specifics (ORC / PF)
+  const [orcValidity, setOrcValidity] = useState<string>('30 dias');
 
   // Items in the document
   const [docItems, setDocItems] = useState<
@@ -200,8 +220,8 @@ export const DocumentsModule: React.FC = () => {
       const prod = products.find((p) => p.id === selectedProductId);
       if (!prod) return;
 
-      // Check stock availability if document type affects physical inventory (e.g. FS, FT, FR, GT, VD)
-      const isInventoryDocument = !['ORC', 'PF', 'NC'].includes(docType);
+      // Check stock availability if document type affects physical inventory (e.g. FS, FT, FR, GT, GR, VD)
+      const isInventoryDocument = !['ORC', 'PF', 'NC', 'RC'].includes(docType);
       if (isInventoryDocument) {
         const available = getAvailableStock(prod.id, currentStore.defaultWarehouseId);
         if (available <= 0) {
@@ -305,8 +325,8 @@ export const DocumentsModule: React.FC = () => {
       return;
     }
 
-    // Strict stock verification for inventory documents (FS, FT, FR, GT, VD)
-    const isInventoryDocument = !['ORC', 'PF', 'NC'].includes(docType);
+    // Strict stock verification for inventory documents (FS, FT, FR, GT, GR, VD)
+    const isInventoryDocument = !['ORC', 'PF', 'NC', 'RC'].includes(docType);
     if (isInventoryDocument) {
       for (const item of docItems) {
         if (item.productId && !item.productId.startsWith('custom-')) {
@@ -329,13 +349,29 @@ export const DocumentsModule: React.FC = () => {
       }
     }
 
-    const seq = salesHistory.length + 1;
+    const countType = salesHistory.filter((s) => (s.invoiceType || '').toUpperCase() === docType).length + 1;
     const docPrefix = docType;
-    const invNumber = `${docPrefix} 2026/${String(seq).padStart(4, '0')}`;
+    const invNumber = `${docPrefix} 2026/${String(countType).padStart(4, '0')}`;
     const dateStr = new Date().toISOString();
     const prevSale = salesHistory[0];
     const prevHash = prevSale ? prevSale.fiscalHash : '0000000000000000';
     const fiscalHash = `HASH-${Math.random().toString(36).substring(2, 6).toUpperCase()}-${Date.now().toString().slice(-4)}`;
+
+    let generatedNotes = documentNotes;
+    if (!generatedNotes) {
+      if (docType === 'GT' || docType === 'GR') {
+        generatedNotes = `Guia de ${docType === 'GT' ? 'Transporte' : 'Remessa'}. Carga: ${transportOrigin} | Descarga: ${transportDestination} | Matrícula: ${vehiclePlate}${driverName ? ` | Condutor: ${driverName}` : ''}`;
+      } else if (docType === 'NC') {
+        const stockStatusText = ncRestock ? 'Artigos repostos no inventário' : 'Sem reposição física / Apenas estorno financeiro';
+        generatedNotes = `Nota de Crédito ref. ${originInvoiceNumber || 'Fatura Original'}. Motivo: ${ncReason} [Stock: ${stockStatusText}]`;
+      } else if (docType === 'ND') {
+        generatedNotes = `Nota de Débito ref. ${originInvoiceNumber || 'Fatura Original'}. Motivo: ${ndReason}`;
+      } else if (docType === 'ORC' || docType === 'PF') {
+        generatedNotes = `Documento Proposta / Cotação. Validade: ${orcValidity}. Não serve de fatura. Não movimenta stock.`;
+      } else if (docType === 'RC') {
+        generatedNotes = `Recibo de Quitação ref. ${originInvoiceNumber || 'Fatura Original'}.`;
+      }
+    }
 
     const newDoc: Sale = {
       id: `doc-${Date.now()}`,
@@ -343,7 +379,7 @@ export const DocumentsModule: React.FC = () => {
       storeId: currentStore.id,
       terminalId: currentTerminal.id,
       invoiceNumber: invNumber,
-      invoiceType: (['FS', 'FT', 'FR', 'NC'].includes(docType) ? docType : 'FT') as any,
+      invoiceType: docType,
       date: dateStr,
       customerId: selectedCustomerId || undefined,
       customerName: customerName.trim(),
@@ -370,25 +406,22 @@ export const DocumentsModule: React.FC = () => {
       atcud: `ATCUD-${currentCompany.taxNumber}-${invNumber}`,
       isOffline: false,
       isSynced: true,
+      fiscalSeries: selectedSeries,
       invoiceTemplateId: previewTemplateId || currentCompany.activeInvoiceTemplateId || activeTemplate.id,
-      notes: documentNotes
-        ? documentNotes
-        : docType === 'GT'
-        ? `Guia de Transporte. Carga: ${transportOrigin} | Descarga: ${transportDestination} | Matrícula: ${vehiclePlate}`
-        : docType === 'NC'
-        ? `Nota de Crédito ref. ${originInvoiceNumber}. Motivo: ${ncReason}`
-        : undefined,
+      notes: generatedNotes,
     };
 
-    // 1. Stock handling: deduct for sales/transport, replenish for credit note
+    // 1. Stock handling: deduct for sales/transport, replenish for credit note if enabled, bypass for quotation/proforma/receipt
     if (docType === 'NC') {
-      replenishStockForItems(
-        docItems,
-        currentStore.defaultWarehouseId,
-        invNumber,
-        `Emissão de Nota de Crédito ${invNumber} ref. ${originInvoiceNumber || ''}`
-      );
-    } else if (docType !== 'ORC' && docType !== 'PF') {
+      if (ncRestock) {
+        replenishStockForItems(
+          docItems,
+          currentStore.defaultWarehouseId,
+          invNumber,
+          `Emissão de Nota de Crédito ${invNumber} ref. ${originInvoiceNumber || ''} (Devolução ao Stock)`
+        );
+      }
+    } else if (isInventoryDocument) {
       deductStockForItems(
         docItems,
         currentStore.defaultWarehouseId,
@@ -400,7 +433,8 @@ export const DocumentsModule: React.FC = () => {
     // 2. Append to salesHistory in App context
     setSalesHistory((prev) => [newDoc, ...prev]);
     sound.playCashRegisterSound();
-    notify(`Documento ${invNumber} emitido e assinado digitalmente com sucesso (Cert. 4120/AT).`, 'success');
+    const docDisplayTitle = getDocumentTitle(docType);
+    notify(`${docDisplayTitle} ${invNumber} emitida e assinada digitalmente com sucesso (Cert. 4120/AT).`, 'success');
 
     // Reset doc form
     setDocItems([]);
@@ -544,7 +578,7 @@ export const DocumentsModule: React.FC = () => {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2.5">
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2.5">
                 {[
                   {
                     id: 'FT',
@@ -571,10 +605,22 @@ export const DocumentsModule: React.FC = () => {
                     badge: 'Fiscal',
                   },
                   {
+                    id: 'ND',
+                    name: 'ND - Nota de Débito',
+                    desc: 'Débito Adicional / Ajuste',
+                    badge: 'Fiscal',
+                  },
+                  {
                     id: 'ORC',
                     name: 'ORC - Orçamento',
-                    desc: 'Proposta / Proforma',
+                    desc: 'Proposta Comercial',
                     badge: 'Cotação',
+                  },
+                  {
+                    id: 'PF',
+                    name: 'PF - Proforma',
+                    desc: 'Pagamento Prévio',
+                    badge: 'Pré-Fatura',
                   },
                   {
                     id: 'GT',
@@ -582,11 +628,29 @@ export const DocumentsModule: React.FC = () => {
                     desc: 'Circulação de Carga',
                     badge: 'Comunicação AT',
                   },
+                  {
+                    id: 'GR',
+                    name: 'GR - Guia de Remessa',
+                    desc: 'Entrega de Mercadoria',
+                    badge: 'Logística',
+                  },
+                  {
+                    id: 'RC',
+                    name: 'RC - Recibo Quitação',
+                    desc: 'Liquidação de Fatura',
+                    badge: 'Tesouraria',
+                  },
+                  {
+                    id: 'VD',
+                    name: 'VD - Venda a Dinheiro',
+                    desc: 'Transação Imediata',
+                    badge: 'Direto',
+                  },
                 ].map((type) => (
                   <button
                     type="button"
                     key={type.id}
-                    onClick={() => setDocType(type.id as any)}
+                    onClick={() => setDocType(type.id as InvoiceType)}
                     className={`p-3 rounded-xl border text-left transition-all cursor-pointer ${
                       docType === type.id
                         ? 'bg-[#c5a47e]/15 border-[#c5a47e] text-white ring-1 ring-[#c5a47e]'
@@ -596,7 +660,7 @@ export const DocumentsModule: React.FC = () => {
                     <span className="font-bold text-xs block text-[#e5e5e5]">{type.name}</span>
                     <span className="text-[10px] text-neutral-400 block mt-0.5">{type.desc}</span>
                     <span
-                      className={`inline-block mt-2 px-1.5 py-0.2 rounded-xs text-[9px] font-mono ${
+                      className={`inline-block mt-2 px-1.5 py-0.5 rounded-xs text-[9px] font-mono ${
                         docType === type.id
                           ? 'bg-[#c5a47e] text-neutral-950 font-bold'
                           : 'bg-[#202020] text-neutral-400'
@@ -671,7 +735,7 @@ export const DocumentsModule: React.FC = () => {
                   </div>
 
                   <div>
-                    <label className="text-neutral-400 block mb-1 font-semibold">Email para Envio de Fatura</label>
+                    <label className="text-neutral-400 block mb-1 font-semibold">Email para Envio de Documento</label>
                     <input
                       type="email"
                       value={customerEmail}
@@ -682,12 +746,113 @@ export const DocumentsModule: React.FC = () => {
                   </div>
                 </div>
 
-                {/* Additional conditional fields */}
+                {/* Additional conditional fields for Credit Note */}
                 {docType === 'NC' && (
-                  <div className="p-3.5 bg-rose-950/20 border border-rose-500/30 rounded-xl space-y-2 text-xs">
-                    <div className="flex items-center space-x-2 text-rose-300 font-bold">
+                  <div className="p-4 bg-rose-950/20 border border-rose-500/30 rounded-xl space-y-3.5 text-xs">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-2 text-rose-300 font-bold">
+                        <AlertTriangle className="w-4 h-4" />
+                        <span>Parâmetros da Nota de Crédito (Estorno / Retificação)</span>
+                      </div>
+                      <span className="text-[10px] px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 border border-rose-500/30 font-semibold uppercase">
+                        Documento Retificativo
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-neutral-400 block mb-1 font-semibold">Nº Fatura de Origem *</label>
+                        <input
+                          type="text"
+                          required
+                          value={originInvoiceNumber}
+                          onChange={(e) => setOriginInvoiceNumber(e.target.value)}
+                          placeholder="ex: FT 2026/0012"
+                          className="w-full px-3 py-2 bg-[#0a0a0a] border border-[#333] rounded-lg text-white font-mono focus:outline-hidden focus:border-[#c5a47e]"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-neutral-400 block mb-1 font-semibold">Motivo de Retificação / Estorno *</label>
+                        <input
+                          type="text"
+                          required
+                          value={ncReason}
+                          onChange={(e) => setNcReason(e.target.value)}
+                          placeholder="ex: Devolução de Mercadoria / Acordo Comercial"
+                          className="w-full px-3 py-2 bg-[#0a0a0a] border border-[#333] rounded-lg text-white focus:outline-hidden focus:border-[#c5a47e]"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Stock Movement Option */}
+                    <div className="pt-3 border-t border-rose-500/20 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <label className="text-white font-bold block flex items-center space-x-2">
+                          <Package className="w-4 h-4 text-[#c5a47e]" />
+                          <span>Opção de Movimentação de Stock (Inventário):</span>
+                        </label>
+                        <span className={`text-[10px] px-2 py-0.5 rounded font-bold uppercase ${
+                          ncRestock ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+                        }`}>
+                          {ncRestock ? 'Com Reentrada de Stock' : 'Sem Reposição Física'}
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                        <button
+                          type="button"
+                          onClick={() => setNcRestock(true)}
+                          className={`p-3 rounded-xl border text-left transition-all cursor-pointer flex items-start space-x-3 ${
+                            ncRestock
+                              ? 'bg-emerald-950/40 border-emerald-500 text-white ring-1 ring-emerald-500/50'
+                              : 'bg-[#0f0f0f] border-[#262626] text-neutral-400 hover:border-neutral-700'
+                          }`}
+                        >
+                          <div className={`w-4 h-4 rounded-full border flex items-center justify-center mt-0.5 shrink-0 ${
+                            ncRestock ? 'border-emerald-400 bg-emerald-500' : 'border-neutral-600'
+                          }`}>
+                            {ncRestock && <div className="w-1.5 h-1.5 rounded-full bg-black" />}
+                          </div>
+                          <div>
+                            <span className="font-bold text-xs text-white block">Adicionar / Devolver ao Stock</span>
+                            <span className="text-[11px] text-neutral-300 block mt-0.5">
+                              Repõe as quantidades dos artigos no armazém da loja ({currentStore.name || 'Armazém Principal'}).
+                            </span>
+                          </div>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => setNcRestock(false)}
+                          className={`p-3 rounded-xl border text-left transition-all cursor-pointer flex items-start space-x-3 ${
+                            !ncRestock
+                              ? 'bg-amber-950/40 border-amber-500 text-white ring-1 ring-amber-500/50'
+                              : 'bg-[#0f0f0f] border-[#262626] text-neutral-400 hover:border-neutral-700'
+                          }`}
+                        >
+                          <div className={`w-4 h-4 rounded-full border flex items-center justify-center mt-0.5 shrink-0 ${
+                            !ncRestock ? 'border-amber-400 bg-amber-500' : 'border-neutral-600'
+                          }`}>
+                            {!ncRestock && <div className="w-1.5 h-1.5 rounded-full bg-black" />}
+                          </div>
+                          <div>
+                            <span className="font-bold text-xs text-white block">Não Adicionar / Não Movimentar Stock</span>
+                            <span className="text-[11px] text-neutral-300 block mt-0.5">
+                              Apenas estorno financeiro/fiscal (ex: desconto concedido, mercadoria danificada/descartada ou sem retorno físico).
+                            </span>
+                          </div>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Additional conditional fields for Debit Note */}
+                {docType === 'ND' && (
+                  <div className="p-3.5 bg-amber-950/20 border border-amber-500/30 rounded-xl space-y-2 text-xs">
+                    <div className="flex items-center space-x-2 text-amber-300 font-bold">
                       <AlertTriangle className="w-4 h-4" />
-                      <span>Parâmetros da Nota de Crédito</span>
+                      <span>Parâmetros da Nota de Débito (Encargos / Débito Adicional)</span>
                     </div>
                     <div className="grid grid-cols-2 gap-3">
                       <div>
@@ -702,12 +867,12 @@ export const DocumentsModule: React.FC = () => {
                         />
                       </div>
                       <div>
-                        <label className="text-neutral-400 block mb-1">Motivo de Retificação *</label>
+                        <label className="text-neutral-400 block mb-1">Motivo do Débito *</label>
                         <input
                           type="text"
                           required
-                          value={ncReason}
-                          onChange={(e) => setNcReason(e.target.value)}
+                          value={ndReason}
+                          onChange={(e) => setNdReason(e.target.value)}
                           className="w-full px-3 py-1.5 bg-[#0a0a0a] border border-[#333] rounded-lg text-white"
                         />
                       </div>
@@ -715,13 +880,82 @@ export const DocumentsModule: React.FC = () => {
                   </div>
                 )}
 
-                {docType === 'GT' && (
+                {/* Additional conditional fields for Quotations & Proforma */}
+                {(docType === 'ORC' || docType === 'PF') && (
+                  <div className="p-3.5 bg-emerald-950/20 border border-emerald-500/30 rounded-xl space-y-2.5 text-xs">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-2 text-emerald-300 font-bold">
+                        <FileCheck className="w-4 h-4" />
+                        <span>Parâmetros da Proposta / Orçamento</span>
+                      </div>
+                      <span className="px-2 py-0.5 bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 rounded font-semibold text-[10px] uppercase">
+                        Não Movimenta Stock
+                      </span>
+                    </div>
+
+                    <div className="p-2.5 bg-emerald-950/40 border border-emerald-500/20 rounded-lg text-emerald-200 text-[11px] flex items-start space-x-2">
+                      <Info className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                      <span>
+                        <strong>Orçamento Comercial:</strong> Este documento serve como cotação e não abate stock nem exige stock em armazém para emissão. Pode adicionar artigos do catálogo mesmo que o stock esteja a zero.
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-neutral-400 block mb-1">Prazo de Validade da Proposta</label>
+                        <select
+                          value={orcValidity}
+                          onChange={(e) => setOrcValidity(e.target.value)}
+                          className="w-full px-3 py-1.5 bg-[#0a0a0a] border border-[#333] rounded-lg text-white"
+                        >
+                          <option value="15 dias">15 dias corridos</option>
+                          <option value="30 dias">30 dias corridos</option>
+                          <option value="60 dias">60 dias corridos</option>
+                          <option value="90 dias">90 dias corridos</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-neutral-400 block mb-1">Condição de Adiantamento / Sinal</label>
+                        <input
+                          type="text"
+                          placeholder="ex: 50% na adjudicação, 50% na entrega"
+                          className="w-full px-3 py-1.5 bg-[#0a0a0a] border border-[#333] rounded-lg text-white"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Additional conditional fields for Receipts */}
+                {docType === 'RC' && (
+                  <div className="p-3.5 bg-sky-950/20 border border-sky-500/30 rounded-xl space-y-2 text-xs">
+                    <div className="flex items-center space-x-2 text-sky-300 font-bold">
+                      <Receipt className="w-4 h-4" />
+                      <span>Parâmetros do Recibo de Quitação</span>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-neutral-400 block mb-1">Nº Fatura Liquidada</label>
+                        <input
+                          type="text"
+                          value={originInvoiceNumber}
+                          onChange={(e) => setOriginInvoiceNumber(e.target.value)}
+                          placeholder="ex: FT 2026/0005"
+                          className="w-full px-3 py-1.5 bg-[#0a0a0a] border border-[#333] rounded-lg text-white font-mono"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Additional conditional fields for Transport & Delivery */}
+                {(docType === 'GT' || docType === 'GR') && (
                   <div className="p-3.5 bg-blue-950/20 border border-blue-500/30 rounded-xl space-y-2 text-xs">
                     <div className="flex items-center space-x-2 text-blue-300 font-bold">
                       <Truck className="w-4 h-4" />
-                      <span>Parâmetros de Transporte (Comunicação AT)</span>
+                      <span>Parâmetros de Transporte e Carga (Comunicação AT)</span>
                     </div>
-                    <div className="grid grid-cols-3 gap-2">
+                    <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
                       <div>
                         <label className="text-neutral-400 block mb-1">Local de Carga</label>
                         <input
@@ -747,6 +981,16 @@ export const DocumentsModule: React.FC = () => {
                           value={vehiclePlate}
                           onChange={(e) => setVehiclePlate(e.target.value)}
                           className="w-full px-2.5 py-1.5 bg-[#0a0a0a] border border-[#333] rounded-lg text-white font-mono"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-neutral-400 block mb-1">Condutor / Motorista</label>
+                        <input
+                          type="text"
+                          value={driverName}
+                          onChange={(e) => setDriverName(e.target.value)}
+                          placeholder="Nome do motorista"
+                          className="w-full px-2.5 py-1.5 bg-[#0a0a0a] border border-[#333] rounded-lg text-white"
                         />
                       </div>
                     </div>
@@ -850,9 +1094,15 @@ export const DocumentsModule: React.FC = () => {
                     {products.map((p) => {
                       const avail = getAvailableStock(p.id, currentStore.defaultWarehouseId);
                       const isOutOfStock = avail <= 0;
+                      const canBypassStock = ['ORC', 'PF', 'NC'].includes(docType);
+                      const stockLabel = isOutOfStock
+                        ? (['ORC', 'PF'].includes(docType)
+                          ? '⚠️ Sem Stock (Permitido em Orçamento)'
+                          : '🔴 SEM STOCK (0)')
+                        : `🟢 Stock: ${avail}`;
                       return (
-                        <option key={p.id} value={p.id} disabled={!['ORC', 'PF', 'NC'].includes(docType) && isOutOfStock}>
-                          {p.name} ({p.sku}) - {formatCurrency(p.price)} (IVA {p.taxRate}%) — {isOutOfStock ? '🔴 SEM STOCK (0)' : `🟢 Stock: ${avail}`}
+                        <option key={p.id} value={p.id} disabled={!canBypassStock && isOutOfStock}>
+                          {p.name} ({p.sku}) - {formatCurrency(p.price)} (IVA {p.taxRate}%) — {stockLabel}
                         </option>
                       );
                     })}
@@ -1055,11 +1305,18 @@ export const DocumentsModule: React.FC = () => {
                 onChange={(e) => setArchiveTypeFilter(e.target.value)}
                 className="px-3 py-2 bg-[#0a0a0a] border border-[#262626] rounded-xl text-xs text-neutral-300 focus:outline-hidden focus:border-[#c5a47e] cursor-pointer"
               >
-                <option value="todos">Todos os Tipos (FT, FS, FR, NC)</option>
+                <option value="todos">Todos os Tipos de Documento</option>
                 <option value="FT">FT - Faturas</option>
                 <option value="FS">FS - Faturas Simplificadas</option>
                 <option value="FR">FR - Faturas-Recibo</option>
                 <option value="NC">NC - Notas de Crédito</option>
+                <option value="ND">ND - Notas de Débito</option>
+                <option value="ORC">ORC - Orçamentos</option>
+                <option value="PF">PF - Faturas Proforma</option>
+                <option value="GT">GT - Guias de Transporte</option>
+                <option value="GR">GR - Guias de Remessa</option>
+                <option value="RC">RC - Recibos de Quitação</option>
+                <option value="VD">VD - Vendas a Dinheiro</option>
               </select>
 
               {/* Store filter */}
@@ -1165,24 +1422,18 @@ export const DocumentsModule: React.FC = () => {
                               <span className="hidden sm:inline text-[11px]">Ver</span>
                             </button>
 
-                            {!isCreditNote && (
+                            {!isCreditNote && doc.invoiceType !== 'ORC' && (
                               <button
                                 onClick={() => {
-                                  requestConfirm({
-                                    title: 'Emitir Nota de Crédito',
-                                    message: `Deseja anular/estornar o documento ${doc.invoiceNumber} e emitir uma Nota de Crédito?`,
-                                    itemDetails: `Valor: ${formatCurrency(doc.total)} | Cliente: ${doc.customerName}`,
-                                    confirmLabel: 'Emitir Nota de Crédito (NC)',
-                                    isDestructive: true,
-                                    onConfirm: () => {
-                                      cancelInvoice(doc.id, 'Anulação solicitada no módulo de documentos');
-                                    },
-                                  });
+                                  setCreditNoteModalDoc(doc);
+                                  setCreditNoteModalReason(`Devolução / Anulação do documento ${doc.invoiceNumber}`);
+                                  setCreditNoteModalRestock(true);
                                 }}
-                                className="p-1.5 bg-rose-950/20 hover:bg-rose-950/40 text-rose-400 rounded-lg transition-colors cursor-pointer"
-                                title="Emitir Nota de Crédito (Estorno)"
+                                className="p-1.5 bg-rose-950/20 hover:bg-rose-950/40 text-rose-400 rounded-lg transition-colors cursor-pointer flex items-center space-x-1"
+                                title="Emitir Nota de Crédito (Estorno & Reposição de Stock)"
                               >
                                 <X className="w-3.5 h-3.5" />
+                                <span className="hidden xl:inline text-[10px]">NC</span>
                               </button>
                             )}
                           </div>
@@ -1569,14 +1820,7 @@ export const DocumentsModule: React.FC = () => {
                     <div className="my-2">
                       <div className="flex justify-between items-center text-xs font-bold text-neutral-950 pb-1">
                         <span>
-                          {selectedDocForPreview.invoiceType === 'FS'
-                            ? 'Fatura Simplificada'
-                            : selectedDocForPreview.invoiceType === 'NC'
-                            ? 'Nota de Crédito'
-                            : selectedDocForPreview.invoiceType === 'FR'
-                            ? 'Fatura-Recibo'
-                            : 'Fatura'}{' '}
-                          n.º {selectedDocForPreview.invoiceNumber}
+                          {getDocumentTitle(selectedDocForPreview.invoiceType)} n.º {selectedDocForPreview.invoiceNumber}
                         </span>
                         <span className="font-normal text-neutral-600 text-[9px]">Original</span>
                       </div>
@@ -1729,10 +1973,10 @@ export const DocumentsModule: React.FC = () => {
                       </div>
                       <div className="text-right">
                         <span
-                          className="px-2 py-0.5 rounded text-[9px] font-mono font-bold text-white"
+                          className="px-2 py-0.5 rounded text-[9px] font-mono font-bold text-white uppercase"
                           style={{ backgroundColor: previewTmpl.primaryColor || '#1e293b' }}
                         >
-                          {selectedDocForPreview.invoiceType || 'FS'}
+                          {getDocumentTitle(selectedDocForPreview.invoiceType)}
                         </span>
                         <p className="text-xs font-mono font-bold text-neutral-900 mt-1">{selectedDocForPreview.invoiceNumber}</p>
                         <p className="text-[8.5px] font-mono text-neutral-500">
@@ -1855,6 +2099,190 @@ export const DocumentsModule: React.FC = () => {
           </div>
         );
       })()}
+
+      {/* Modal for Issuing Credit Note from Archive */}
+      {creditNoteModalDoc && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-[#121212] border border-[#2a2a2a] rounded-2xl w-full max-w-xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+            {/* Header */}
+            <div className="flex items-center justify-between p-5 border-b border-[#222] bg-[#161616]">
+              <div className="flex items-center space-x-3">
+                <div className="w-9 h-9 rounded-xl bg-rose-500/15 border border-rose-500/30 flex items-center justify-center text-rose-400">
+                  <RotateCcw className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-white text-sm flex items-center space-x-2">
+                    <span>Emitir Nota de Crédito (NC)</span>
+                    <span className="text-[10px] px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 border border-rose-500/30 font-mono">
+                      {creditNoteModalDoc.invoiceNumber}
+                    </span>
+                  </h3>
+                  <p className="text-xs text-neutral-400">
+                    Estorno e retificação fiscal de documento com escolha de reposição de stock
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setCreditNoteModalDoc(null)}
+                className="p-1.5 rounded-lg text-neutral-400 hover:text-white hover:bg-[#222] transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="p-5 space-y-4 max-h-[80vh] overflow-y-auto">
+              {/* Document Summary Card */}
+              <div className="p-3.5 bg-[#181818] border border-[#262626] rounded-xl text-xs space-y-2">
+                <div className="flex justify-between items-center text-neutral-300">
+                  <span>Cliente: <strong className="text-white">{creditNoteModalDoc.customerName || 'Consumidor Final'}</strong></span>
+                  <span className="font-mono text-neutral-400">NIF: {creditNoteModalDoc.customerNif || creditNoteModalDoc.customerTaxNumber || '999999990'}</span>
+                </div>
+                <div className="flex justify-between items-center text-neutral-300">
+                  <span>Data de Emissão: <strong className="text-white">{new Date(creditNoteModalDoc.date).toLocaleDateString('pt-PT')}</strong></span>
+                  <span className="text-rose-400 font-mono font-bold text-sm">Total a Estornar: {formatCurrency(creditNoteModalDoc.total)}</span>
+                </div>
+                {creditNoteModalDoc.items && creditNoteModalDoc.items.length > 0 && (
+                  <div className="pt-2 border-t border-[#262626] text-[11px] text-neutral-400">
+                    <span className="font-semibold text-neutral-300 block mb-1">Artigos incluídos na fatura:</span>
+                    <div className="flex flex-wrap gap-1.5">
+                      {creditNoteModalDoc.items.map((it, idx) => (
+                        <span key={idx} className="px-2 py-0.5 bg-[#202020] rounded border border-[#333] text-neutral-300 font-mono">
+                          {it.quantity}x {it.productName}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Motivo */}
+              <div className="space-y-1.5 text-xs">
+                <label className="text-white font-semibold block">Motivo da Anulação / Estorno *</label>
+                <div className="flex flex-wrap gap-1.5 mb-2">
+                  {[
+                    'Devolução de Mercadoria',
+                    'Erro de Faturação',
+                    'Acordo Comercial',
+                    'Artigo Danificado',
+                    'Cancelamento do Pedido',
+                  ].map((chip) => (
+                    <button
+                      key={chip}
+                      type="button"
+                      onClick={() => setCreditNoteModalReason(chip)}
+                      className={`px-2.5 py-1 rounded-lg border text-[11px] transition-colors cursor-pointer ${
+                        creditNoteModalReason === chip
+                          ? 'bg-[#c5a47e]/20 border-[#c5a47e] text-[#c5a47e] font-semibold'
+                          : 'bg-[#181818] border-[#2a2a2a] text-neutral-400 hover:border-neutral-700 hover:text-white'
+                      }`}
+                    >
+                      {chip}
+                    </button>
+                  ))}
+                </div>
+                <input
+                  type="text"
+                  required
+                  value={creditNoteModalReason}
+                  onChange={(e) => setCreditNoteModalReason(e.target.value)}
+                  placeholder="Especifique o motivo do estorno..."
+                  className="w-full px-3 py-2 bg-[#0c0c0c] border border-[#2a2a2a] rounded-xl text-white focus:outline-hidden focus:border-[#c5a47e]"
+                />
+              </div>
+
+              {/* Stock Movement Option */}
+              <div className="p-3.5 bg-[#161616] border border-[#2a2a2a] rounded-xl space-y-2.5 text-xs">
+                <div className="flex items-center justify-between">
+                  <label className="text-white font-bold flex items-center space-x-2">
+                    <Package className="w-4 h-4 text-[#c5a47e]" />
+                    <span>Movimentação de Stock (Inventário):</span>
+                  </label>
+                  <span className={`text-[10px] px-2 py-0.5 rounded font-bold uppercase ${
+                    creditNoteModalRestock ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+                  }`}>
+                    {creditNoteModalRestock ? 'Adicionar ao Stock' : 'Não Movimentar Stock'}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  <button
+                    type="button"
+                    onClick={() => setCreditNoteModalRestock(true)}
+                    className={`p-3 rounded-xl border text-left transition-all cursor-pointer flex items-start space-x-2.5 ${
+                      creditNoteModalRestock
+                        ? 'bg-emerald-950/40 border-emerald-500 text-white ring-1 ring-emerald-500/50'
+                        : 'bg-[#0f0f0f] border-[#262626] text-neutral-400 hover:border-neutral-700'
+                    }`}
+                  >
+                    <div className={`w-4 h-4 rounded-full border flex items-center justify-center mt-0.5 shrink-0 ${
+                      creditNoteModalRestock ? 'border-emerald-400 bg-emerald-500' : 'border-neutral-600'
+                    }`}>
+                      {creditNoteModalRestock && <div className="w-1.5 h-1.5 rounded-full bg-black" />}
+                    </div>
+                    <div>
+                      <span className="font-bold text-xs text-white block">Adicionar ao Stock</span>
+                      <span className="text-[11px] text-neutral-400 block mt-0.5">
+                        Devolve os artigos ao armazém da loja ({currentStore.name || 'Armazém Central'}).
+                      </span>
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setCreditNoteModalRestock(false)}
+                    className={`p-3 rounded-xl border text-left transition-all cursor-pointer flex items-start space-x-2.5 ${
+                      !creditNoteModalRestock
+                        ? 'bg-amber-950/40 border-amber-500 text-white ring-1 ring-amber-500/50'
+                        : 'bg-[#0f0f0f] border-[#262626] text-neutral-400 hover:border-neutral-700'
+                    }`}
+                  >
+                    <div className={`w-4 h-4 rounded-full border flex items-center justify-center mt-0.5 shrink-0 ${
+                      !creditNoteModalRestock ? 'border-amber-400 bg-amber-500' : 'border-neutral-600'
+                    }`}>
+                      {!creditNoteModalRestock && <div className="w-1.5 h-1.5 rounded-full bg-black" />}
+                    </div>
+                    <div>
+                      <span className="font-bold text-xs text-white block">Não Adicionar ao Stock</span>
+                      <span className="text-[11px] text-neutral-400 block mt-0.5">
+                        Apenas estorno financeiro / acerto de contas sem entrada física de mercadoria.
+                      </span>
+                    </div>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="flex items-center justify-end space-x-3 p-4 border-t border-[#222] bg-[#161616]">
+              <button
+                type="button"
+                onClick={() => setCreditNoteModalDoc(null)}
+                className="px-4 py-2 bg-[#202020] hover:bg-[#282828] text-neutral-300 rounded-xl text-xs font-semibold cursor-pointer transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  if (!creditNoteModalReason.trim()) {
+                    notify('Por favor, informe o motivo do estorno.', 'error');
+                    return;
+                  }
+                  const targetDoc = creditNoteModalDoc;
+                  setCreditNoteModalDoc(null);
+                  await cancelInvoice(targetDoc.id, creditNoteModalReason, creditNoteModalRestock);
+                }}
+                className="px-4 py-2 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-xs font-bold shadow-md cursor-pointer transition-colors flex items-center space-x-2"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>Confirmar Emissão de NC</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

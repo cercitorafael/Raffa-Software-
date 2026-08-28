@@ -58,6 +58,7 @@ import {
   resetSupabaseCredentials,
 } from '../../lib/supabase';
 import { useApp } from '../../context/AppContext';
+import { OwnerSecurityGate } from '../auth/OwnerSecurityGate';
 import {
   SupabaseSyncLog,
   TableSyncName,
@@ -1008,134 +1009,140 @@ const { data, error } = await supabase.from('produtos').upsert([
 
         {/* TAB: USUÁRIOS CRUD */}
         {activeTab === 'usuarios' && (
-          <div className="space-y-4">
-            <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
-              <div className="relative w-full sm:w-80">
-                <Search className="w-4 h-4 text-neutral-500 absolute left-3 top-1/2 -translate-y-1/2" />
-                <input
-                  type="text"
-                  placeholder="Pesquisar por nome, email ou cargo..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full pl-9 pr-3 py-2 bg-[#121212] border border-[#262626] rounded-lg text-xs text-white placeholder-neutral-500 focus:outline-hidden focus:border-[#c5a47e]"
-                />
+          <OwnerSecurityGate
+            title="Tabela de Utilizadores (Supabase Cloud)"
+            subtitle="Introduza o código mestre do proprietário para aceder à tabela de utilizadores e sincronização de credenciais."
+            moduleName="Tabela de Utilizadores"
+          >
+            <div className="space-y-4">
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
+                <div className="relative w-full sm:w-80">
+                  <Search className="w-4 h-4 text-neutral-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    placeholder="Pesquisar por nome, email ou cargo..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="w-full pl-9 pr-3 py-2 bg-[#121212] border border-[#262626] rounded-lg text-xs text-white placeholder-neutral-500 focus:outline-hidden focus:border-[#c5a47e]"
+                  />
+                </div>
+                <div className="flex items-center space-x-2">
+                  <button
+                    onClick={handleOpenCreate}
+                    className="px-3 py-1.5 bg-[#c5a47e] hover:bg-[#b5946e] text-black font-bold text-xs rounded-lg flex items-center space-x-1.5 shadow-md transition-all cursor-pointer"
+                  >
+                    <UserPlus className="w-4 h-4" />
+                    <span>+ Novo Usuário</span>
+                  </button>
+                </div>
               </div>
-              <div className="flex items-center space-x-2">
-                <button
-                  onClick={handleOpenCreate}
-                  className="px-3 py-1.5 bg-[#c5a47e] hover:bg-[#b5946e] text-black font-bold text-xs rounded-lg flex items-center space-x-1.5 shadow-md transition-all cursor-pointer"
-                >
-                  <UserPlus className="w-4 h-4" />
-                  <span>+ Novo Usuário</span>
-                </button>
-              </div>
-            </div>
 
-            <div className="border border-[#262626] rounded-xl overflow-hidden bg-[#111111] shadow-xl">
-              <table className="w-full text-left text-xs text-neutral-300">
-                <thead className="bg-[#171717] text-neutral-400 uppercase text-[10px] tracking-wider font-semibold border-b border-[#262626]">
-                  <tr>
-                    <th className="p-3">Usuário</th>
-                    <th className="p-3">Email</th>
-                    <th className="p-3">Telefone / NIF</th>
-                    <th className="p-3">Cargo</th>
-                    <th className="p-3 text-center">Estado</th>
-                    <th className="p-3 text-center">Ações</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[#202020] font-medium">
-                  {filteredUsuarios.length === 0 ? (
+              <div className="border border-[#262626] rounded-xl overflow-hidden bg-[#111111] shadow-xl">
+                <table className="w-full text-left text-xs text-neutral-300">
+                  <thead className="bg-[#171717] text-neutral-400 uppercase text-[10px] tracking-wider font-semibold border-b border-[#262626]">
                     <tr>
-                      <td colSpan={6} className="p-8 text-center text-neutral-500">
-                        {loading ? (
-                          <div className="flex items-center justify-center space-x-2">
-                            <RefreshCw className="w-4 h-4 animate-spin text-[#c5a47e]" />
-                            <span>A carregar registros do Supabase...</span>
-                          </div>
-                        ) : (
-                          <div className="space-y-3">
-                            <p>Nenhum usuário encontrado na tabela "usuarios".</p>
-                            <button
-                              onClick={handleOpenCreate}
-                              className="px-3 py-1.5 bg-[#c5a47e] text-black rounded-lg hover:bg-[#b5946e] font-bold text-xs cursor-pointer"
-                            >
-                              + Criar Primeiro Usuário
-                            </button>
-                          </div>
-                        )}
-                      </td>
+                      <th className="p-3">Usuário</th>
+                      <th className="p-3">Email</th>
+                      <th className="p-3">Telefone / NIF</th>
+                      <th className="p-3">Cargo</th>
+                      <th className="p-3 text-center">Estado</th>
+                      <th className="p-3 text-center">Ações</th>
                     </tr>
-                  ) : (
-                    filteredUsuarios.map((u) => (
-                      <tr key={String(u.id || u.email)} className="hover:bg-[#181818] transition-colors">
-                        <td className="p-3 font-bold text-white">
-                          <div className="flex items-center space-x-2.5">
-                            <img
-                              src={
-                                u.avatar_url ||
-                                `https://ui-avatars.com/api/?name=${encodeURIComponent(
-                                  u.nome
-                                )}&background=c5a47e&color=000`
-                              }
-                              alt={u.nome}
-                              className="w-7 h-7 rounded-full object-cover border border-[#333]"
-                            />
-                            <div>
-                              <span>{u.nome}</span>
-                              {u.id && (
-                                <span className="block text-[9px] text-neutral-500 font-mono">
-                                  ID: {String(u.id).substring(0, 8)}...
-                                </span>
-                              )}
+                  </thead>
+                  <tbody className="divide-y divide-[#202020] font-medium">
+                    {filteredUsuarios.length === 0 ? (
+                      <tr>
+                        <td colSpan={6} className="p-8 text-center text-neutral-500">
+                          {loading ? (
+                            <div className="flex items-center justify-center space-x-2">
+                              <RefreshCw className="w-4 h-4 animate-spin text-[#c5a47e]" />
+                              <span>A carregar registros do Supabase...</span>
                             </div>
-                          </div>
-                        </td>
-                        <td className="p-3 text-neutral-300 font-mono">{u.email}</td>
-                        <td className="p-3 text-neutral-400">
-                          <div>{u.telefone || '-'}</div>
-                          {u.nif && <div className="text-[10px] text-neutral-500 font-mono">NIF: {u.nif}</div>}
-                        </td>
-                        <td className="p-3">
-                          <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-[#222] text-[#c5a47e] border border-[#333]">
-                            {u.cargo || 'Operador'}
-                          </span>
-                        </td>
-                        <td className="p-3 text-center">
-                          <span
-                            className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${
-                              u.ativo !== false
-                                ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-                                : 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
-                            }`}
-                          >
-                            {u.ativo !== false ? 'Ativo' : 'Inativo'}
-                          </span>
-                        </td>
-                        <td className="p-3 text-center">
-                          <div className="flex items-center justify-center space-x-1">
-                            <button
-                              onClick={() => handleOpenEdit(u)}
-                              className="p-1.5 text-neutral-400 hover:text-white hover:bg-[#262626] rounded-md transition-colors cursor-pointer"
-                              title="Editar Usuário"
-                            >
-                              <Edit3 className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              onClick={() => handleDelete(u)}
-                              className="p-1.5 text-neutral-400 hover:text-rose-400 hover:bg-[#262626] rounded-md transition-colors cursor-pointer"
-                              title="Eliminar do Supabase"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
+                          ) : (
+                            <div className="space-y-3">
+                              <p>Nenhum usuário encontrado na tabela "usuarios".</p>
+                              <button
+                                onClick={handleOpenCreate}
+                                className="px-3 py-1.5 bg-[#c5a47e] text-black rounded-lg hover:bg-[#b5946e] font-bold text-xs cursor-pointer"
+                              >
+                                + Criar Primeiro Usuário
+                              </button>
+                            </div>
+                          )}
                         </td>
                       </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
+                    ) : (
+                      filteredUsuarios.map((u) => (
+                        <tr key={String(u.id || u.email)} className="hover:bg-[#181818] transition-colors">
+                          <td className="p-3 font-bold text-white">
+                            <div className="flex items-center space-x-2.5">
+                              <img
+                                src={
+                                  u.avatar_url ||
+                                  `https://ui-avatars.com/api/?name=${encodeURIComponent(
+                                    u.nome
+                                  )}&background=c5a47e&color=000`
+                                }
+                                alt={u.nome}
+                                className="w-7 h-7 rounded-full object-cover border border-[#333]"
+                              />
+                              <div>
+                                <span>{u.nome}</span>
+                                {u.id && (
+                                  <span className="block text-[9px] text-neutral-500 font-mono">
+                                    ID: {String(u.id).substring(0, 8)}...
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          </td>
+                          <td className="p-3 text-neutral-300 font-mono">{u.email}</td>
+                          <td className="p-3 text-neutral-400">
+                            <div>{u.telefone || '-'}</div>
+                            {u.nif && <div className="text-[10px] text-neutral-500 font-mono">NIF: {u.nif}</div>}
+                          </td>
+                          <td className="p-3">
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-[#222] text-[#c5a47e] border border-[#333]">
+                              {u.cargo || 'Operador'}
+                            </span>
+                          </td>
+                          <td className="p-3 text-center">
+                            <span
+                              className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${
+                                u.ativo !== false
+                                  ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                                  : 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
+                              }`}
+                            >
+                              {u.ativo !== false ? 'Ativo' : 'Inativo'}
+                            </span>
+                          </td>
+                          <td className="p-3 text-center">
+                            <div className="flex items-center justify-center space-x-1">
+                              <button
+                                onClick={() => handleOpenEdit(u)}
+                                className="p-1.5 text-neutral-400 hover:text-white hover:bg-[#262626] rounded-md transition-colors cursor-pointer"
+                                title="Editar Usuário"
+                              >
+                                <Edit3 className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={() => handleDelete(u)}
+                                className="p-1.5 text-neutral-400 hover:text-rose-400 hover:bg-[#262626] rounded-md transition-colors cursor-pointer"
+                                title="Eliminar do Supabase"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
-          </div>
+          </OwnerSecurityGate>
         )}
 
         {/* TAB: SQL SCHEMA */}

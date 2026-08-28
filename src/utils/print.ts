@@ -44,6 +44,56 @@ export function getActiveInvoiceTemplate(
 }
 
 /**
+ * Returns user-friendly Portuguese/Mozambican document titles
+ */
+export function getDocumentTitle(invoiceType?: string, uppercase: boolean = false): string {
+  const type = (invoiceType || 'FT').toUpperCase();
+  let title = 'Fatura';
+
+  switch (type) {
+    case 'FT':
+      title = 'Fatura';
+      break;
+    case 'FS':
+      title = 'Fatura Simplificada';
+      break;
+    case 'FR':
+      title = 'Fatura-Recibo';
+      break;
+    case 'NC':
+      title = 'Nota de Crédito';
+      break;
+    case 'ND':
+      title = 'Nota de Débito';
+      break;
+    case 'ORC':
+      title = 'Orçamento / Proposta';
+      break;
+    case 'PF':
+    case 'FP':
+      title = 'Fatura Proforma';
+      break;
+    case 'GT':
+      title = 'Guia de Transporte';
+      break;
+    case 'GR':
+      title = 'Guia de Remessa';
+      break;
+    case 'RC':
+      title = 'Recibo de Quitação';
+      break;
+    case 'VD':
+      title = 'Venda a Dinheiro';
+      break;
+    default:
+      title = type.length > 2 ? type : 'Fatura';
+      break;
+  }
+
+  return uppercase ? title.toUpperCase() : title;
+}
+
+/**
  * Direct print thermal receipt via hidden iframe with fallback
  */
 export function printThermalReceipt(sale: Sale, company: Company, store: Store): void {
@@ -85,14 +135,7 @@ export function printThermalReceipt(sale: Sale, company: Company, store: Store):
     )
     .join('');
 
-  const docTitle =
-    sale.invoiceType === 'FS'
-      ? 'FATURA SIMPLIFICADA'
-      : sale.invoiceType === 'FT'
-      ? 'FATURA'
-      : sale.invoiceType === 'NC'
-      ? 'NOTA DE CRÉDITO'
-      : 'FATURA-RECIBO';
+  const docTitle = getDocumentTitle(sale.invoiceType, true);
 
   const html = `
     <!DOCTYPE html>
@@ -316,12 +359,7 @@ export function downloadReceiptPdf(sale: Sale, company: Company, store: Store): 
   y += 4;
 
   // Doc Info
-  const docTitle =
-    sale.invoiceType === 'FS'
-      ? 'FATURA SIMPLIFICADA'
-      : sale.invoiceType === 'FT'
-      ? 'FATURA'
-      : 'FATURA-RECIBO';
+  const docTitle = getDocumentTitle(sale.invoiceType, true);
 
   doc.setFont('courier', 'bold');
   doc.setFontSize(9);
@@ -439,20 +477,7 @@ export function printInvoiceDocument(
   const activeTemplate = getActiveInvoiceTemplate(company, templateOverride, sale);
   const currency = company.currencySymbol || company.currency || 'Mt';
 
-  const docTitle =
-    sale.invoiceType === 'FS'
-      ? 'FATURA SIMPLIFICADA'
-      : sale.invoiceType === 'FT'
-      ? 'FATURA'
-      : sale.invoiceType === 'FR'
-      ? 'FATURA-RECIBO'
-      : sale.invoiceType === 'NC'
-      ? 'NOTA DE CRÉDITO'
-      : (sale.invoiceType as string) === 'GT'
-      ? 'GUIA DE TRANSPORTE'
-      : (sale.invoiceType as string) === 'ORC'
-      ? 'ORÇAMENTO / PROFORMA'
-      : 'FATURA';
+  const docTitle = getDocumentTitle(sale.invoiceType, true);
 
   // Tax rates breakdown calculation
   const taxMap = new Map<number, { base: number; tax: number; total: number }>();
@@ -1040,18 +1065,7 @@ export function downloadInvoicePdf(
   }
 
   // Document Title
-  const docTypeName =
-    sale.invoiceType === 'FS'
-      ? 'Fatura Simplificada'
-      : sale.invoiceType === 'FT'
-      ? 'Fatura'
-      : sale.invoiceType === 'FR'
-      ? 'Fatura-Recibo'
-      : sale.invoiceType === 'NC'
-      ? 'Nota de Crédito'
-      : (sale.invoiceType as string) === 'GT'
-      ? 'Guia de Transporte'
-      : 'Fatura';
+  const docTypeName = getDocumentTitle(sale.invoiceType, false);
 
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(11);

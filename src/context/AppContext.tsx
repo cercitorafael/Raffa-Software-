@@ -15,6 +15,7 @@ import {
   LotBatch,
   Sale,
   SaleItem,
+  InvoiceType,
   CashShift,
   Customer,
   Supplier,
@@ -203,6 +204,9 @@ export interface AppContextType {
   // Authentication & Security
   isAuthenticated: boolean;
   isScreenLocked: boolean;
+  isUserTableUnlocked: boolean;
+  unlockUserTable: (code: string) => { success: boolean; error?: string };
+  lockUserTable: () => void;
   login: (credentials: { identifier: string; pinOrPassword?: string; companyId?: string; storeId?: string }) => Promise<{ success: boolean; error?: string }>;
   loginWithPin: (pin: string, userId?: string, companyId?: string, storeId?: string) => { success: boolean; error?: string };
   quickLogin: (user: User, companyId?: string, storeId?: string) => void;
@@ -323,13 +327,13 @@ export interface AppContextType {
   clearCart: () => void;
   completeSale: (
     paymentMethods: { method: string; amount: number; reference?: string }[],
-    invoiceType?: 'FS' | 'FT' | 'FR' | 'NC',
+    invoiceType?: InvoiceType,
     customerTaxNumber?: string,
     customerName?: string
   ) => Promise<Sale>;
   salesHistory: Sale[];
   setSalesHistory: React.Dispatch<React.SetStateAction<Sale[]>>;
-  cancelInvoice: (invoiceId: string, reason: string) => void;
+  cancelInvoice: (invoiceId: string, reason: string, restockStock?: boolean) => void;
 
   // Finance
   accountsPayable: AccountPayable[];
@@ -1902,6 +1906,41 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     notify('Terminal bloqueado. Digite o PIN para desbloquear.', 'warning');
   }, [currentUser, notify]);
 
+  const [isUserTableUnlocked, setIsUserTableUnlocked] = useState<boolean>(() => {
+    try {
+      return sessionStorage.getItem('owner_user_table_unlocked') === 'true';
+    } catch {
+      return false;
+    }
+  });
+
+  const unlockUserTable = useCallback((code: string): { success: boolean; error?: string } => {
+    const trimmed = (code || '').trim();
+    // Master owner PIN code requested by user: Keyzom
+    if (trimmed === 'Keyzom') {
+      setIsUserTableUnlocked(true);
+      try {
+        sessionStorage.setItem('owner_user_table_unlocked', 'true');
+      } catch {
+        // Ignore session storage errors
+      }
+      return { success: true };
+    }
+    return {
+      success: false,
+      error: 'Código de acesso incorreto. Apenas o proprietário tem autorização para aceder à tabela de utilizadores.',
+    };
+  }, []);
+
+  const lockUserTable = useCallback(() => {
+    setIsUserTableUnlocked(false);
+    try {
+      sessionStorage.removeItem('owner_user_table_unlocked');
+    } catch {
+      // Ignore session storage errors
+    }
+  }, []);
+
   const unlockScreen = useCallback(
     (pin: string): { success: boolean; error?: string } => {
       const cleanPin = pin.trim();
@@ -3348,7 +3387,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const completeSale = async (
     paymentMethods: { method: string; amount: number; reference?: string }[],
-    invoiceType: 'FS' | 'FT' | 'FR' | 'NC' = 'FS',
+    invoiceType: InvoiceType = 'FS',
     customerTaxNumber?: string,
     customerName?: string
   ): Promise<Sale> => {
@@ -3516,7 +3555,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return sale;
   };
 
-  const cancelInvoice = (invoiceId: string, reason: string) => {
+  const cancelInvoice = (invoiceId: string, reason: string, restockStock: boolean = true) => {
     const inv = salesHistory.find((s) => s.id === invoiceId);
     if (!inv) return;
 
@@ -3526,6 +3565,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const prevHash = prevSale ? prevSale.fiscalHash : '';
     const dateStr = new Date().toISOString();
     const ncHash = generateFiscalHash(dateStr, ncNumber, inv.total, prevHash);
+    const stockStatusNote = restockStock
+      ? ' [Stock: Artigos devolvidos ao inventário]'
+      : ' [Stock: Sem alteração física / Apenas estorno financeiro]';
 
     const ncSale: Sale = {
       ...inv,
@@ -3535,16 +3577,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       date: dateStr,
       fiscalHash: ncHash,
       previousHash: prevHash,
-      notes: `Nota de Crédito / Estorno referente a ${inv.invoiceNumber}. Motivo: ${reason}`,
+      notes: `Nota de Crédito / Estorno referente a ${inv.invoiceNumber}. Motivo: ${reason}${stockStatusNote}`,
     };
 
-    // Re-increment stock
-    replenishStockForItems(
-      inv.items,
-      currentStore.defaultWarehouseId,
-      ncNumber,
-      `Anulação de fatura ${inv.invoiceNumber}: ${reason}`
-    );
+    // Re-increment stock only if user chose to restock
+    if (restockStock) {
+      replenishStockForItems(
+        inv.items,
+        currentStore.defaultWarehouseId,
+        ncNumber,
+        `Anulação de fatura ${inv.invoiceNumber}: ${reason} (Devolução ao Stock)`
+      );
+    }
 
     setSalesHistory((prev) => [ncSale, ...prev]);
     pushRecordToSupabase('vendas', 'insert', ncSale);
@@ -3553,6 +3597,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       creditNote: ncNumber,
       total: inv.total,
       reason,
+      restocked: restockStock,
     });
     sound.playSuccessChime();
   };
@@ -4512,6 +4557,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         hasPermission,
         isAuthenticated,
         isScreenLocked,
+        isUserTableUnlocked,
+        unlockUserTable,
+        lockUserTable,
         login,
         loginWithPin,
         quickLogin,

@@ -120,6 +120,17 @@ export interface CurrencyDefinition {
   thousandsSeparator: '.' | ',' | ' ' | '' | "'";
 }
 
+export interface VatRate {
+  id: string;
+  name: string;
+  rate: number; // Taxa em percentagem (ex: 16, 0, 5, 23, etc.)
+  code: string; // Código SAF-T / Fiscal (ex: NOR, ISE, RED, INT)
+  isDefault?: boolean;
+  exemptionReason?: string; // Motivo de isenção de IVA (ex: Art. 9º CIVA)
+  isActive: boolean;
+  description?: string;
+}
+
 export interface Company {
   id: string;
   name: string;
@@ -135,6 +146,8 @@ export interface Company {
   currencySymbol?: string; // e.g. 'Mt', '€', '$', 'Kz'
   currencyPosition?: 'prefix' | 'suffix';
   currencyDecimals?: number;
+  defaultTaxRate?: number; // Taxa de IVA Padrão da Empresa (ex: 16%)
+  vatRates?: VatRate[]; // Lista de taxas de IVA configuradas na empresa
   phone: string;
   mobile?: string;
   email: string;
@@ -297,13 +310,26 @@ export interface SaleItem {
   batchNumber?: string;
 }
 
+export type InvoiceType =
+  | 'FT'  // Fatura
+  | 'FS'  // Fatura Simplificada
+  | 'FR'  // Fatura-Recibo
+  | 'NC'  // Nota de Crédito
+  | 'ND'  // Nota de Débito
+  | 'ORC' // Orçamento / Cotação
+  | 'PF'  // Fatura Proforma
+  | 'GT'  // Guia de Transporte
+  | 'GR'  // Guia de Remessa
+  | 'RC'  // Recibo de Quitação
+  | 'VD'; // Venda a Dinheiro
+
 export interface Sale {
   id: string;
   companyId: string;
   storeId: string;
   terminalId: string;
-  invoiceNumber: string; // ex: "FS 2026/0001"
-  invoiceType: 'FS' | 'FT' | 'FR' | 'NC'; // Fatura Simplificada, Fatura, Fatura-Recibo, Nota de Crédito
+  invoiceNumber: string; // ex: "FT 2026/0001", "NC 2026/0001"
+  invoiceType: InvoiceType; // Tipo de Documento Fiscal / Comercial
   date: string;
   dueDate?: string;
   customerId?: string;
@@ -326,6 +352,7 @@ export interface Sale {
   isOfflineCreated?: boolean;
   isOffline?: boolean;
   atcud?: string;
+  fiscalSeries?: string;
   invoiceTemplateId?: string; // ID do modelo de fatura escolhido na emissão
   notes?: string;
 }

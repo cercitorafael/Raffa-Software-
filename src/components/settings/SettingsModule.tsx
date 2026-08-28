@@ -52,10 +52,12 @@ import { User, Store, POSTerminal, Role, AppTheme } from '../../types';
 import { CompanyBrandingSection } from './CompanyBrandingSection';
 import { InvoiceTemplatesSection } from './InvoiceTemplatesSection';
 import { UserPermissionsMatrix } from './UserPermissionsMatrix';
+import { VatSettingsSection } from './VatSettingsSection';
 import { RegisterCompanyModal } from '../auth/RegisterCompanyModal';
+import { OwnerSecurityGate } from '../auth/OwnerSecurityGate';
 
 interface SettingsModuleProps {
-  initialTab?: 'company' | 'branding' | 'templates' | 'saft' | 'users' | 'roles' | 'stores' | 'sync' | 'theme' | 'language';
+  initialTab?: 'company' | 'vat' | 'branding' | 'templates' | 'saft' | 'users' | 'roles' | 'stores' | 'sync' | 'theme' | 'language';
 }
 
 export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'company' }) => {
@@ -106,7 +108,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
     notify,
   } = useApp();
 
-  const [activeTab, setActiveTab] = useState<'company' | 'branding' | 'templates' | 'saft' | 'users' | 'roles' | 'stores' | 'sync' | 'theme' | 'language'>(initialTab);
+  const [activeTab, setActiveTab] = useState<'company' | 'vat' | 'branding' | 'templates' | 'saft' | 'users' | 'roles' | 'stores' | 'sync' | 'theme' | 'language'>(initialTab);
 
   React.useEffect(() => {
     if (initialTab) {
@@ -608,6 +610,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
       <div className="px-6 bg-[#0d0d0d] border-b border-[#262626] flex space-x-1 overflow-x-auto">
         {[
           { id: 'company', label: t('settings.tabs.company') },
+          { id: 'vat', label: 'Impostos & IVA', badge: '%' },
           { id: 'branding', label: t('settings.tabs.branding') },
           { id: 'templates', label: t('settings.tabs.templates') },
           { id: 'roles', label: t('settings.tabs.roles') },
@@ -977,6 +980,9 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
               </div>
             </div>
 
+            {/* VAT Rates Configuration in Company Settings */}
+            <VatSettingsSection />
+
             {/* Quick Theme Selector in Company Tab */}
             <div className="bg-[#141414] rounded-xl border border-[#262626] p-6 shadow-sm">
               <div className="flex items-center justify-between pb-4 border-b border-[#262626]">
@@ -1039,6 +1045,13 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
                 })}
               </div>
             </div>
+          </div>
+        )}
+
+        {/* ================= TAB: VAT / TAX RATES ================= */}
+        {activeTab === 'vat' && (
+          <div className="max-w-5xl mx-auto">
+            <VatSettingsSection />
           </div>
         )}
 
@@ -1318,212 +1331,218 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
 
         {/* ================= TAB 3: USER MANAGEMENT (CRUD) ================= */}
         {activeTab === 'users' && (
-          <div className="space-y-4">
-            {/* Active Session Banner */}
-            <div className="bg-[#141414] p-4 rounded-xl border border-[#262626] flex flex-col md:flex-row md:items-center justify-between gap-4">
-              <div className="flex items-center space-x-3">
-                <div className="w-10 h-10 rounded-full bg-[#c5a47e]/20 border border-[#c5a47e]/40 flex items-center justify-center text-[#c5a47e] font-bold text-sm">
-                  {(currentUser?.name || 'Admin').charAt(0)}
-                </div>
-                <div>
-                  <div className="flex items-center space-x-2">
-                    <span className="text-xs text-neutral-400 font-medium">Sessão Ativa:</span>
-                    <span className="text-sm font-bold text-[#e5e5e5]">{currentUser?.name || 'Utilizador'}</span>
-                    <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-[#c5a47e] text-black uppercase">
-                      {currentUser?.role || 'admin'}
-                    </span>
+          <OwnerSecurityGate
+            title="Gestão de Utilizadores do Sistema"
+            subtitle="Introduza o código mestre do proprietário para aceder à listagem, credenciais, PINs e perfis dos utilizadores."
+            moduleName="Gestão de Utilizadores"
+          >
+            <div className="space-y-4">
+              {/* Active Session Banner */}
+              <div className="bg-[#141414] p-4 rounded-xl border border-[#262626] flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div className="flex items-center space-x-3">
+                  <div className="w-10 h-10 rounded-full bg-[#c5a47e]/20 border border-[#c5a47e]/40 flex items-center justify-center text-[#c5a47e] font-bold text-sm">
+                    {(currentUser?.name || 'Admin').charAt(0)}
                   </div>
-                  <p className="text-xs text-neutral-400">
-                    Utilizador com sessão iniciada: <span className="text-[#c5a47e]">@{currentUser?.username || 'admin'}</span> &bull; Loja: {currentStore?.name || 'Loja Principal'}
-                  </p>
+                  <div>
+                    <div className="flex items-center space-x-2">
+                      <span className="text-xs text-neutral-400 font-medium">Sessão Ativa:</span>
+                      <span className="text-sm font-bold text-[#e5e5e5]">{currentUser?.name || 'Utilizador'}</span>
+                      <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-[#c5a47e] text-black uppercase">
+                        {currentUser?.role || 'admin'}
+                      </span>
+                    </div>
+                    <p className="text-xs text-neutral-400">
+                      Utilizador com sessão iniciada: <span className="text-[#c5a47e]">@{currentUser?.username || 'admin'}</span> &bull; Loja: {currentStore?.name || 'Loja Principal'}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center space-x-2">
+                  <button
+                    onClick={() => {
+                      setEditingUser(null);
+                      setUserForm({
+                        name: '',
+                        username: '',
+                        email: '',
+                        roleId: roles?.[0]?.id || 'admin',
+                        storeIds: [currentStore?.id || 'store-lis-1'],
+                        pin: '1234',
+                        isActive: true,
+                      });
+                      setShowNewUserModal(true);
+                    }}
+                    className="px-3.5 py-1.5 bg-[#c5a47e] text-neutral-950 font-medium text-xs rounded-md cursor-pointer hover:bg-[#b5946e] flex items-center space-x-1.5"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>Adicionar Utilizador</span>
+                  </button>
                 </div>
               </div>
 
-              <div className="flex items-center space-x-2">
-                <button
-                  onClick={() => {
-                    setEditingUser(null);
-                    setUserForm({
-                      name: '',
-                      username: '',
-                      email: '',
-                      roleId: roles?.[0]?.id || 'admin',
-                      storeIds: [currentStore?.id || 'store-lis-1'],
-                      pin: '1234',
-                      isActive: true,
-                    });
-                    setShowNewUserModal(true);
-                  }}
-                  className="px-3.5 py-1.5 bg-[#c5a47e] text-neutral-950 font-medium text-xs rounded-md cursor-pointer hover:bg-[#b5946e] flex items-center space-x-1.5"
-                >
-                  <Plus className="w-4 h-4" />
-                  <span>Adicionar Utilizador</span>
-                </button>
+              <div className="bg-[#141414] border border-[#262626] rounded-xl overflow-hidden shadow-xs">
+                <table className="w-full text-left text-xs text-neutral-300">
+                  <thead className="bg-[#1a1a1a] text-neutral-400 font-medium uppercase tracking-wider text-[10px] border-b border-[#262626]">
+                    <tr>
+                      <th className="px-4 py-3">Nome / Utilizador</th>
+                      <th className="px-4 py-3">Username</th>
+                      <th className="px-4 py-3">Perfil de Acesso</th>
+                      <th className="px-4 py-3">Lojas Autorizadas</th>
+                      <th className="px-4 py-3 text-center">Senha / Palavra-passe</th>
+                      <th className="px-4 py-3 text-center">PIN POS</th>
+                      <th className="px-4 py-3 text-center">Estado / Sessão</th>
+                      <th className="px-4 py-3 text-right">Ações</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[#262626]">
+                    {(users || []).map((u) => {
+                      const role = (roles || []).find((r) => r.id === u.roleId || r.id === u.role);
+                      const isCurrent = currentUser?.id === u.id;
+                      const userStores = u.storeIds && u.storeIds.length > 0
+                        ? u.storeIds
+                        : u.storeId
+                        ? [u.storeId]
+                        : [currentStore?.id || 'store-lis-1'];
+                      const displayUsername = u.username || (u.name || 'user').toLowerCase().replace(/\s+/g, '.');
+                      const userPass = u.password || (u.role === 'admin' ? 'admin' : u.pin || '1234');
+                      const isPasswordVisible = !!showPasswordMap[u.id];
+
+                      return (
+                        <tr
+                          key={u.id}
+                          className={`transition-colors ${
+                            isCurrent ? 'bg-[#c5a47e]/10 border-l-2 border-l-[#c5a47e]' : 'hover:bg-[#191919]'
+                          }`}
+                        >
+                          <td className="px-4 py-3">
+                            <div className="flex items-center space-x-2.5">
+                              <div className="w-7 h-7 rounded-full bg-[#262626] text-neutral-300 flex items-center justify-center font-bold text-xs">
+                                {(u?.name || 'U').charAt(0)}
+                              </div>
+                              <div>
+                                <div className="font-semibold text-neutral-200 flex items-center space-x-1.5">
+                                  <span>{u.name}</span>
+                                  {isCurrent && (
+                                    <span className="text-[9px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-1.5 py-0.2 rounded-xs font-bold uppercase">
+                                      Sessão Atual
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="text-[11px] text-neutral-500 font-mono">{u.email}</div>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="px-4 py-3 font-mono text-[#c5a47e]">@{displayUsername}</td>
+                          <td className="px-4 py-3">
+                            <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-purple-500/20 text-purple-400 border border-purple-500/30">
+                              {role?.name || u.roleId || u.role}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-neutral-400">
+                            {userStores.map((sid) => (stores || []).find((s) => s.id === sid)?.name || sid).join(', ')}
+                          </td>
+                          <td className="px-4 py-3 text-center">
+                            <div className="inline-flex items-center justify-center space-x-1.5 bg-[#0a0a0a] px-2.5 py-1 rounded-lg border border-[#262626]">
+                              <span className="font-mono text-xs font-semibold text-neutral-200">
+                                {isPasswordVisible ? userPass : '••••••••'}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setShowPasswordMap((prev) => ({ ...prev, [u.id]: !prev[u.id] }));
+                                }}
+                                className="p-1 hover:bg-neutral-800 text-neutral-400 hover:text-neutral-200 rounded transition-colors cursor-pointer"
+                                title={isPasswordVisible ? 'Ocultar palavra-passe' : 'Ver palavra-passe'}
+                              >
+                                {isPasswordVisible ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  navigator.clipboard.writeText(userPass);
+                                  setCopiedPasswordUserId(u.id);
+                                  notify(`Palavra-passe de ${u.name} copiada!`, 'success');
+                                  setTimeout(() => setCopiedPasswordUserId(null), 2000);
+                                }}
+                                className={`p-1 rounded transition-colors cursor-pointer ${
+                                  copiedPasswordUserId === u.id
+                                    ? 'text-emerald-400 bg-emerald-500/20'
+                                    : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800'
+                                }`}
+                                title="Copiar palavra-passe"
+                              >
+                                <Copy className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </td>
+                          <td className="px-4 py-3 text-center font-mono text-neutral-400">
+                            <span className="bg-[#0a0a0a] px-2 py-0.5 rounded border border-[#262626] text-[11px]">
+                              {u.pin || '••••'}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-center">
+                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium uppercase ${
+                              u.isActive ? 'bg-emerald-500/10 text-emerald-400' : 'bg-rose-500/10 text-rose-400'
+                            }`}>
+                              {u.isActive ? 'Ativo' : 'Inativo'}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-right">
+                            <div className="flex items-center justify-end space-x-2">
+                              {isCurrent && (
+                                <span className="text-[11px] text-emerald-400 font-medium px-2 py-1 bg-emerald-500/10 rounded-md border border-emerald-500/20">
+                                  Sessão Ativa
+                                </span>
+                              )}
+                              <button
+                                onClick={() => {
+                                  setEditingUser(u);
+                                  setUserForm({
+                                    name: u.name,
+                                    username: displayUsername,
+                                    email: u.email,
+                                    password: u.password || (u.role === 'admin' ? 'admin' : u.pin || '1234'),
+                                    roleId: u.roleId || u.role || 'caixa',
+                                    storeIds: userStores,
+                                    pin: u.pin || '1234',
+                                    isActive: u.isActive,
+                                  });
+                                }}
+                                className="p-1.5 hover:bg-neutral-800 rounded text-cyan-400 cursor-pointer"
+                                title="Editar Utilizador"
+                              >
+                                <Edit2 className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={() => {
+                                  requestConfirm({
+                                    title: 'Eliminar Utilizador',
+                                    message: `Tem a certeza que deseja eliminar o utilizador "${u.name}" (@${displayUsername})?`,
+                                    itemDetails: `Email: ${u.email || 'N/A'} | Perfil: ${u.roleId || u.role}`,
+                                    confirmLabel: 'Eliminar Utilizador',
+                                    isDestructive: true,
+                                    onConfirm: () => {
+                                      deleteUser(u.id);
+                                    },
+                                  });
+                                }}
+                                className="p-1.5 hover:bg-neutral-800 rounded text-rose-400 cursor-pointer"
+                                title="Eliminar Utilizador"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
               </div>
             </div>
-
-            <div className="bg-[#141414] border border-[#262626] rounded-xl overflow-hidden shadow-xs">
-              <table className="w-full text-left text-xs text-neutral-300">
-                <thead className="bg-[#1a1a1a] text-neutral-400 font-medium uppercase tracking-wider text-[10px] border-b border-[#262626]">
-                  <tr>
-                    <th className="px-4 py-3">Nome / Utilizador</th>
-                    <th className="px-4 py-3">Username</th>
-                    <th className="px-4 py-3">Perfil de Acesso</th>
-                    <th className="px-4 py-3">Lojas Autorizadas</th>
-                    <th className="px-4 py-3 text-center">Senha / Palavra-passe</th>
-                    <th className="px-4 py-3 text-center">PIN POS</th>
-                    <th className="px-4 py-3 text-center">Estado / Sessão</th>
-                    <th className="px-4 py-3 text-right">Ações</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[#262626]">
-                  {(users || []).map((u) => {
-                    const role = (roles || []).find((r) => r.id === u.roleId || r.id === u.role);
-                    const isCurrent = currentUser?.id === u.id;
-                    const userStores = u.storeIds && u.storeIds.length > 0
-                      ? u.storeIds
-                      : u.storeId
-                      ? [u.storeId]
-                      : [currentStore?.id || 'store-lis-1'];
-                    const displayUsername = u.username || (u.name || 'user').toLowerCase().replace(/\s+/g, '.');
-                    const userPass = u.password || (u.role === 'admin' ? 'admin' : u.pin || '1234');
-                    const isPasswordVisible = !!showPasswordMap[u.id];
-
-                    return (
-                      <tr
-                        key={u.id}
-                        className={`transition-colors ${
-                          isCurrent ? 'bg-[#c5a47e]/10 border-l-2 border-l-[#c5a47e]' : 'hover:bg-[#191919]'
-                        }`}
-                      >
-                        <td className="px-4 py-3">
-                          <div className="flex items-center space-x-2.5">
-                            <div className="w-7 h-7 rounded-full bg-[#262626] text-neutral-300 flex items-center justify-center font-bold text-xs">
-                              {(u?.name || 'U').charAt(0)}
-                            </div>
-                            <div>
-                              <div className="font-semibold text-neutral-200 flex items-center space-x-1.5">
-                                <span>{u.name}</span>
-                                {isCurrent && (
-                                  <span className="text-[9px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-1.5 py-0.2 rounded-xs font-bold uppercase">
-                                    Sessão Atual
-                                  </span>
-                                )}
-                              </div>
-                              <div className="text-[11px] text-neutral-500 font-mono">{u.email}</div>
-                            </div>
-                          </div>
-                        </td>
-                        <td className="px-4 py-3 font-mono text-[#c5a47e]">@{displayUsername}</td>
-                        <td className="px-4 py-3">
-                          <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-purple-500/20 text-purple-400 border border-purple-500/30">
-                            {role?.name || u.roleId || u.role}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3 text-neutral-400">
-                          {userStores.map((sid) => (stores || []).find((s) => s.id === sid)?.name || sid).join(', ')}
-                        </td>
-                        <td className="px-4 py-3 text-center">
-                          <div className="inline-flex items-center justify-center space-x-1.5 bg-[#0a0a0a] px-2.5 py-1 rounded-lg border border-[#262626]">
-                            <span className="font-mono text-xs font-semibold text-neutral-200">
-                              {isPasswordVisible ? userPass : '••••••••'}
-                            </span>
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setShowPasswordMap((prev) => ({ ...prev, [u.id]: !prev[u.id] }));
-                              }}
-                              className="p-1 hover:bg-neutral-800 text-neutral-400 hover:text-neutral-200 rounded transition-colors cursor-pointer"
-                              title={isPasswordVisible ? 'Ocultar palavra-passe' : 'Ver palavra-passe'}
-                            >
-                              {isPasswordVisible ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                navigator.clipboard.writeText(userPass);
-                                setCopiedPasswordUserId(u.id);
-                                notify(`Palavra-passe de ${u.name} copiada!`, 'success');
-                                setTimeout(() => setCopiedPasswordUserId(null), 2000);
-                              }}
-                              className={`p-1 rounded transition-colors cursor-pointer ${
-                                copiedPasswordUserId === u.id
-                                  ? 'text-emerald-400 bg-emerald-500/20'
-                                  : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800'
-                              }`}
-                              title="Copiar palavra-passe"
-                            >
-                              <Copy className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        </td>
-                        <td className="px-4 py-3 text-center font-mono text-neutral-400">
-                          <span className="bg-[#0a0a0a] px-2 py-0.5 rounded border border-[#262626] text-[11px]">
-                            {u.pin || '••••'}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3 text-center">
-                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium uppercase ${
-                            u.isActive ? 'bg-emerald-500/10 text-emerald-400' : 'bg-rose-500/10 text-rose-400'
-                          }`}>
-                            {u.isActive ? 'Ativo' : 'Inativo'}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3 text-right">
-                          <div className="flex items-center justify-end space-x-2">
-                            {isCurrent && (
-                              <span className="text-[11px] text-emerald-400 font-medium px-2 py-1 bg-emerald-500/10 rounded-md border border-emerald-500/20">
-                                Sessão Ativa
-                              </span>
-                            )}
-                            <button
-                              onClick={() => {
-                                setEditingUser(u);
-                                setUserForm({
-                                  name: u.name,
-                                  username: displayUsername,
-                                  email: u.email,
-                                  password: u.password || (u.role === 'admin' ? 'admin' : u.pin || '1234'),
-                                  roleId: u.roleId || u.role || 'caixa',
-                                  storeIds: userStores,
-                                  pin: u.pin || '1234',
-                                  isActive: u.isActive,
-                                });
-                              }}
-                              className="p-1.5 hover:bg-neutral-800 rounded text-cyan-400 cursor-pointer"
-                              title="Editar Utilizador"
-                            >
-                              <Edit2 className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              onClick={() => {
-                                requestConfirm({
-                                  title: 'Eliminar Utilizador',
-                                  message: `Tem a certeza que deseja eliminar o utilizador "${u.name}" (@${displayUsername})?`,
-                                  itemDetails: `Email: ${u.email || 'N/A'} | Perfil: ${u.roleId || u.role}`,
-                                  confirmLabel: 'Eliminar Utilizador',
-                                  isDestructive: true,
-                                  onConfirm: () => {
-                                    deleteUser(u.id);
-                                  },
-                                });
-                              }}
-                              className="p-1.5 hover:bg-neutral-800 rounded text-rose-400 cursor-pointer"
-                              title="Eliminar Utilizador"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </div>
+          </OwnerSecurityGate>
         )}
 
         {/* ================= TAB 4: RBAC PERMISSIONS & RESTRICTIONS ================= */}

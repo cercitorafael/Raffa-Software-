@@ -209,3 +209,14 @@ html.theme-emerald .bg-\[\#c5a47e\]\/10, html.theme-emerald .bg-\[\#c5a47e\]\/15
 [data-theme="emerald"] .bg-\[\#c5a47e\]\/10, [data-theme="emerald"] .bg-\[\#c5a47e\]\/15, [data-theme="emerald"] .bg-\[\#c5a47e\]\/20 {
   background-color: rgba(16, 185, 129, 0.15) !important;
 }
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  20%, 60% { transform: translateX(-8px); }
+  40%, 80% { transform: translateX(8px); }
+}
+
+.animate-shake {
+  animation: shake 0.4s ease-in-out;
+}
+

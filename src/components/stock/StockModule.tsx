@@ -27,8 +27,10 @@ import {
   Download,
   FileUp,
   FileDown,
+  Percent,
 } from 'lucide-react';
-import { Product, Warehouse, LotBatch, ProductCategory } from '../../types';
+import { Product, Warehouse, LotBatch, ProductCategory, VatRate } from '../../types';
+import { defaultVatRates } from '../../mockData';
 import { ProductImportExportModal } from './ProductImportExportModal';
 import { CategoryManagementModal } from './CategoryManagementModal';
 import { CategoryManagementTab } from './CategoryManagementTab';
@@ -65,6 +67,14 @@ export const StockModule: React.FC = () => {
     notify,
   } = useApp();
 
+  const companyVatRates: VatRate[] = currentCompany?.vatRates && currentCompany.vatRates.length > 0
+    ? currentCompany.vatRates
+    : defaultVatRates;
+
+  const defaultTaxRateValue = typeof currentCompany?.defaultTaxRate === 'number'
+    ? currentCompany.defaultTaxRate
+    : (companyVatRates.find((v) => v.isDefault)?.rate ?? 16);
+
   const currencySymbol = currentCompany?.currencySymbol || currencyDefinition?.symbol || 'Mt';
 
   const [activeTab, setActiveTab] = useState<'overview' | 'categories' | 'warehouses' | 'lots' | 'movements' | 'transfer' | 'inventory_count' | 'reorder'>('overview');
@@ -97,7 +107,7 @@ export const StockModule: React.FC = () => {
     barcode: '',
     price: 9.90,
     costPrice: 4.50,
-    taxRate: 23,
+    taxRate: defaultTaxRateValue,
     category: categories[0]?.id || 'cat-bebidas',
     unit: 'un',
     minStock: 10,
@@ -219,7 +229,7 @@ export const StockModule: React.FC = () => {
       barcode: '',
       price: 9.90,
       costPrice: 4.50,
-      taxRate: 23,
+      taxRate: defaultTaxRateValue,
       category: categories[0]?.id || 'cat-bebidas',
       unit: 'un',
       minStock: 10,
@@ -623,7 +633,18 @@ export const StockModule: React.FC = () => {
                           {formatCurrency(prod.costPrice)}
                         </td>
                         <td className="px-4 py-3 text-center font-mono">
-                          {prod.taxRate}%
+                          <span
+                            className={`px-2 py-0.5 rounded text-[11px] font-bold border ${
+                              prod.taxRate === 0
+                                ? 'bg-amber-500/10 text-amber-400 border-amber-500/30'
+                                : prod.taxRate === 16
+                                ? 'bg-[#c5a47e]/15 text-[#c5a47e] border-[#c5a47e]/30'
+                                : 'bg-neutral-800 text-neutral-300 border-neutral-700'
+                            }`}
+                            title={`Taxa de IVA: ${prod.taxRate}%`}
+                          >
+                            {prod.taxRate}%
+                          </span>
                         </td>
                         <td className="px-4 py-3 text-right font-mono font-semibold">
                           <span className={isLow ? 'text-rose-400 font-bold' : 'text-neutral-200'}>
@@ -1249,17 +1270,61 @@ export const StockModule: React.FC = () => {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-medium text-neutral-300 mb-1">Taxa de IVA *</label>
-                  <select
-                    value={prodForm.taxRate}
-                    onChange={(e) => setProdForm({ ...prodForm, taxRate: Number(e.target.value) })}
-                    className="w-full bg-[#0d0d0d] border border-[#262626] rounded-md px-3 py-2 text-xs text-neutral-200 focus:outline-hidden focus:border-[#c5a47e]"
-                  >
-                    <option value={23}>Taxa Normal (23%)</option>
-                    <option value={13}>Taxa Intermédia (13%)</option>
-                    <option value={6}>Taxa Reduzida (6%)</option>
-                    <option value={0}>Isento (0%)</option>
-                  </select>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-xs font-medium text-neutral-300">Taxa de IVA *</label>
+                    <span className="text-[11px] text-[#c5a47e] font-mono font-bold">
+                      {prodForm.taxRate}%
+                    </span>
+                  </div>
+                  <div className="flex space-x-2">
+                    <select
+                      value={prodForm.taxRate}
+                      onChange={(e) => setProdForm({ ...prodForm, taxRate: Number(e.target.value) })}
+                      className="w-full bg-[#0d0d0d] border border-[#262626] rounded-md px-3 py-2 text-xs text-neutral-200 focus:outline-hidden focus:border-[#c5a47e]"
+                    >
+                      {companyVatRates.map((vr) => (
+                        <option key={vr.id} value={vr.rate}>
+                          {vr.name} ({vr.rate}%) {vr.isDefault ? '— Padrão' : ''}
+                        </option>
+                      ))}
+                      {!companyVatRates.some((vr) => vr.rate === prodForm.taxRate) && (
+                        <option value={prodForm.taxRate}>Personalizada ({prodForm.taxRate}%)</option>
+                      )}
+                    </select>
+                    <input
+                      type="number"
+                      min="0"
+                      max="100"
+                      step="0.5"
+                      placeholder="%"
+                      value={prodForm.taxRate}
+                      onChange={(e) => setProdForm({ ...prodForm, taxRate: Math.max(0, Math.min(100, parseFloat(e.target.value) || 0)) })}
+                      className="w-20 bg-[#0d0d0d] border border-[#262626] rounded-md px-2 py-2 text-xs text-[#c5a47e] font-mono font-bold text-center focus:outline-hidden focus:border-[#c5a47e]"
+                      title="Digitar taxa de IVA personalizada (%)"
+                    />
+                  </div>
+                </div>
+
+                {/* Live Tax & Price Breakdown Box */}
+                <div className="col-span-2 p-3 bg-[#0a0a0a] border border-[#262626] rounded-lg text-xs grid grid-cols-3 gap-2 text-center">
+                  <div>
+                    <span className="text-[10px] text-neutral-500 block uppercase font-medium">Preço Base (s/ IVA)</span>
+                    <span className="font-mono font-semibold text-neutral-300">
+                      {formatCurrency(prodForm.price / (1 + (prodForm.taxRate / 100)))}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-neutral-500 block uppercase font-medium">IVA ({prodForm.taxRate}%)</span>
+                    <span className="font-mono font-bold text-[#c5a47e]">
+                      {formatCurrency(prodForm.price - (prodForm.price / (1 + (prodForm.taxRate / 100))))}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-neutral-500 block uppercase font-medium">PVP Final (c/ IVA)</span>
+                    <span className="font-mono font-bold text-emerald-400">
+                      {formatCurrency(prodForm.price)}
+                    </span>
+                  </div>
                 </div>
 
                 <div>

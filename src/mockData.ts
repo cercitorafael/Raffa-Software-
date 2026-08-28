@@ -31,7 +31,75 @@ import {
   OmnichannelOrder,
   InvoiceTemplateConfig,
   CallLog,
+  VatRate,
 } from './types';
+
+export const defaultVatRates: VatRate[] = [
+  {
+    id: 'vat-normal-16',
+    name: 'Taxa Normal (16%)',
+    rate: 16,
+    code: 'NOR',
+    isDefault: true,
+    isActive: true,
+    description: 'Taxa padrão de IVA em Moçambique',
+  },
+  {
+    id: 'vat-isento-0',
+    name: 'Taxa Isenta / Zero (0%)',
+    rate: 0,
+    code: 'ISE',
+    isDefault: false,
+    isActive: true,
+    exemptionReason: 'Artigo 9.º do Código do IVA (Bens Essenciais / Isenção Legal)',
+    description: 'Produtos de primeira necessidade, medicamentos e exportações',
+  },
+  {
+    id: 'vat-reduzida-5',
+    name: 'Taxa Reduzida (5%)',
+    rate: 5,
+    code: 'RED',
+    isDefault: false,
+    isActive: true,
+    description: 'Taxa reduzida aplicável a bens ou serviços especiais',
+  },
+  {
+    id: 'vat-intermedia-10',
+    name: 'Taxa Intermédia (10%)',
+    rate: 10,
+    code: 'INT',
+    isDefault: false,
+    isActive: true,
+    description: 'Taxa intermédia setorial',
+  },
+  {
+    id: 'vat-pt-normal-23',
+    name: 'Taxa Normal PT (23%)',
+    rate: 23,
+    code: 'NOR_PT',
+    isDefault: false,
+    isActive: false,
+    description: 'Taxa normal em Portugal continental',
+  },
+  {
+    id: 'vat-pt-reduzida-6',
+    name: 'Taxa Reduzida PT (6%)',
+    rate: 6,
+    code: 'RED_PT',
+    isDefault: false,
+    isActive: false,
+    description: 'Taxa reduzida em Portugal continental',
+  },
+  {
+    id: 'vat-pt-intermedia-13',
+    name: 'Taxa Intermédia PT (13%)',
+    rate: 13,
+    code: 'INT_PT',
+    isDefault: false,
+    isActive: false,
+    description: 'Taxa intermédia em Portugal continental',
+  },
+];
 
 export const defaultInvoiceTemplates: InvoiceTemplateConfig[] = [
   {
@@ -129,6 +197,8 @@ export const initialCompanies: Company[] = [
     defaultBank: '',
     activeInvoiceTemplateId: 'tmpl-agro-vendus',
     invoiceTemplates: defaultInvoiceTemplates,
+    defaultTaxRate: 16,
+    vatRates: defaultVatRates,
   },
 ];
 
