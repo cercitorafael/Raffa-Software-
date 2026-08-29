@@ -2,6 +2,12 @@ import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { formatCurrency } from '../../utils/crypto';
 import {
+  isEffectiveSale,
+  calculateNetSalesRevenue,
+  calculateNetSubtotal,
+  calculateNetTax,
+} from '../../utils/documentUtils';
+import {
   TrendingUp,
   Receipt,
   Users,
@@ -42,12 +48,20 @@ export const DashboardModule: React.FC = () => {
 
   const [timeRange, setTimeRange] = useState<'hoje' | 'semana' | 'mes' | 'ano'>('hoje');
 
-  // Key Calculated Metrics
-  const totalSalesRevenue = salesHistory.reduce((acc, s) => acc + s.total, 0);
-  const totalSubtotal = salesHistory.reduce((acc, s) => acc + s.subtotal, 0);
-  const totalTaxCollected = salesHistory.reduce((acc, s) => acc + s.taxTotal, 0);
-  const totalInvoicesCount = salesHistory.length;
+  // Key Calculated Metrics - STRICTLY Commercial Sales (FT, FS, FR, VD, ND minus NC).
+  // Proformas (PF), Transport Guides (GT/GR) are NEVER counted as sales.
+  const commercialSales = salesHistory.filter((s) => isEffectiveSale(s));
+  const totalSalesRevenue = calculateNetSalesRevenue(salesHistory);
+  const totalSubtotal = calculateNetSubtotal(salesHistory);
+  const totalTaxCollected = calculateNetTax(salesHistory);
+  const totalInvoicesCount = commercialSales.length;
   const avgTicket = totalInvoicesCount > 0 ? totalSalesRevenue / totalInvoicesCount : 0;
+
+  // Active Proformas summary
+  const quoteDocs = salesHistory.filter(
+    (s) => ['PF', 'ORC'].includes((s.invoiceType || '').toUpperCase()) && s.status !== 'anulado' && s.status !== 'convertido'
+  );
+  const totalQuotesValue = quoteDocs.reduce((acc, q) => acc + (q.total || 0), 0);
 
   // Stock Metrics
   const lowStockCount = stock.filter((st) => {
@@ -68,8 +82,8 @@ export const DashboardModule: React.FC = () => {
     .filter((a) => a.status === 'pendente')
     .reduce((acc, a) => acc + a.amount, 0);
 
-  // Payment Breakdown
-  const paymentBreakdown = salesHistory.reduce(
+  // Payment Breakdown - from commercial sales only
+  const paymentBreakdown = commercialSales.reduce(
     (acc, s) => {
       s.payments.forEach((p) => {
         if (p.method === 'multibanco') acc.multibanco += p.amount;
@@ -90,8 +104,8 @@ export const DashboardModule: React.FC = () => {
     paymentBreakdown.dinheiro +
     paymentBreakdown.outros || 1;
 
-  // VAT Breakdown (Normal 23%, Intermedia 13%, Reduzida 6%)
-  const vatBreakdown = salesHistory.reduce(
+  // VAT Breakdown (Normal 23%, Intermedia 13%, Reduzida 6%) - from commercial sales only
+  const vatBreakdown = commercialSales.reduce(
     (acc, s) => {
       s.items.forEach((item) => {
         if (item.taxRate >= 23) acc.tax23 += item.taxAmount;
@@ -104,9 +118,9 @@ export const DashboardModule: React.FC = () => {
     { tax23: 0, tax13: 0, tax6: 0, tax0: 0 }
   );
 
-  // Top Selling Products
+  // Top Selling Products - from commercial sales only
   const productSalesMap: Record<string, { name: string; qty: number; revenue: number }> = {};
-  salesHistory.forEach((s) => {
+  commercialSales.forEach((s) => {
     s.items.forEach((item) => {
       if (!productSalesMap[item.productId]) {
         productSalesMap[item.productId] = {

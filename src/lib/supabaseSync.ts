@@ -63,8 +63,86 @@ export interface RealtimeSyncCallbacks {
 
 let activeChannel: any = null;
 let currentCallbacks: RealtimeSyncCallbacks = {};
+let reconnectTimeout: any = null;
+let isReconnecting = false;
 const syncLogs: SupabaseSyncLog[] = [];
 const MAX_LOGS = 150;
+
+// Local pending sync queue for offline / retry support
+const PENDING_SYNC_STORAGE_KEY = 'erp_pending_supabase_queue';
+
+interface PendingSyncQueueItem {
+  id: string;
+  table: TableSyncName;
+  action: 'insert' | 'update' | 'upsert' | 'delete';
+  record: any;
+  timestamp: number;
+}
+
+function getPendingQueue(): PendingSyncQueueItem[] {
+  try {
+    const raw = localStorage.getItem(PENDING_SYNC_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+function savePendingQueue(queue: PendingSyncQueueItem[]) {
+  try {
+    localStorage.setItem(PENDING_SYNC_STORAGE_KEY, JSON.stringify(queue.slice(0, 300)));
+  } catch {}
+}
+
+export function enqueuePendingSync(table: TableSyncName, action: 'insert' | 'update' | 'upsert' | 'delete', record: any) {
+  try {
+    const queue = getPendingQueue();
+    const id = record?.id || `item-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+    // Avoid duplicate queue items for the same id and table
+    const filtered = queue.filter((q) => !(q.table === table && (q.record?.id || q.record) === id));
+    filtered.push({
+      id,
+      table,
+      action,
+      record,
+      timestamp: Date.now(),
+    });
+    savePendingQueue(filtered);
+  } catch {}
+}
+
+export async function flushPendingSyncQueue(): Promise<number> {
+  const queue = getPendingQueue();
+  if (queue.length === 0) return 0;
+
+  let successCount = 0;
+  const remaining: PendingSyncQueueItem[] = [];
+
+  for (const item of queue) {
+    try {
+      const res = await pushRecordToSupabaseDirect(item.table, item.action, item.record, false);
+      if (res.success) {
+        successCount++;
+      } else {
+        remaining.push(item);
+      }
+    } catch {
+      remaining.push(item);
+    }
+  }
+
+  savePendingQueue(remaining);
+  if (successCount > 0) {
+    addSyncLog({
+      table: 'ALL',
+      action: 'PUSH',
+      origin: 'LOCAL_APP',
+      description: `🔄 Fila Offline/Pendente: ${successCount} registos sincronizados com sucesso no Supabase!`,
+      status: 'success',
+    });
+  }
+  return successCount;
+}
 
 function addSyncLog(log: Omit<SupabaseSyncLog, 'id' | 'timestamp'>) {
   const newLog: SupabaseSyncLog = {
@@ -641,6 +719,11 @@ export function mapSupabaseToShift(row: any): CashShift {
 export function startSupabaseRealtimeSync(callbacks: RealtimeSyncCallbacks) {
   currentCallbacks = callbacks;
 
+  if (reconnectTimeout) {
+    clearTimeout(reconnectTimeout);
+    reconnectTimeout = null;
+  }
+
   if (activeChannel) {
     try {
       supabase.removeChannel(activeChannel);
@@ -656,7 +739,7 @@ export function startSupabaseRealtimeSync(callbacks: RealtimeSyncCallbacks) {
     table: 'ALL',
     action: 'PULL',
     origin: 'LOCAL_APP',
-    description: 'A iniciar conexão e escuta Realtime com o Supabase...',
+    description: 'A iniciar conexão e escuta Realtime contínua com o Supabase...',
     status: 'info',
   });
 
@@ -691,6 +774,7 @@ export function startSupabaseRealtimeSync(callbacks: RealtimeSyncCallbacks) {
 
   channel.subscribe((status: string, err: any) => {
     if (status === 'SUBSCRIBED') {
+      isReconnecting = false;
       if (currentCallbacks.onStatusChange) {
         currentCallbacks.onStatusChange('connected');
       }
@@ -698,10 +782,12 @@ export function startSupabaseRealtimeSync(callbacks: RealtimeSyncCallbacks) {
         table: 'ALL',
         action: 'PULL',
         origin: 'SUPABASE_REALTIME',
-        description: '🟢 Canal Realtime conectado e sincronizado em direto com o Supabase!',
+        description: '🟢 Canal Realtime conectado e sincronizado em direto (bidirecional ativo)!',
         status: 'success',
       });
-    } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
+      // Flush any queued offline actions immediately upon connecting
+      flushPendingSyncQueue().catch(() => {});
+    } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
       if (currentCallbacks.onStatusChange) {
         currentCallbacks.onStatusChange('error', err?.message || 'Conexão Realtime interrompida');
       }
@@ -709,17 +795,49 @@ export function startSupabaseRealtimeSync(callbacks: RealtimeSyncCallbacks) {
         table: 'ALL',
         action: 'ERROR',
         origin: 'SUPABASE_REALTIME',
-        description: `Canal Realtime: ${status} (${err?.message || 'A aguardar reconexão'})`,
+        description: `Canal Realtime: ${status} (${err?.message || 'A tentar reconectar em 5 segundos...'})`,
         status: 'error',
       });
+      // Auto-reconnect with retry timer
+      if (!isReconnecting) {
+        isReconnecting = true;
+        reconnectTimeout = setTimeout(() => {
+          isReconnecting = false;
+          if (currentCallbacks) {
+            startSupabaseRealtimeSync(currentCallbacks);
+          }
+        }, 5000);
+      }
     }
   });
 
   activeChannel = channel;
+
+  // Listen to browser online event to restore connection & flush queue
+  if (typeof window !== 'undefined') {
+    const handleOnline = () => {
+      addSyncLog({
+        table: 'ALL',
+        action: 'PULL',
+        origin: 'LOCAL_APP',
+        description: '🌐 Ligação à Internet restabelecida. A reconectar ao Supabase...',
+        status: 'info',
+      });
+      startSupabaseRealtimeSync(callbacks);
+      flushPendingSyncQueue().catch(() => {});
+    };
+    window.removeEventListener('online', handleOnline);
+    window.addEventListener('online', handleOnline);
+  }
+
   return activeChannel;
 }
 
 export function stopSupabaseRealtimeSync() {
+  if (reconnectTimeout) {
+    clearTimeout(reconnectTimeout);
+    reconnectTimeout = null;
+  }
   if (activeChannel) {
     try {
       supabase.removeChannel(activeChannel);
@@ -851,10 +969,46 @@ function handleRealtimeEvent(tableName: TableSyncName, payload: any) {
  * ============================================================================
  */
 
-export async function pushRecordToSupabase(
+export function mapLocalRecordToSupabasePayload(table: TableSyncName, record: any): any {
+  switch (table) {
+    case 'profiles':
+      return mapProfileToSupabase(record);
+    case 'empresas':
+      return mapCompanyToSupabase(record);
+    case 'lojas':
+      return mapStoreToSupabase(record);
+    case 'produtos':
+      return mapProductToSupabase(record);
+    case 'clientes':
+      return mapCustomerToSupabase(record);
+    case 'fornecedores':
+      return mapSupplierToSupabase(record);
+    case 'categorias':
+      return mapCategoryToSupabase(record);
+    case 'vendas':
+      return mapSaleToSupabase(record);
+    case 'usuarios':
+      return mapUserToSupabase(record);
+    case 'armazens':
+      return mapWarehouseToSupabase(record);
+    case 'stock':
+      return mapStockToSupabase(record);
+    case 'contas_pagar':
+      return mapAccountPayableToSupabase(record);
+    case 'contas_receber':
+      return mapAccountReceivableToSupabase(record);
+    case 'turnos_caixa':
+      return mapShiftToSupabase(record);
+    default:
+      return record;
+  }
+}
+
+export async function pushRecordToSupabaseDirect(
   table: TableSyncName,
   action: 'insert' | 'update' | 'upsert' | 'delete',
-  record: any
+  record: any,
+  shouldQueueOnFailure = true
 ): Promise<{ success: boolean; error?: any }> {
   try {
     let payload: any = record;
@@ -865,9 +1019,11 @@ export async function pushRecordToSupabase(
 
       const { error } = await supabase.from(table).delete().eq('id', id);
       if (error) {
-        // If table doesn't exist yet, don't crash
         if (error.code === '42P01') {
           return { success: false, error: 'Tabela ainda não criada no Supabase' };
+        }
+        if (shouldQueueOnFailure) {
+          enqueuePendingSync(table, action, record);
         }
         addSyncLog({
           table,
@@ -889,51 +1045,7 @@ export async function pushRecordToSupabase(
       return { success: true };
     }
 
-    // Map according to table
-    switch (table) {
-      case 'profiles':
-        payload = mapProfileToSupabase(record);
-        break;
-      case 'empresas':
-        payload = mapCompanyToSupabase(record);
-        break;
-      case 'lojas':
-        payload = mapStoreToSupabase(record);
-        break;
-      case 'produtos':
-        payload = mapProductToSupabase(record);
-        break;
-      case 'clientes':
-        payload = mapCustomerToSupabase(record);
-        break;
-      case 'fornecedores':
-        payload = mapSupplierToSupabase(record);
-        break;
-      case 'categorias':
-        payload = mapCategoryToSupabase(record);
-        break;
-      case 'vendas':
-        payload = mapSaleToSupabase(record);
-        break;
-      case 'usuarios':
-        payload = mapUserToSupabase(record);
-        break;
-      case 'armazens':
-        payload = mapWarehouseToSupabase(record);
-        break;
-      case 'stock':
-        payload = mapStockToSupabase(record);
-        break;
-      case 'contas_pagar':
-        payload = mapAccountPayableToSupabase(record);
-        break;
-      case 'contas_receber':
-        payload = mapAccountReceivableToSupabase(record);
-        break;
-      case 'turnos_caixa':
-        payload = mapShiftToSupabase(record);
-        break;
-    }
+    payload = mapLocalRecordToSupabasePayload(table, record);
 
     if (action === 'insert') {
       const { error } = await supabase.from(table).insert([payload]);
@@ -957,16 +1069,73 @@ export async function pushRecordToSupabase(
 
     return { success: true };
   } catch (error: any) {
-    // If table doesn't exist yet, handle gracefully
     if (error?.code === '42P01' || error?.message?.includes('does not exist')) {
       return { success: false, error: 'Tabela ainda não configurada no Supabase' };
+    }
+    if (shouldQueueOnFailure) {
+      enqueuePendingSync(table, action, record);
     }
     console.warn(`Erro ao sincronizar com Supabase na tabela ${table}:`, error);
     addSyncLog({
       table,
       action: action.toUpperCase() as any,
       origin: 'LOCAL_APP',
-      description: `Erro ao enviar para o Supabase: ${error?.message || error}`,
+      description: `Erro ao enviar para o Supabase (enfileirado para reenvio automático): ${error?.message || error}`,
+      status: 'error',
+    });
+    return { success: false, error };
+  }
+}
+
+export async function pushRecordToSupabase(
+  table: TableSyncName,
+  action: 'insert' | 'update' | 'upsert' | 'delete',
+  record: any
+): Promise<{ success: boolean; error?: any }> {
+  return pushRecordToSupabaseDirect(table, action, record, true);
+}
+
+export async function pushBatchRecordsToSupabase(
+  table: TableSyncName,
+  action: 'insert' | 'update' | 'upsert',
+  records: any[]
+): Promise<{ success: boolean; error?: any }> {
+  if (!records || records.length === 0) return { success: true };
+  try {
+    const payloads = records.map((r) => mapLocalRecordToSupabasePayload(table, r));
+    const CHUNK_SIZE = 50;
+
+    for (let i = 0; i < payloads.length; i += CHUNK_SIZE) {
+      const chunk = payloads.slice(i, i + CHUNK_SIZE);
+      if (action === 'insert') {
+        const { error } = await supabase.from(table).insert(chunk);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase.from(table).upsert(chunk);
+        if (error) throw error;
+      }
+    }
+
+    addSyncLog({
+      table,
+      action: action.toUpperCase() as any,
+      origin: 'LOCAL_APP',
+      description: `${records.length} registos em lote sincronizados na tabela "${table}" do Supabase`,
+      status: 'success',
+    });
+    return { success: true };
+  } catch (error: any) {
+    if (error?.code === '42P01' || error?.message?.includes('does not exist')) {
+      return { success: false, error: 'Tabela ainda não configurada no Supabase' };
+    }
+    // Queue individual items for retry
+    records.forEach((r) => enqueuePendingSync(table, action, r));
+    console.warn(`Erro ao sincronizar lote na tabela ${table}:`, error);
+    addSyncLog({
+      table,
+      action: action.toUpperCase() as any,
+      origin: 'LOCAL_APP',
+      description: `Erro no envio em lote (${records.length} registos guardados na fila de reenvio): ${error?.message || error}`,
       status: 'error',
     });
     return { success: false, error };

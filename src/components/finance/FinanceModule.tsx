@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { formatDate } from '../../utils/crypto';
+import { calculateNetSalesRevenue, calculateNetTax } from '../../utils/documentUtils';
 import {
   calculateBalancete,
   exportInvoicesToPDF,
@@ -185,8 +186,8 @@ export const FinanceModule: React.FC = () => {
     .filter((ap) => ap.status !== 'pago')
     .reduce((sum, ap) => sum + (ap.amount - ap.paidAmount), 0);
 
-  const totalSalesRevenue = salesHistory.reduce((sum, s) => sum + s.total, 0);
-  const totalTaxCollected = salesHistory.reduce((sum, s) => sum + s.taxTotal, 0);
+  const totalSalesRevenue = calculateNetSalesRevenue(salesHistory);
+  const totalTaxCollected = calculateNetTax(salesHistory);
 
   // Compute Balancete
   const balanceteRows = calculateBalancete(chartOfAccounts, ledgerEntries, salesHistory);

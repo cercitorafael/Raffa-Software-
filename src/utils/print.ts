@@ -67,8 +67,6 @@ export function getDocumentTitle(invoiceType?: string, uppercase: boolean = fals
       title = 'Nota de Débito';
       break;
     case 'ORC':
-      title = 'Orçamento / Proposta';
-      break;
     case 'PF':
     case 'FP':
       title = 'Fatura Proforma';

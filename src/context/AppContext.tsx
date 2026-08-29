@@ -95,6 +95,7 @@ import {
   startSupabaseRealtimeSync,
   stopSupabaseRealtimeSync,
   pushRecordToSupabase,
+  pushBatchRecordsToSupabase,
   pullAllFromSupabase,
   pushAllToSupabase,
   getSyncLogs,
@@ -334,6 +335,11 @@ export interface AppContextType {
   salesHistory: Sale[];
   setSalesHistory: React.Dispatch<React.SetStateAction<Sale[]>>;
   cancelInvoice: (invoiceId: string, reason: string, restockStock?: boolean) => void;
+  updateDocument: (id: string, updates: Partial<Sale>) => void;
+  deleteDocument: (id: string, restockStock?: boolean) => void;
+  clearSalesHistory: (idsOrScope?: string[] | 'all', restockStock?: boolean) => void;
+  convertQuoteToInvoice: (quoteId: string, targetType?: InvoiceType, paymentMethod?: string) => Promise<Sale | null>;
+  updateDocumentStatus: (id: string, status: 'emitido' | 'anulado' | 'pago' | 'pendente' | 'aprovado' | 'recusado' | 'convertido') => void;
 
   // Finance
   accountsPayable: AccountPayable[];
@@ -1211,6 +1217,53 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       stopSupabaseRealtimeSync();
     };
   }, [reconnectSupabaseRealtime]);
+
+  // Automatic bidirectional sync: Silent background pull from Supabase on startup and every 60s
+  useEffect(() => {
+    let timer: any = null;
+    const executeSilentPull = async () => {
+      try {
+        const res = await pullAllFromSupabase({ companyId: currentCompany?.id || 'ALL' });
+        if (res.data) {
+          if (res.data.companies && res.data.companies.length > 0) {
+            setCompanies(res.data.companies);
+          }
+          if (res.data.stores && res.data.stores.length > 0) {
+            setStores(res.data.stores);
+          }
+          if (res.data.products && res.data.products.length > 0) setProducts(res.data.products);
+          if (res.data.customers && res.data.customers.length > 0) setCustomers(res.data.customers);
+          if (res.data.suppliers && res.data.suppliers.length > 0) setSuppliers(res.data.suppliers);
+          if (res.data.categories && res.data.categories.length > 0) setCategories(res.data.categories);
+          if (res.data.sales && res.data.sales.length > 0) setSalesHistory(res.data.sales);
+          if (res.data.users && res.data.users.length > 0) setUsers(res.data.users);
+          if (res.data.warehouses && res.data.warehouses.length > 0) setWarehouses(res.data.warehouses);
+          if (res.data.stock && res.data.stock.length > 0) setStock(res.data.stock);
+          if (res.data.accountsPayable && res.data.accountsPayable.length > 0) setAccountsPayable(res.data.accountsPayable);
+          if (res.data.accountsReceivable && res.data.accountsReceivable.length > 0) setAccountsReceivable(res.data.accountsReceivable);
+          if (res.data.shifts && res.data.shifts.length > 0) setShiftsHistory(res.data.shifts);
+        }
+      } catch {
+        // Silent failure in background - Realtime will continue to deliver deltas
+      }
+    };
+
+    // Run silent pull 2.5 seconds after app boot
+    const bootTimer = setTimeout(executeSilentPull, 2500);
+    // And periodically every 60 seconds
+    timer = setInterval(executeSilentPull, 60000);
+
+    const handleFocus = () => {
+      executeSilentPull();
+    };
+    window.addEventListener('focus', handleFocus);
+
+    return () => {
+      clearTimeout(bootTimer);
+      clearInterval(timer);
+      window.removeEventListener('focus', handleFocus);
+    };
+  }, [currentCompany?.id]);
 
   const pullFromSupabase = async (options?: { companyId?: string; profileId?: string }) => {
     const scopeTxt = options?.companyId && options.companyId !== 'ALL' ? ` para a empresa [${options.companyId}]` : '';
@@ -2770,27 +2823,29 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const diff = newQty - oldQty;
     const prod = products.find((p) => p.id === productId);
 
+    let updatedStockRecord: StockItem;
     if (existing) {
+      updatedStockRecord = { ...existing, quantity: Math.max(0, newQty) };
       setStock((prev) =>
         prev.map((s) =>
           s.productId === productId && s.warehouseId === warehouseId
-            ? { ...s, quantity: Math.max(0, newQty) }
+            ? updatedStockRecord
             : s
         )
       );
     } else {
-      setStock((prev) => [
-        ...prev,
-        {
-          id: `stk-${Date.now()}`,
-          productId,
-          warehouseId,
-          quantity: Math.max(0, newQty),
-          reserved: 0,
-          avgCost: prod?.costPrice || 0,
-        },
-      ]);
+      updatedStockRecord = {
+        id: `stk-${Date.now()}`,
+        productId,
+        warehouseId,
+        quantity: Math.max(0, newQty),
+        reserved: 0,
+        avgCost: prod?.costPrice || 0,
+      };
+      setStock((prev) => [...prev, updatedStockRecord]);
     }
+
+    pushRecordToSupabase('stock', 'upsert', updatedStockRecord);
 
     recordStockMovement({
       companyId: currentCompany.id,
@@ -2822,6 +2877,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (quantity <= 0) return;
     const prod = products.find((p) => p.id === productId);
 
+    let updatedFrom: StockItem | undefined;
+    let updatedTo: StockItem | undefined;
+
     setStock((prev) => {
       let updated = [...prev];
       const fromItem = updated.find(
@@ -2829,6 +2887,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       );
       if (fromItem) {
         fromItem.quantity = Math.max(0, fromItem.quantity - quantity);
+        updatedFrom = { ...fromItem };
       }
 
       const toItem = updated.find(
@@ -2836,18 +2895,26 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       );
       if (toItem) {
         toItem.quantity += quantity;
+        updatedTo = { ...toItem };
       } else {
-        updated.push({
+        const newTo: StockItem = {
           id: `stk-${Date.now()}`,
           productId,
           warehouseId: toWarehouseId,
           quantity,
           reserved: 0,
           avgCost: prod?.costPrice || 0,
-        });
+        };
+        updated.push(newTo);
+        updatedTo = newTo;
       }
       return updated;
     });
+
+    const itemsToPush = [updatedFrom, updatedTo].filter(Boolean) as StockItem[];
+    if (itemsToPush.length > 0) {
+      pushBatchRecordsToSupabase('stock', 'upsert', itemsToPush);
+    }
 
     recordStockMovement({
       companyId: currentCompany.id,
@@ -2882,6 +2949,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       warehouses[0]?.id ||
       'wh-default';
 
+    const affectedStockList: StockItem[] = [];
+
     setStock((prev) => {
       const updated = prev.map((s) => ({ ...s }));
 
@@ -2904,16 +2973,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
         if (stk) {
           stk.quantity = Math.max(0, stk.quantity - qtyToDeduct);
+          affectedStockList.push({ ...stk });
         } else {
           const prod = products.find((p) => p.id === item.productId);
-          updated.push({
+          const newStk: StockItem = {
             id: `stk-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
             productId: item.productId,
             warehouseId: targetWhId,
             quantity: 0,
             reserved: 0,
             avgCost: prod?.costPrice || item.unitPrice || 0,
-          });
+          };
+          updated.push(newStk);
+          affectedStockList.push(newStk);
         }
 
         // Also decrement lots if applicable
@@ -2941,6 +3013,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       return updated;
     });
+
+    if (affectedStockList.length > 0) {
+      pushBatchRecordsToSupabase('stock', 'upsert', affectedStockList);
+    }
   };
 
   const replenishStockForItems = (
@@ -2954,6 +3030,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       currentStore.defaultWarehouseId ||
       warehouses[0]?.id ||
       'wh-default';
+
+    const affectedStockList: StockItem[] = [];
 
     setStock((prev) => {
       const updated = prev.map((s) => ({ ...s }));
@@ -2972,16 +3050,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
         if (stk) {
           stk.quantity = stk.quantity + qtyToAdd;
+          affectedStockList.push({ ...stk });
         } else {
           const prod = products.find((p) => p.id === item.productId);
-          updated.push({
+          const newStk: StockItem = {
             id: `stk-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
             productId: item.productId,
             warehouseId: targetWhId,
             quantity: qtyToAdd,
             reserved: 0,
             avgCost: prod?.costPrice || item.unitPrice || 0,
-          });
+          };
+          updated.push(newStk);
+          affectedStockList.push(newStk);
         }
 
         setLots((lotPrev) =>
@@ -3007,6 +3088,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       return updated;
     });
+
+    if (affectedStockList.length > 0) {
+      pushBatchRecordsToSupabase('stock', 'upsert', affectedStockList);
+    }
   };
 
   // ==================== OFFLINE SYNC TRIGGER ====================
@@ -3085,6 +3170,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
     setActiveShift(shift);
     saveToStorage('activeShift', shift);
+    pushRecordToSupabase('turnos_caixa', 'upsert', shift);
     emitEvent('POS', 'pos.shift.opened', {
       shiftId: shift.id,
       terminal: currentTerminal.code,
@@ -3119,6 +3205,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setActiveShift(null);
     saveToStorage('activeShift', null);
     setShiftsHistory((prev) => [closed, ...prev]);
+    pushRecordToSupabase('turnos_caixa', 'upsert', closed);
 
     emitEvent('POS', 'pos.shift.closed', {
       shiftId: closed.id,
@@ -3160,6 +3247,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       movements: [...activeShift.movements, mov],
     };
     setActiveShift(updated);
+    pushRecordToSupabase('turnos_caixa', 'upsert', updated);
     emitEvent('POS', `pos.cash.${type}`, { amount, reason });
     sound.playCashRegisterSound();
   };
@@ -3613,6 +3701,211 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     sound.playSuccessChime();
   };
 
+  const updateDocument = (id: string, updates: Partial<Sale>) => {
+    setSalesHistory((prev) =>
+      prev.map((doc) => {
+        if (doc.id === id) {
+          const updated = { ...doc, ...updates };
+          pushRecordToSupabase('vendas', 'update', updated);
+          return updated;
+        }
+        return doc;
+      })
+    );
+    sound.playSuccessChime();
+    notify('Documento atualizado com sucesso!', 'success');
+  };
+
+  const deleteDocument = (id: string, restockStock: boolean = false) => {
+    const doc = salesHistory.find((s) => s.id === id);
+    if (!doc) return;
+
+    if (restockStock && !['ORC', 'PF', 'NC', 'RC'].includes(doc.invoiceType || '')) {
+      const targetWh = doc.storeId
+        ? stores.find((s) => s.id === doc.storeId)?.defaultWarehouseId || currentStore.defaultWarehouseId
+        : currentStore.defaultWarehouseId;
+      replenishStockForItems(
+        doc.items,
+        targetWh,
+        doc.invoiceNumber,
+        `Eliminação do documento ${doc.invoiceNumber} (Reposição de Stock)`
+      );
+    }
+
+    setSalesHistory((prev) => prev.filter((s) => s.id !== id));
+    pushRecordToSupabase('vendas', 'delete', { id });
+    emitEvent('Financeiro', 'document.deleted', {
+      documentId: id,
+      invoiceNumber: doc.invoiceNumber,
+      type: doc.invoiceType,
+    });
+    sound.playSuccessChime();
+    notify(`Documento ${doc.invoiceNumber} eliminado com sucesso.`, 'success');
+  };
+
+  const clearSalesHistory = (idsOrScope?: string[] | 'all', restockStock: boolean = false) => {
+    let toDelete: Sale[] = [];
+    if (!idsOrScope || idsOrScope === 'all') {
+      toDelete = [...salesHistory];
+      setSalesHistory([]);
+    } else if (Array.isArray(idsOrScope)) {
+      toDelete = salesHistory.filter((s) => idsOrScope.includes(s.id));
+      setSalesHistory((prev) => prev.filter((s) => !idsOrScope.includes(s.id)));
+    }
+
+    if (toDelete.length === 0) {
+      notify('Nenhum documento selecionado para eliminação.', 'info');
+      return;
+    }
+
+    if (restockStock) {
+      toDelete.forEach((doc) => {
+        if (!['ORC', 'PF', 'NC', 'RC'].includes(doc.invoiceType || '')) {
+          const targetWh = doc.storeId
+            ? stores.find((s) => s.id === doc.storeId)?.defaultWarehouseId || currentStore.defaultWarehouseId
+            : currentStore.defaultWarehouseId;
+          replenishStockForItems(
+            doc.items,
+            targetWh,
+            doc.invoiceNumber,
+            `Eliminação em lote de ${doc.invoiceNumber} (Reposição de Stock)`
+          );
+        }
+      });
+    }
+
+    toDelete.forEach((doc) => {
+      pushRecordToSupabase('vendas', 'delete', { id: doc.id });
+    });
+
+    emitEvent('Financeiro', 'documents.cleared', {
+      count: toDelete.length,
+      timestamp: new Date().toISOString(),
+    });
+
+    sound.playSuccessChime();
+    notify(`${toDelete.length} documento(s) fiscal(ais) eliminado(s) com sucesso.`, 'success');
+  };
+
+  const updateDocumentStatus = (
+    id: string,
+    status: 'emitido' | 'anulado' | 'pago' | 'pendente' | 'aprovado' | 'recusado' | 'convertido'
+  ) => {
+    setSalesHistory((prev) =>
+      prev.map((doc) => {
+        if (doc.id === id) {
+          const updated: Sale = { ...doc, status };
+          pushRecordToSupabase('vendas', 'update', updated);
+          return updated;
+        }
+        return doc;
+      })
+    );
+    sound.playSuccessChime();
+    notify(`Estado do documento alterado para "${status}".`, 'success');
+  };
+
+  const convertQuoteToInvoice = async (
+    quoteId: string,
+    targetType: InvoiceType = 'FT',
+    paymentMethod: string = 'numerario'
+  ): Promise<Sale | null> => {
+    const quote = salesHistory.find((s) => s.id === quoteId);
+    if (!quote) {
+      notify('Fatura Proforma não encontrada.', 'error');
+      return null;
+    }
+
+    // 1. Check available stock before conversion
+    for (const item of quote.items) {
+      if (item.productId && !item.productId.startsWith('custom-')) {
+        const available = getAvailableStock(item.productId, currentStore.defaultWarehouseId);
+        if (available < item.quantity) {
+          sound.playError();
+          notify(
+            `Não é possível converter: Stock insuficiente para "${item.productName}". Disponível: ${available}, Necessário: ${item.quantity}.`,
+            'error'
+          );
+          return null;
+        }
+      }
+    }
+
+    // 2. Generate new sequential fiscal invoice
+    const countType = salesHistory.filter((s) => (s.invoiceType || '').toUpperCase() === targetType).length + 1;
+    const newInvNumber = `${targetType} 2026/${String(countType).padStart(4, '0')}`;
+    const dateStr = new Date().toISOString();
+    const prevSale = salesHistory[0];
+    const prevHash = prevSale ? prevSale.fiscalHash : '0000000000000000';
+    const fiscalHash = generateFiscalHash(dateStr, newInvNumber, quote.total, prevHash);
+
+    const isOrigQuote = quote.invoiceType === 'ORC';
+    const docLabel = isOrigQuote ? 'Orçamento' : 'Proforma';
+
+    const newInvoice: Sale = {
+      ...quote,
+      id: `sale-conv-${Date.now()}`,
+      invoiceNumber: newInvNumber,
+      invoiceType: targetType,
+      date: dateStr,
+      status: targetType === 'FR' || targetType === 'FS' || targetType === 'VD' ? 'pago' : 'emitido',
+      fiscalHash,
+      previousHash: prevHash,
+      atcud: `ATCUD-${currentCompany.taxNumber}-${newInvNumber}`,
+      notes: `Fatura convertida da ${docLabel} ${quote.invoiceNumber}. ${quote.notes || ''}`.trim(),
+      payments: [
+        {
+          id: `pay-${Date.now()}`,
+          method: paymentMethod,
+          amount: quote.total,
+          status: 'concluido',
+        },
+      ],
+    };
+
+    // 3. Deduct stock for the newly emitted invoice
+    deductStockForItems(
+      quote.items,
+      currentStore.defaultWarehouseId,
+      newInvNumber,
+      `Conversão de ${docLabel} ${quote.invoiceNumber} em ${targetType} ${newInvNumber}`
+    );
+
+    // 4. Update the quote to 'convertido' and add the new invoice
+    setSalesHistory((prev) => [
+      newInvoice,
+      ...prev.map((doc) =>
+        doc.id === quoteId
+          ? {
+              ...doc,
+              status: 'convertido' as const,
+              convertedToInvoiceNumber: newInvNumber,
+              convertedAt: dateStr,
+            }
+          : doc
+      ),
+    ]);
+
+    pushRecordToSupabase('vendas', 'insert', newInvoice);
+    pushRecordToSupabase('vendas', 'update', {
+      id: quoteId,
+      status: 'convertido',
+      convertedToInvoiceNumber: newInvNumber,
+      convertedAt: dateStr,
+    });
+
+    emitEvent('POS', 'sale.quote.converted', {
+      quoteNumber: quote.invoiceNumber,
+      invoiceNumber: newInvNumber,
+      total: newInvoice.total,
+      customer: newInvoice.customerName,
+    });
+
+    sound.playCashRegisterSound();
+    notify(`${docLabel} ${quote.invoiceNumber} convertida com sucesso em ${targetType} ${newInvNumber}!`, 'success');
+    return newInvoice;
+  };
+
   // ==================== FINANCE CRUD ====================
   const createAccountPayable = (ap: Omit<AccountPayable, 'id'>) => {
     const id = `ap-${Date.now()}`;
@@ -3709,12 +4002,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setAccountsReceivable((prev) =>
       prev.map((ar) => {
         if (ar.id === id) {
-          return {
+          const updated: AccountReceivable = {
             ...ar,
             status: 'pago',
             receivedAmount: ar.amount,
             receiptDate: new Date().toISOString().split('T')[0],
           };
+          pushRecordToSupabase('contas_receber', 'update', updated);
+          return updated;
         }
         return ar;
       })
@@ -4648,6 +4943,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         salesHistory,
         setSalesHistory,
         cancelInvoice,
+        updateDocument,
+        deleteDocument,
+        clearSalesHistory,
+        convertQuoteToInvoice,
+        updateDocumentStatus,
         accountsPayable,
         createAccountPayable,
         updateAccountPayable,

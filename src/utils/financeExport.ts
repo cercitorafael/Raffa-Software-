@@ -2,6 +2,7 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import * as XLSX from 'xlsx';
 import { Company, Sale, LedgerEntry, ChartOfAccounts } from '../types';
+import { calculateNetSalesRevenue, calculateNetTax } from './documentUtils';
 
 export interface BalanceSheetRow {
   code: string;
@@ -41,9 +42,9 @@ export function calculateBalancete(
   });
 
   // Ensure accounts have representative balances if no direct ledger lines exist yet
-  // e.g. 71 Vendas, 24 Estado (IVA), 11 Caixa, 21 Clientes
-  const totalSalesRevenue = salesHistory.reduce((s, x) => s + x.total, 0);
-  const totalTax = salesHistory.reduce((s, x) => s + x.taxTotal, 0);
+  // e.g. 71 Vendas, 24 Estado (IVA), 11 Caixa, 21 Clientes (Strictly excluding ORC/PF)
+  const totalSalesRevenue = calculateNetSalesRevenue(salesHistory);
+  const totalTax = calculateNetTax(salesHistory);
   const netSales = totalSalesRevenue - totalTax;
 
   if (accountTotals['71'] && accountTotals['71'].credit === 0 && netSales > 0) {

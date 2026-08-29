@@ -316,8 +316,8 @@ export type InvoiceType =
   | 'FR'  // Fatura-Recibo
   | 'NC'  // Nota de Crédito
   | 'ND'  // Nota de Débito
-  | 'ORC' // Orçamento / Cotação
   | 'PF'  // Fatura Proforma
+  | 'ORC' // Orçamento (Legado)
   | 'GT'  // Guia de Transporte
   | 'GR'  // Guia de Remessa
   | 'RC'  // Recibo de Quitação
@@ -355,6 +355,10 @@ export interface Sale {
   fiscalSeries?: string;
   invoiceTemplateId?: string; // ID do modelo de fatura escolhido na emissão
   notes?: string;
+  status?: 'emitido' | 'anulado' | 'pago' | 'pendente' | 'aprovado' | 'recusado' | 'convertido' | 'cancelado';
+  validityDate?: string;
+  convertedToInvoiceNumber?: string;
+  convertedAt?: string;
 }
 
 export interface CashShift {

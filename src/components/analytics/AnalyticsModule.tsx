@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { useApp } from '../../context/AppContext';
+import { isEffectiveSale } from '../../utils/documentUtils';
 import {
   TrendingUp,
   BarChart3,
@@ -154,8 +155,12 @@ export const AnalyticsModule: React.FC = () => {
   };
 
   // Filter Sales according to date range, store, and payment method
+  // EXCLUDES quotations (ORC), proformas (PF), transport guides (GT/GR) from sales revenue
   const filteredSales = useMemo(() => {
     return salesHistory.filter((sale) => {
+      // Must be an effective commercial sale / invoice
+      if (!isEffectiveSale(sale)) return false;
+
       const saleDate = sale.date ? sale.date.substring(0, 10) : '';
 
       // Date filtering
