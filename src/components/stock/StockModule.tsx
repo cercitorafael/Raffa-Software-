@@ -159,16 +159,18 @@ export const StockModule: React.FC = () => {
   const canEdit = hasPermission('stock', 'edit');
   const canDelete = hasPermission('stock', 'delete');
 
-  // Filtered Stock Table
-  const filteredProducts = products.filter((p) => {
-    const q = searchQuery.toLowerCase();
-    const matchesSearch =
-      p.name.toLowerCase().includes(q) ||
-      p.sku.toLowerCase().includes(q) ||
-      p.barcode.includes(q);
-    const matchesCat = selectedCategoryFilter === 'all' || p.category === selectedCategoryFilter;
-    return matchesSearch && matchesCat;
-  });
+  // Filtered Stock Table (Strictly alphabetical across all sectors)
+  const filteredProducts = products
+    .filter((p) => {
+      const q = searchQuery.toLowerCase();
+      const matchesSearch =
+        p.name.toLowerCase().includes(q) ||
+        p.sku.toLowerCase().includes(q) ||
+        p.barcode.includes(q);
+      const matchesCat = selectedCategoryFilter === 'all' || p.category === selectedCategoryFilter;
+      return matchesSearch && matchesCat;
+    })
+    .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'pt', { sensitivity: 'base', numeric: true }));
 
   // Calculate Total Valuation (CMP)
   const totalStockValue = stock.reduce((sum, item) => sum + item.quantity * item.avgCost, 0);

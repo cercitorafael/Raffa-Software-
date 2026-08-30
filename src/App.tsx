@@ -23,6 +23,8 @@ import { FiscalAuditModal } from './components/settings/FiscalAuditModal';
 import { EventDrawer } from './components/events/EventDrawer';
 import { LoginScreen } from './components/auth/LoginScreen';
 import { LockScreen } from './components/auth/LockScreen';
+import { SubscriptionSuspendedScreen } from './components/auth/SubscriptionSuspendedScreen';
+import { SubscriptionModal } from './components/subscription/SubscriptionModal';
 import { ToastContainer } from './components/common/ToastContainer';
 import { ConfirmModal } from './components/common/ConfirmModal';
 
@@ -100,17 +102,32 @@ const MainLayout: React.FC = () => {
 };
 
 const AppContent: React.FC = () => {
-  const { isAuthenticated, isScreenLocked } = useApp();
+  const {
+    isAuthenticated,
+    isScreenLocked,
+    subscriptionInfo,
+    showSubscriptionModal,
+    setShowSubscriptionModal,
+  } = useApp();
 
   return (
     <>
       {!isAuthenticated ? (
         <LoginScreen />
+      ) : subscriptionInfo?.isSuspended ? (
+        <SubscriptionSuspendedScreen />
       ) : isScreenLocked ? (
         <LockScreen />
       ) : (
         <MainLayout />
       )}
+
+      {/* Global Subscription Details & Renewal Modal */}
+      <SubscriptionModal
+        isOpen={showSubscriptionModal}
+        onClose={() => setShowSubscriptionModal(false)}
+      />
+
       <ToastContainer />
     </>
   );

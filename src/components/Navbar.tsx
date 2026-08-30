@@ -27,6 +27,7 @@ import {
   ChevronRight,
 } from 'lucide-react';
 import { Role } from '../types';
+import { SubscriptionBadge } from './subscription/SubscriptionBadge';
 
 export const Navbar: React.FC<{ onOpenShiftModal: () => void }> = ({ onOpenShiftModal }) => {
   const {
@@ -233,6 +234,9 @@ export const Navbar: React.FC<{ onOpenShiftModal: () => void }> = ({ onOpenShift
               ))}
             </select>
           </div>
+
+          {/* License & Subscription Countdown Progress Badge */}
+          <SubscriptionBadge variant="navbar" />
 
           {/* Quick Price Checker & SAF-T PT */}
           <button

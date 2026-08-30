@@ -783,24 +783,26 @@ export const DocumentsModule: React.FC = () => {
     return matchesStatus && matchesQuery;
   });
 
-  // Mass Products Filtered List
-  const massFilteredProducts = products.filter((p) => {
-    const matchesSearch =
-      massSearchQuery.trim() === '' ||
-      p.name.toLowerCase().includes(massSearchQuery.toLowerCase()) ||
-      p.sku.toLowerCase().includes(massSearchQuery.toLowerCase()) ||
-      (p.barcode && p.barcode.toLowerCase().includes(massSearchQuery.toLowerCase()));
+  // Mass Products Filtered List (Alphabetically sorted)
+  const massFilteredProducts = products
+    .filter((p) => {
+      const matchesSearch =
+        massSearchQuery.trim() === '' ||
+        p.name.toLowerCase().includes(massSearchQuery.toLowerCase()) ||
+        p.sku.toLowerCase().includes(massSearchQuery.toLowerCase()) ||
+        (p.barcode && p.barcode.toLowerCase().includes(massSearchQuery.toLowerCase()));
 
-    const matchesCategory =
-      massCategoryFilter === 'todas' ||
-      p.categoryId === massCategoryFilter ||
-      p.category === massCategoryFilter;
+      const matchesCategory =
+        massCategoryFilter === 'todas' ||
+        p.categoryId === massCategoryFilter ||
+        p.category === massCategoryFilter;
 
-    const available = getAvailableStock(p.id, currentStore.defaultWarehouseId);
-    const matchesStock = !massStockOnly || available > 0 || ['PF', 'ORC'].includes(docType);
+      const available = getAvailableStock(p.id, currentStore.defaultWarehouseId);
+      const matchesStock = !massStockOnly || available > 0 || ['PF', 'ORC'].includes(docType);
 
-    return matchesSearch && matchesCategory && matchesStock;
-  });
+      return matchesSearch && matchesCategory && matchesStock;
+    })
+    .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'pt', { sensitivity: 'base', numeric: true }));
 
   const massSelectedCount = Object.keys(massSelectedItems).length;
   const massTotalUnits = Object.values(massSelectedItems).reduce((sum: number, q) => sum + Number(q), 0);

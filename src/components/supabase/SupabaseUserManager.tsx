@@ -228,7 +228,7 @@ export const SupabaseUserManager: React.FC = () => {
 
   const fetchUsuarios = async () => {
     setLoading(true);
-    const { data, error } = await listarUsuarios();
+    const { data, error } = await listarUsuarios(currentCompany?.id);
     if (error) {
       if (error.code === '42P01' || error.message?.includes('does not exist')) {
         setConnStatus((prev) => ({
@@ -257,7 +257,8 @@ export const SupabaseUserManager: React.FC = () => {
   useEffect(() => {
     handleTestConnection();
     handleRunFullDiagnostics();
-  }, []);
+    fetchUsuarios();
+  }, [currentCompany?.id]);
 
   const handleSaveConfig = (e: React.FormEvent) => {
     e.preventDefault();

@@ -264,19 +264,180 @@ export async function upsertUserProfile(
 
 /**
  * 1. LISTAR / BUSCAR USUÁRIOS (READ ALL)
- * Retorna todos os usuários ordenados por data de criação decrescente.
+ * Retorna os usuários filtrando estritamente pela empresa especificada (ou atual)
  */
-export async function listarUsuarios(): Promise<{ data: Usuario[] | null; error: any }> {
+export async function listarUsuarios(
+  companyId?: string
+): Promise<{ data: Usuario[] | null; error: any }> {
   try {
-    const { data, error } = await supabase
+    let query = supabase
       .from('usuarios')
       .select('*')
-      .order('created_at', { ascending: false });
+      .order('nome', { ascending: true });
+
+    if (companyId && companyId !== 'ALL') {
+      query = query.eq('company_id', companyId);
+    }
+
+    const { data, error } = await query;
 
     if (error) throw error;
     return { data, error: null };
   } catch (error: any) {
     console.error('Erro ao listar usuários do Supabase:', error);
+    return { data: null, error };
+  }
+}
+
+/**
+ * 1.1 LISTAR / BUSCAR PRODUTOS (READ ALL)
+ * Filtra estritamente por company_id e ordena em ordem alfabética a nível de sistema
+ */
+export async function listarProdutos(
+  companyId?: string
+): Promise<{ data: any[] | null; error: any }> {
+  try {
+    let query = supabase
+      .from('produtos')
+      .select('*')
+      .order('name', { ascending: true });
+
+    if (companyId && companyId !== 'ALL') {
+      query = query.eq('company_id', companyId);
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+    return { data, error: null };
+  } catch (error: any) {
+    console.error('Erro ao listar produtos do Supabase:', error);
+    return { data: null, error };
+  }
+}
+
+/**
+ * 1.2 LISTAR / BUSCAR STOCK (READ ALL)
+ * Filtra estritamente por company_id
+ */
+export async function listarStock(
+  companyId?: string
+): Promise<{ data: any[] | null; error: any }> {
+  try {
+    let query = supabase.from('stock').select('*');
+
+    if (companyId && companyId !== 'ALL') {
+      query = query.eq('company_id', companyId);
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+    return { data, error: null };
+  } catch (error: any) {
+    console.error('Erro ao listar stock do Supabase:', error);
+    return { data: null, error };
+  }
+}
+
+/**
+ * 1.3 LISTAR / BUSCAR DOCUMENTOS & FATURAÇÃO (READ ALL)
+ * Filtra estritamente por company_id
+ */
+export async function listarDocumentosVendas(
+  companyId?: string
+): Promise<{ data: any[] | null; error: any }> {
+  try {
+    let query = supabase
+      .from('vendas')
+      .select('*')
+      .order('date', { ascending: false });
+
+    if (companyId && companyId !== 'ALL') {
+      query = query.eq('company_id', companyId);
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+    return { data, error: null };
+  } catch (error: any) {
+    console.error('Erro ao listar vendas do Supabase:', error);
+    return { data: null, error };
+  }
+}
+
+/**
+ * 1.4 LISTAR / BUSCAR ARMAZÉNS (READ ALL)
+ * Filtra estritamente por company_id
+ */
+export async function listarArmazens(
+  companyId?: string
+): Promise<{ data: any[] | null; error: any }> {
+  try {
+    let query = supabase
+      .from('armazens')
+      .select('*')
+      .order('name', { ascending: true });
+
+    if (companyId && companyId !== 'ALL') {
+      query = query.eq('company_id', companyId);
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+    return { data, error: null };
+  } catch (error: any) {
+    console.error('Erro ao listar armazéns do Supabase:', error);
+    return { data: null, error };
+  }
+}
+
+/**
+ * 1.5 LISTAR / BUSCAR LOJAS E TERMINAIS (READ ALL)
+ * Filtra estritamente por company_id
+ */
+export async function listarLojas(
+  companyId?: string
+): Promise<{ data: any[] | null; error: any }> {
+  try {
+    let query = supabase
+      .from('lojas')
+      .select('*')
+      .order('name', { ascending: true });
+
+    if (companyId && companyId !== 'ALL') {
+      query = query.eq('company_id', companyId);
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+    return { data, error: null };
+  } catch (error: any) {
+    console.error('Erro ao listar lojas do Supabase:', error);
+    return { data: null, error };
+  }
+}
+
+/**
+ * 1.6 LISTAR / BUSCAR CATEGORIAS (READ ALL)
+ * Filtra estritamente por company_id e ordena em ordem alfabética
+ */
+export async function listarCategorias(
+  companyId?: string
+): Promise<{ data: any[] | null; error: any }> {
+  try {
+    let query = supabase
+      .from('categorias')
+      .select('*')
+      .order('name', { ascending: true });
+
+    if (companyId && companyId !== 'ALL') {
+      query = query.eq('company_id', companyId);
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+    return { data, error: null };
+  } catch (error: any) {
+    console.error('Erro ao listar categorias do Supabase:', error);
     return { data: null, error };
   }
 }
@@ -826,7 +987,7 @@ CREATE TABLE IF NOT EXISTS public.profiles (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
--- 1. TABELA DE EMPRESAS & CONFIGURAÇÃO FISCAL
+-- 1. TABELA DE EMPRESAS & CONFIGURAÇÃO FISCAL (COM CONTROLO DE LICENÇA E ASSINATURA)
 CREATE TABLE IF NOT EXISTS public.empresas (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
@@ -853,9 +1014,21 @@ CREATE TABLE IF NOT EXISTS public.empresas (
     default_bank TEXT,
     active_invoice_template_id TEXT,
     invoice_templates JSONB DEFAULT '[]'::jsonb,
+    status TEXT DEFAULT 'active', -- 'active', 'suspended', 'trial', 'expired'
+    billing_cycle TEXT DEFAULT 'monthly', -- 'monthly' (30 dias) ou 'yearly' (365 dias)
+    subscription_expires_at TIMESTAMP WITH TIME ZONE,
+    subscription_started_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()),
+    plan TEXT DEFAULT 'Plano Profissional',
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
+
+-- Garantir que colunas de subscrição existem se a tabela já tiver sido criada antes
+ALTER TABLE public.empresas ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'active';
+ALTER TABLE public.empresas ADD COLUMN IF NOT EXISTS billing_cycle TEXT DEFAULT 'monthly';
+ALTER TABLE public.empresas ADD COLUMN IF NOT EXISTS subscription_expires_at TIMESTAMP WITH TIME ZONE;
+ALTER TABLE public.empresas ADD COLUMN IF NOT EXISTS subscription_started_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now());
+ALTER TABLE public.empresas ADD COLUMN IF NOT EXISTS plan TEXT DEFAULT 'Plano Profissional';
 
 -- 2. TABELA DE LOJAS & FILIAIS
 CREATE TABLE IF NOT EXISTS public.lojas (
@@ -899,6 +1072,7 @@ CREATE TABLE IF NOT EXISTS public.usuarios (
 -- 4. TABELA DE CATEGORIAS
 CREATE TABLE IF NOT EXISTS public.categorias (
     id TEXT PRIMARY KEY,
+    company_id TEXT DEFAULT 'comp-1',
     name TEXT NOT NULL,
     icon TEXT,
     color TEXT,
@@ -984,6 +1158,7 @@ CREATE TABLE IF NOT EXISTS public.armazens (
 -- 9. TABELA DE STOCK / INVENTÁRIO
 CREATE TABLE IF NOT EXISTS public.stock (
     id TEXT PRIMARY KEY,
+    company_id TEXT DEFAULT 'comp-1',
     product_id TEXT NOT NULL,
     warehouse_id TEXT NOT NULL,
     quantity NUMERIC DEFAULT 0,

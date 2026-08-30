@@ -25,6 +25,7 @@ import {
 } from 'lucide-react';
 import { sound } from '../utils/audio';
 import { UserPermissions } from '../types';
+import { SubscriptionBadge } from './subscription/SubscriptionBadge';
 
 export const Sidebar: React.FC = () => {
   const {
@@ -338,8 +339,17 @@ export const Sidebar: React.FC = () => {
         })}
       </div>
 
-      {/* Operator Mini-Card & System Status */}
+      {/* Operator Mini-Card, Subscription Status & System Status */}
       <div className="p-2.5 bg-[#0d0d0d] border-t border-[#262626] space-y-2 text-[11px]">
+        {/* Subscription License Health Badge */}
+        {!isSidebarCollapsed ? (
+          <SubscriptionBadge variant="sidebar" />
+        ) : (
+          <div className="flex justify-center">
+            <SubscriptionBadge variant="compact" />
+          </div>
+        )}
+
         {/* User Card */}
         {!isSidebarCollapsed ? (
           <div className="flex items-center justify-between p-2 bg-[#141414] rounded-lg border border-[#262626]">

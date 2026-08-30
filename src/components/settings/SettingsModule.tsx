@@ -54,6 +54,7 @@ import { InvoiceTemplatesSection } from './InvoiceTemplatesSection';
 import { UserPermissionsMatrix } from './UserPermissionsMatrix';
 import { VatSettingsSection } from './VatSettingsSection';
 import { RegisterCompanyModal } from '../auth/RegisterCompanyModal';
+import { calculateSubscription, WHATSAPP_CONTACTS, getWhatsAppRenewalUrl } from '../../utils/subscription';
 
 interface SettingsModuleProps {
   initialTab?: 'company' | 'vat' | 'branding' | 'templates' | 'saft' | 'users' | 'roles' | 'stores' | 'sync' | 'theme' | 'language';
@@ -105,6 +106,8 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
     currentLanguageOption,
     requestConfirm,
     notify,
+    setShowSubscriptionModal,
+    subscriptionInfo,
   } = useApp();
 
   const [activeTab, setActiveTab] = useState<'company' | 'vat' | 'branding' | 'templates' | 'saft' | 'users' | 'roles' | 'stores' | 'sync' | 'theme' | 'language'>(initialTab);
@@ -647,6 +650,45 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
         {/* ================= TAB 1: COMPANY SETTINGS ================= */}
         {activeTab === 'company' && (
           <div className="max-w-4xl mx-auto space-y-6">
+            {/* Subscription & License Card */}
+            <div className="bg-gradient-to-r from-[#141414] to-[#181818] rounded-xl border border-[#2a2a2a] p-5 shadow-md flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+              <div className="flex items-start space-x-3.5">
+                <div className="w-10 h-10 rounded-xl bg-[#c5a47e]/15 border border-[#c5a47e]/30 flex items-center justify-center text-[#c5a47e] shrink-0 mt-0.5">
+                  <ShieldCheck className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="flex items-center space-x-2">
+                    <h4 className="text-sm font-bold text-neutral-100">
+                      Licença & Assinatura: {subscriptionInfo.plan}
+                    </h4>
+                    <span className="text-[10px] px-2 py-0.5 rounded-full font-mono font-bold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+                      {subscriptionInfo.billingCycle === 'yearly' ? 'Anual (365d)' : 'Mensal (30d)'}
+                    </span>
+                  </div>
+                  <p className="text-xs text-neutral-400 mt-0.5">
+                    Validade: <strong className="text-neutral-200">{subscriptionInfo.expiresAtFormatted}</strong> • Restam <strong className="text-[#c5a47e]">{subscriptionInfo.daysRemaining} dias ({subscriptionInfo.percentageRemaining}%)</strong>
+                  </p>
+
+                  <div className="w-48 sm:w-64 h-1.5 bg-black/60 rounded-full overflow-hidden mt-2 border border-white/10">
+                    <div
+                      className={`h-full rounded-full ${
+                        subscriptionInfo.daysRemaining <= 3 ? 'bg-rose-500' : subscriptionInfo.daysRemaining <= 7 ? 'bg-amber-500' : 'bg-emerald-500'
+                      }`}
+                      style={{ width: `${subscriptionInfo.percentageRemaining}%` }}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setShowSubscriptionModal(true)}
+                className="px-4 py-2 bg-[#c5a47e] hover:bg-[#b5946e] text-neutral-950 font-bold text-xs rounded-xl transition-all cursor-pointer shadow-md flex items-center space-x-1.5 shrink-0"
+              >
+                <span>Gerir Assinatura & Renovar</span>
+              </button>
+            </div>
+
             <div className="bg-[#141414] rounded-xl border border-[#262626] p-6 shadow-sm">
               <div className="flex items-center justify-between pb-4 border-b border-[#262626]">
                 <div className="flex items-center space-x-2">

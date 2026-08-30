@@ -45,12 +45,14 @@ export const PriceCheckerModal: React.FC = () => {
   if (!showPriceCheckerModal) return null;
 
   const filteredProducts = searchTerm.trim()
-    ? products.filter(
-        (p) =>
-          p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-          p.sku.toLowerCase().includes(searchTerm.toLowerCase()) ||
-          p.barcode.includes(searchTerm)
-      )
+    ? products
+        .filter(
+          (p) =>
+            p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+            p.sku.toLowerCase().includes(searchTerm.toLowerCase()) ||
+            p.barcode.includes(searchTerm)
+        )
+        .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'pt', { sensitivity: 'base', numeric: true }))
     : [];
 
   const handleSelectProduct = (p: Product) => {

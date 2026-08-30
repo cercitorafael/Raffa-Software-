@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Company,
   Store,
@@ -101,6 +101,7 @@ import {
   getSyncLogs,
   clearSyncLogs,
   SupabaseSyncLog,
+  mapSupabaseToCompany,
 } from '../lib/supabaseSync';
 import {
   getUserProfile,
@@ -112,6 +113,7 @@ import {
   buscarEmpresaEUsuarioPorLogin,
 } from '../lib/supabase';
 import { INDUSTRY_PRESETS, IndustryPreset } from '../data/industryPresets';
+import { calculateSubscription, SubscriptionInfo } from '../utils/subscription';
 
 export interface CartItem extends SaleItem {
   image?: string;
@@ -140,7 +142,7 @@ export interface AppContextType {
   addCompany: (comp: Omit<Company, 'id'>) => void;
   updateCompany: (idOrUpdates: string | Partial<Company>, comp?: Partial<Company>) => void;
   deleteCompany: (id: string) => void;
-  generateNextCompanyId: () => string;
+  generateNextCompanyId: (nomeFantasiaOrName?: string) => string;
   registerClientCompany: (params: {
     company: {
       id?: string;
@@ -171,6 +173,12 @@ export interface AppContextType {
   currencyDefinition: CurrencyDefinition;
   supportedCurrencies: CurrencyDefinition[];
   formatCurrency: (amount: number, customCurrency?: string) => string;
+
+  // Subscription & Licensing
+  subscriptionInfo: SubscriptionInfo;
+  showSubscriptionModal: boolean;
+  setShowSubscriptionModal: (show: boolean) => void;
+  refreshCompanySubscription: () => Promise<void>;
 
   stores: Store[];
   currentStore: Store;
@@ -516,6 +524,31 @@ function saveToStorage<T>(key: string, value: T) {
   }
 }
 
+/**
+ * Organiza a lista de produtos em ordem alfabética de forma estrita em todos os setores e módulos
+ */
+export const sortProductsAlphabetically = <T extends { name: string }>(list: T[]): T[] => {
+  return [...list].sort((a, b) =>
+    (a.name || '').localeCompare(b.name || '', 'pt', { sensitivity: 'base', numeric: true })
+  );
+};
+
+/**
+ * Gera o company_id com base no nomeFantasia/nome da empresa e timestamp:
+ * Gera algo como: 'empresa-restauracao-bares-express-1724947200000'
+ */
+export const generateCompanySlug = (nameOrTradeName?: string): string => {
+  const base = (nameOrTradeName || 'empresa').trim();
+  const slug = base
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '');
+  return `empresa-${slug || 'empresa'}-${Date.now()}`;
+};
+
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   // Internationalization
   const { language, setLanguage, toggleLanguage, t, languages, currentLanguageOption } = useI18n();
@@ -621,7 +654,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     loadFromStorage('categories', initialCategories)
   );
   const [products, setProducts] = useState<Product[]>(() =>
-    loadFromStorage('products', initialProducts)
+    sortProductsAlphabetically(loadFromStorage('products', initialProducts))
   );
   const [warehouses, setWarehouses] = useState<Warehouse[]>(() =>
     loadFromStorage('warehouses', initialWarehouses)
@@ -722,6 +755,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Modals
   const [showPriceCheckerModal, setShowPriceCheckerModal] = useState<boolean>(false);
   const [showFiscalAuditModal, setShowFiscalAuditModal] = useState<boolean>(false);
+  const [showSubscriptionModal, setShowSubscriptionModal] = useState<boolean>(false);
+
+  // Subscription Info calculated dynamically
+  const subscriptionInfo = useMemo(() => {
+    return calculateSubscription(currentCompany);
+  }, [currentCompany]);
 
   // Confirm Modal & Notifications
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState | null>(null);
@@ -1515,6 +1554,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const newUser: User = {
       ...userData,
       id,
+      companyId: userData.companyId || currentCompany.id,
+      storeId: userData.storeId || currentStore.id,
       role: isAdmin ? 'admin' : userRole,
       roleId: isAdmin ? 'admin' : (userData.roleId || userRole),
       permissions,
@@ -2080,7 +2121,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // ==================== TENANCY CRUD (Companies, Stores, Terminals, Series) ====================
   const addCompany = (comp: Omit<Company, 'id'>) => {
-    const id = `comp-${Date.now()}`;
+    const rawName = comp.tradeName || (comp as any).nomeFantasia || comp.name || 'empresa';
+    const id = generateCompanySlug(rawName);
     const newComp: Company = { ...comp, id };
     setCompanies((prev) => [...prev, newComp]);
     pushRecordToSupabase('empresas', 'insert', newComp);
@@ -2129,6 +2171,27 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     sound.playSuccessChime();
   };
 
+  const refreshCompanySubscription = useCallback(async () => {
+    if (!currentCompany?.id) return;
+    try {
+      const { data, error } = await supabase
+        .from('empresas')
+        .select('*')
+        .eq('id', currentCompany.id)
+        .single();
+      if (!error && data) {
+        const mapped = mapSupabaseToCompany(data);
+        updateCompany(currentCompany.id, mapped);
+        notify('Dados da licença e assinatura atualizados!', 'success');
+      } else {
+        notify('Licença sincronizada localmente.', 'info');
+      }
+    } catch (e) {
+      console.error('Erro ao verificar assinatura:', e);
+      notify('Licença verificada.', 'info');
+    }
+  }, [currentCompany?.id, updateCompany, notify]);
+
   const deleteCompany = (id: string) => {
     if (companies.length <= 1) {
       notify('Não é possível eliminar a única empresa registada.', 'warning');
@@ -2147,9 +2210,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   /**
-   * Gera o próximo identificador de empresa cliente no padrão 'empresa-cliente-2...', 'empresa-cliente-3...', etc.
+   * Gera o identificador de empresa com slug do nome fantasia / razão social e timestamp:
+   * 'empresa-restauracao-bares-express-1724947200000'
    */
-  const generateNextCompanyId = useCallback((): string => {
+  const generateNextCompanyId = useCallback((nomeFantasiaOrName?: string): string => {
+    if (nomeFantasiaOrName && nomeFantasiaOrName.trim()) {
+      return generateCompanySlug(nomeFantasiaOrName);
+    }
     const pattern = /^empresa-cliente-(\d+)/i;
     let maxNum = 1;
     companies.forEach((c) => {
@@ -2164,7 +2231,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   /**
    * Cadastra uma nova empresa de qualquer ramo de negócio com todos os dados e usuário Administrador,
-   * garantindo que o company_id seja 'empresa-cliente-2...' (ou 'empresa-cliente-X') sincronizado com Supabase
+   * garantindo isolamento multi-tenant e ID padronizado sincronizado com Supabase
    */
   const registerClientCompany = useCallback(
     async (params: {
@@ -2195,7 +2262,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       autoLogin?: boolean;
     }): Promise<{ success: boolean; companyId: string; user: User; error?: string }> => {
       try {
-        const companyId = (params.company.id?.trim()) || generateNextCompanyId();
+        const companyNameOrTrade = params.company.tradeName || (params.company as any).nomeFantasia || params.company.name;
+        const autoCompanyId = generateCompanySlug(companyNameOrTrade);
+        const companyId = (params.company.id?.trim()) || autoCompanyId;
         const storeId = `store-${companyId}-sede`;
         const terminalId = `term-${companyId}-01`;
         const warehouseId = `wh-${companyId}-default`;
@@ -2223,6 +2292,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           softwareCertNumber: '0000/AT',
           saftVersion: '1.04_01',
           activeInvoiceTemplateId: 'tmpl-agro-vendus',
+          status: 'active',
+          billingCycle: 'monthly',
+          subscriptionStartedAt: new Date().toISOString(),
+          subscriptionExpiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+          plan: 'Plano Profissional',
         };
 
         // 2. Loja Sede
@@ -2328,7 +2402,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setWarehouses((prev) => [...prev, newWarehouse]);
         setUsers((prev) => [newUser, ...prev]);
         setCategories((prev) => [...newCategories, ...prev]);
-        setProducts((prev) => [...initialIndustryProducts, ...prev]);
+        setProducts((prev) => sortProductsAlphabetically([...initialIndustryProducts, ...prev]));
         setStock((prev) => [...initialStockItems, ...prev]);
 
         // Sincronização automática para o Supabase (empresas, lojas, armazens, usuarios, profiles)
@@ -2443,7 +2517,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const addTerminal = (term: Omit<Terminal, 'id'>) => {
     const id = `term-${Date.now()}`;
-    const newTerm: Terminal = { ...term, id };
+    const newTerm: Terminal = {
+      ...term,
+      id,
+      storeId: term.storeId || currentStore.id,
+    };
+    (newTerm as any).companyId = currentCompany.id;
     setTerminals((prev) => [...prev, newTerm]);
     emitEvent('POS', 'terminal.created', { terminalId: id, code: newTerm.code });
     sound.playSuccessChime();
@@ -2506,7 +2585,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // ==================== PRODUCTS, WAREHOUSES & STOCK CRUD ====================
   const addCategory = (cat: Omit<ProductCategory, 'id'>) => {
     const id = `cat-${Date.now()}`;
-    const newCat = { ...cat, id };
+    const newCat = { ...cat, id, companyId: cat.companyId || currentCompany.id };
     setCategories((prev) => [...prev, newCat]);
     pushRecordToSupabase('categorias', 'insert', newCat);
     emitEvent('Stock', 'category.created', { categoryId: id, name: cat.name });
@@ -2537,7 +2616,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       id: newId,
       companyId: prodData.companyId || currentCompany.id,
     };
-    setProducts((prev) => [newProduct, ...prev]);
+    setProducts((prev) => sortProductsAlphabetically([newProduct, ...prev]));
 
     // Initialize stock record in current store's default warehouse
     const targetWhId = currentStore.defaultWarehouseId || warehouses[0]?.id || 'wh-default';
@@ -2566,14 +2645,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const updateProduct = (id: string, updates: Partial<Product>) => {
     setProducts((prev) =>
-      prev.map((p) => {
-        if (p.id === id) {
-          const updated = { ...p, ...updates };
-          pushRecordToSupabase('produtos', 'update', updated);
-          return updated;
-        }
-        return p;
-      })
+      sortProductsAlphabetically(
+        prev.map((p) => {
+          if (p.id === id) {
+            const updated = { ...p, ...updates };
+            pushRecordToSupabase('produtos', 'update', updated);
+            return updated;
+          }
+          return p;
+        })
+      )
     );
     emitEvent('Stock', 'stock.product.updated', { productId: id, updates });
     sound.playSuccessChime();
@@ -2722,7 +2803,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setStock((sPrev) => [...sPrev, ...newStockItems]);
       }
 
-      return updatedList;
+      return sortProductsAlphabetically(updatedList);
     });
 
     emitEvent('Stock', 'stock.product.bulk_imported', {
@@ -4804,6 +4885,88 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     window.location.reload();
   };
 
+  // Strictly filter state collections by current logged-in company and alphabetically sort products
+  const scopedProducts = useMemo(() => {
+    const compId = currentCompany?.id || 'comp-1';
+    const list = products.filter((p) => !p.companyId || p.companyId === compId);
+    return sortProductsAlphabetically(list);
+  }, [products, currentCompany?.id]);
+
+  const scopedStock = useMemo(() => {
+    const compId = currentCompany?.id || 'comp-1';
+    const currentProdIds = new Set(scopedProducts.map((p) => p.id));
+    const currentWhIds = new Set(warehouses.filter((w) => !w.companyId || w.companyId === compId).map((w) => w.id));
+    return stock.filter((s) => {
+      if ((s as any).companyId) {
+        return (s as any).companyId === compId;
+      }
+      return currentProdIds.has(s.productId) || currentWhIds.has(s.warehouseId);
+    });
+  }, [stock, scopedProducts, warehouses, currentCompany?.id]);
+
+  const scopedCategories = useMemo(() => {
+    const compId = currentCompany?.id || 'comp-1';
+    return categories
+      .filter((c) => !c.companyId || c.companyId === compId || c.companyId === 'ALL')
+      .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'pt', { sensitivity: 'base', numeric: true }));
+  }, [categories, currentCompany?.id]);
+
+  const scopedWarehouses = useMemo(() => {
+    const compId = currentCompany?.id || 'comp-1';
+    return warehouses.filter((w) => !w.companyId || w.companyId === compId);
+  }, [warehouses, currentCompany?.id]);
+
+  const scopedStores = useMemo(() => {
+    const compId = currentCompany?.id || 'comp-1';
+    return stores.filter((s) => !s.companyId || s.companyId === compId);
+  }, [stores, currentCompany?.id]);
+
+  const scopedTerminals = useMemo(() => {
+    const compId = currentCompany?.id || 'comp-1';
+    const storeIds = new Set(scopedStores.map((s) => s.id));
+    return terminals.filter((t) => {
+      if ((t as any).companyId) {
+        return (t as any).companyId === compId;
+      }
+      return storeIds.has(t.storeId);
+    });
+  }, [terminals, scopedStores, currentCompany?.id]);
+
+  const scopedUsers = useMemo(() => {
+    const compId = currentCompany?.id || 'comp-1';
+    return users.filter((u) => !u.companyId || u.companyId === compId || u.role === 'admin_master');
+  }, [users, currentCompany?.id]);
+
+  const scopedSalesHistory = useMemo(() => {
+    const compId = currentCompany?.id || 'comp-1';
+    return salesHistory.filter((s) => !s.companyId || s.companyId === compId);
+  }, [salesHistory, currentCompany?.id]);
+
+  const scopedCustomers = useMemo(() => {
+    const compId = currentCompany?.id || 'comp-1';
+    return customers.filter((c) => !c.companyId || c.companyId === compId);
+  }, [customers, currentCompany?.id]);
+
+  const scopedSuppliers = useMemo(() => {
+    const compId = currentCompany?.id || 'comp-1';
+    return suppliers.filter((s) => !s.companyId || s.companyId === compId);
+  }, [suppliers, currentCompany?.id]);
+
+  const scopedAccountsPayable = useMemo(() => {
+    const compId = currentCompany?.id || 'comp-1';
+    return accountsPayable.filter((a) => !a.companyId || a.companyId === compId);
+  }, [accountsPayable, currentCompany?.id]);
+
+  const scopedAccountsReceivable = useMemo(() => {
+    const compId = currentCompany?.id || 'comp-1';
+    return accountsReceivable.filter((a) => !a.companyId || a.companyId === compId);
+  }, [accountsReceivable, currentCompany?.id]);
+
+  const scopedShiftsHistory = useMemo(() => {
+    const compId = currentCompany?.id || 'comp-1';
+    return shiftsHistory.filter((s) => !s.companyId || s.companyId === compId);
+  }, [shiftsHistory, currentCompany?.id]);
+
   return (
     <AppContext.Provider
       value={{
@@ -4835,13 +4998,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         supportedCurrencies: SUPPORTED_CURRENCIES,
         formatCurrency: (amount: number, customCurrency?: string) =>
           formatCurrency(amount, customCurrency || currentCompany?.currency),
-        stores,
+        stores: scopedStores,
         currentStore,
         setCurrentStore,
         addStore,
         updateStore,
         deleteStore,
-        terminals,
+        terminals: scopedTerminals,
         currentTerminal,
         setCurrentTerminal,
         addTerminal,
@@ -4851,7 +5014,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         addFiscalSeries,
         updateFiscalSeries,
         deleteFiscalSeries,
-        users,
+        users: scopedUsers,
         currentUser,
         setCurrentUser,
         addUser,
@@ -4898,20 +5061,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         deleteEvent,
         clearEvents,
         reprocessEvent,
-        categories,
+        categories: scopedCategories,
         addCategory,
         updateCategory,
         deleteCategory,
-        products,
+        products: scopedProducts,
         addProduct,
         updateProduct,
         deleteProduct,
         importProducts,
-        warehouses,
+        warehouses: scopedWarehouses,
         addWarehouse,
         updateWarehouse,
         deleteWarehouse,
-        stock,
+        stock: scopedStock,
         getAvailableStock,
         lots,
         addLot,
@@ -4925,7 +5088,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         deductStockForItems,
         replenishStockForItems,
         activeShift,
-        shiftsHistory,
+        shiftsHistory: scopedShiftsHistory,
         openShift,
         closeShift,
         registerCashMovement,
@@ -4940,7 +5103,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setSelectedCustomer,
         clearCart,
         completeSale,
-        salesHistory,
+        salesHistory: scopedSalesHistory,
         setSalesHistory,
         cancelInvoice,
         updateDocument,
@@ -4948,12 +5111,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         clearSalesHistory,
         convertQuoteToInvoice,
         updateDocumentStatus,
-        accountsPayable,
+        accountsPayable: scopedAccountsPayable,
         createAccountPayable,
         updateAccountPayable,
         deleteAccountPayable,
         payAccountPayable,
-        accountsReceivable,
+        accountsReceivable: scopedAccountsReceivable,
         createAccountReceivable,
         updateAccountReceivable,
         deleteAccountReceivable,
@@ -4970,7 +5133,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         updateBankTransaction,
         deleteBankTransaction,
         reconcileBankTransaction,
-        suppliers,
+        suppliers: scopedSuppliers,
         addSupplier,
         updateSupplier,
         deleteSupplier,
@@ -5008,7 +5171,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         addEmployeeShift,
         updateEmployeeShift,
         deleteEmployeeShift,
-        customers,
+        customers: scopedCustomers,
         addCustomer,
         updateCustomer,
         deleteCustomer,
@@ -5028,6 +5191,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setShowPriceCheckerModal,
         showFiscalAuditModal,
         setShowFiscalAuditModal,
+        showSubscriptionModal,
+        setShowSubscriptionModal,
+        subscriptionInfo,
+        refreshCompanySubscription,
         isSidebarCollapsed,
         setIsSidebarCollapsed,
         toggleSidebar,

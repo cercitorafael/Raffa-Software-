@@ -69,14 +69,24 @@ export const RegisterCompanyModal: React.FC<RegisterCompanyModalProps> = ({
 }) => {
   const { registerClientCompany, generateNextCompanyId, companies } = useApp();
 
-  // Dynamic next suggested company_id (e.g. 'empresa-cliente-2...')
-  const suggestedCompanyId = generateNextCompanyId();
-
   // Step 1: Industry Preset Selection
   const [selectedIndustryId, setSelectedIndustryId] = useState<string>('supermercado');
 
+  // Slug generator helper
+  const computeCompanySlugId = (rawName?: string) => {
+    const base = (rawName || 'empresa').trim();
+    const slug = base
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9]/g, '-')
+      .replace(/-+/g, '-')
+      .replace(/^-|-$/g, '');
+    return `empresa-${slug || 'cliente'}-${Date.now()}`;
+  };
+
   // Step 2: Company Data
-  const [companyId, setCompanyId] = useState<string>(suggestedCompanyId);
+  const [companyId, setCompanyId] = useState<string>(() => computeCompanySlugId('Supermercado Express'));
   const [companyName, setCompanyName] = useState<string>('');
   const [tradeName, setTradeName] = useState<string>('');
   const [taxNumber, setTaxNumber] = useState<string>('');
@@ -110,9 +120,12 @@ export const RegisterCompanyModal: React.FC<RegisterCompanyModalProps> = ({
 
   const handleSelectIndustry = (preset: IndustryPreset) => {
     setSelectedIndustryId(preset.id);
-    if (!companyName) {
-      setCompanyName(`Empresa ${preset.name}`);
-      setTradeName(`${preset.name} Express`);
+    if (!companyName || companyName.startsWith('Empresa ')) {
+      const newCompName = `Empresa ${preset.name}`;
+      const newTradeName = `${preset.name} Express`;
+      setCompanyName(newCompName);
+      setTradeName(newTradeName);
+      setCompanyId(computeCompanySlugId(newTradeName));
     }
     sound.playBeep();
   };
@@ -174,7 +187,7 @@ export const RegisterCompanyModal: React.FC<RegisterCompanyModalProps> = ({
     setIsSubmitting(true);
 
     try {
-      const finalCompanyId = companyId.trim() || suggestedCompanyId;
+      const finalCompanyId = companyId.trim() || computeCompanySlugId(tradeName || companyName);
 
       const result = await registerClientCompany({
         company: {
@@ -395,7 +408,7 @@ export const RegisterCompanyModal: React.FC<RegisterCompanyModalProps> = ({
                     ID Multi-Empresa na Base de Dados (Supabase)
                   </span>
                   <span className="font-mono text-xs font-bold text-[#c5a47e]">
-                    {companyId || suggestedCompanyId}
+                    {companyId}
                   </span>
                 </div>
                 <div className="flex items-center space-x-1 text-[11px] text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-full border border-emerald-500/30 font-medium">
@@ -415,7 +428,13 @@ export const RegisterCompanyModal: React.FC<RegisterCompanyModalProps> = ({
                       type="text"
                       required
                       value={companyName}
-                      onChange={(e) => setCompanyName(e.target.value)}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setCompanyName(val);
+                        if (!tradeName.trim()) {
+                          setCompanyId(computeCompanySlugId(val));
+                        }
+                      }}
                       placeholder="ex: Comercial do Norte, Lda"
                       className="w-full pl-9 pr-3 py-2 bg-[#090909] border border-[#262626] rounded-xl text-neutral-100 placeholder:text-neutral-600 focus:outline-hidden focus:border-[#c5a47e]"
                     />
@@ -431,7 +450,11 @@ export const RegisterCompanyModal: React.FC<RegisterCompanyModalProps> = ({
                     <input
                       type="text"
                       value={tradeName}
-                      onChange={(e) => setTradeName(e.target.value)}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setTradeName(val);
+                        setCompanyId(computeCompanySlugId(val || companyName));
+                      }}
                       placeholder="ex: Super Norte Express"
                       className="w-full pl-9 pr-3 py-2 bg-[#090909] border border-[#262626] rounded-xl text-neutral-100 placeholder:text-neutral-600 focus:outline-hidden focus:border-[#c5a47e]"
                     />
@@ -550,7 +573,7 @@ export const RegisterCompanyModal: React.FC<RegisterCompanyModalProps> = ({
                   </h4>
                   <p className="text-[11px] text-neutral-400 mt-0.5">
                     Este utilizador terá perfil <strong>ADMIN</strong> com controlo total da empresa{' '}
-                    <strong>{companyName || suggestedCompanyId}</strong> e poderá aceder via Palavra-passe ou PIN.
+                    <strong>{companyName || tradeName || companyId}</strong> e poderá aceder via Palavra-passe ou PIN.
                   </p>
                 </div>
               </div>

@@ -146,16 +146,18 @@ export const POSModule: React.FC = () => {
     }
   };
 
-  // Filter products
-  const filteredProducts = products.filter((p) => {
-    const matchesCat = selectedCategory === 'all' || p.category === selectedCategory;
-    const q = searchQuery.toLowerCase();
-    const matchesSearch =
-      p.name.toLowerCase().includes(q) ||
-      p.sku.toLowerCase().includes(q) ||
-      p.barcode.includes(q);
-    return matchesCat && matchesSearch;
-  });
+  // Filter products (Sorted alphabetically)
+  const filteredProducts = products
+    .filter((p) => {
+      const matchesCat = selectedCategory === 'all' || p.category === selectedCategory;
+      const q = searchQuery.toLowerCase();
+      const matchesSearch =
+        p.name.toLowerCase().includes(q) ||
+        p.sku.toLowerCase().includes(q) ||
+        p.barcode.includes(q);
+      return matchesCat && matchesSearch;
+    })
+    .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'pt', { sensitivity: 'base', numeric: true }));
 
   // Calculate cart totals
   const subtotal = cart.reduce((sum, i) => sum + Number(i.unitPrice || 0) * Number(i.quantity || 0), 0);

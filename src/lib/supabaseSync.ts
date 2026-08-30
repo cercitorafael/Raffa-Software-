@@ -223,6 +223,11 @@ export function mapCompanyToSupabase(c: Partial<Company>) {
     default_bank: c.defaultBank || null,
     active_invoice_template_id: c.activeInvoiceTemplateId || 'tmpl-agro-vendus',
     invoice_templates: Array.isArray(c.invoiceTemplates) ? c.invoiceTemplates : [],
+    status: c.status || 'active',
+    billing_cycle: c.billingCycle || 'monthly',
+    subscription_expires_at: c.subscriptionExpiresAt || null,
+    subscription_started_at: c.subscriptionStartedAt || null,
+    plan: c.plan || 'Plano Profissional',
     updated_at: new Date().toISOString(),
   };
 }
@@ -254,6 +259,11 @@ export function mapSupabaseToCompany(row: any): Company {
     defaultBank: row.default_bank || '',
     activeInvoiceTemplateId: row.active_invoice_template_id || 'tmpl-agro-vendus',
     invoiceTemplates: Array.isArray(row.invoice_templates) ? row.invoice_templates : undefined,
+    status: row.status || 'active',
+    billingCycle: row.billing_cycle || row.billingCycle || 'monthly',
+    subscriptionExpiresAt: row.subscription_expires_at || row.subscriptionExpiresAt || undefined,
+    subscriptionStartedAt: row.subscription_started_at || row.subscriptionStartedAt || undefined,
+    plan: row.plan || 'Plano Profissional',
   };
 }
 
@@ -413,6 +423,7 @@ export function mapSupabaseToSupplier(row: any): Supplier {
 export function mapCategoryToSupabase(cat: Partial<ProductCategory>) {
   return {
     id: cat.id,
+    company_id: cat.companyId || undefined,
     name: cat.name || '',
     icon: cat.icon || null,
     color: cat.color || null,
@@ -423,6 +434,7 @@ export function mapCategoryToSupabase(cat: Partial<ProductCategory>) {
 export function mapSupabaseToCategory(row: any): ProductCategory {
   return {
     id: String(row.id),
+    companyId: row.company_id || undefined,
     name: row.name || 'Geral',
     icon: row.icon || undefined,
     color: row.color || undefined,
@@ -627,6 +639,7 @@ export function mapSupabaseToAccountReceivable(row: any): AccountReceivable {
 export function mapStockToSupabase(s: Partial<StockItem>) {
   return {
     id: s.id,
+    company_id: s.companyId || undefined,
     product_id: s.productId,
     warehouse_id: s.warehouseId,
     quantity: s.quantity || 0,
@@ -641,6 +654,7 @@ export function mapStockToSupabase(s: Partial<StockItem>) {
 export function mapSupabaseToStock(row: any): StockItem {
   return {
     id: String(row.id),
+    companyId: row.company_id || undefined,
     productId: String(row.product_id),
     warehouseId: String(row.warehouse_id),
     quantity: Number(row.quantity) || 0,
@@ -1186,6 +1200,15 @@ export async function pullTableFromSupabase(
       }
     }
 
+    // Apply specific ordering per table
+    if (table === 'produtos' || table === 'categorias' || table === 'lojas' || table === 'armazens') {
+      query = query.order('name', { ascending: true });
+    } else if (table === 'usuarios') {
+      query = query.order('nome', { ascending: true });
+    } else if (table === 'vendas') {
+      query = query.order('date', { ascending: false });
+    }
+
     // Apply Profile scoping
     if (options?.profileId && options.profileId !== 'ALL' && table === 'profiles') {
       query = query.eq('id', options.profileId);
@@ -1207,7 +1230,12 @@ export async function pullTableFromSupabase(
       return { success: false, data: [], count: 0, error: errorMsg };
     }
 
-    const mapped = Array.isArray(data) ? data.map(mapper) : [];
+    let mapped = Array.isArray(data) ? data.map(mapper) : [];
+
+    // Ensure system-wide alphabetical sorting on products
+    if (table === 'produtos') {
+      mapped = mapped.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'pt', { sensitivity: 'base', numeric: true }));
+    }
     const scopeDesc = options?.companyId && options.companyId !== 'ALL'
       ? ` (Empresa: ${options.companyId})`
       : '';
@@ -1370,6 +1398,15 @@ export async function pullAllFromSupabase(options?: {
         }
       }
 
+      // Apply specific ordering per table
+      if (table === 'produtos' || table === 'categorias' || table === 'lojas' || table === 'armazens') {
+        query = query.order('name', { ascending: true });
+      } else if (table === 'usuarios') {
+        query = query.order('nome', { ascending: true });
+      } else if (table === 'vendas') {
+        query = query.order('date', { ascending: false });
+      }
+
       // Apply profile filter if specified for profiles table
       if (options?.profileId && options.profileId !== 'ALL' && table === 'profiles') {
         query = query.eq('id', options.profileId);
@@ -1386,7 +1423,11 @@ export async function pullAllFromSupabase(options?: {
         return;
       }
       if (Array.isArray(data)) {
-        result.data[key] = data.map(mapper);
+        let mappedData = data.map(mapper);
+        if (table === 'produtos') {
+          mappedData = mappedData.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'pt', { sensitivity: 'base', numeric: true }));
+        }
+        result.data[key] = mappedData;
         result.counts[table] = data.length;
         result.tableResults[table] = {
           count: data.length,

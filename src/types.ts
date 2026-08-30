@@ -131,6 +131,9 @@ export interface VatRate {
   description?: string;
 }
 
+export type CompanyStatus = 'active' | 'suspended' | 'trial' | 'expired' | 'pending';
+export type BillingCycle = 'monthly' | 'yearly';
+
 export interface Company {
   id: string;
   name: string;
@@ -161,6 +164,13 @@ export interface Company {
   defaultBank?: string;
   activeInvoiceTemplateId?: string;
   invoiceTemplates?: InvoiceTemplateConfig[];
+
+  // Subscription & Licensing
+  status?: CompanyStatus | string;
+  billingCycle?: BillingCycle | string; // 'monthly' | 'yearly'
+  subscriptionExpiresAt?: string; // ISO date string (ex: '2026-09-30T00:00:00Z')
+  subscriptionStartedAt?: string;
+  plan?: string; // e.g. 'Plano Profissional', 'Plano Empresarial', 'Plano Agro POS'
 }
 
 export interface Store {
@@ -188,6 +198,7 @@ export interface Terminal {
 
 export interface ProductCategory {
   id: string;
+  companyId?: string;
   name: string;
   icon?: string;
   color?: string;
@@ -224,6 +235,7 @@ export interface Warehouse {
 
 export interface StockItem {
   id: string;
+  companyId?: string;
   productId: string;
   warehouseId: string;
   quantity: number;
