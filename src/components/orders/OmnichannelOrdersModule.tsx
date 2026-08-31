@@ -114,7 +114,7 @@ export const OmnichannelOrdersModule: React.FC = () => {
         <div>
           <div className="flex items-center space-x-2.5">
             <h1 className="text-lg font-bold text-white tracking-wide">
-              Gestão de Encomendas & Omnicanal
+              Gestão de Encomendas
             </h1>
             <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-semibold bg-indigo-500/20 text-indigo-300 border border-indigo-500/40">
               Click & Collect & E-Commerce

@@ -621,7 +621,6 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
           { id: 'theme', label: t('settings.tabs.theme') },
           { id: 'users', label: t('settings.tabs.users'), count: users.length },
           { id: 'stores', label: t('settings.tabs.stores'), count: stores.length },
-          { id: 'sync', label: t('settings.tabs.sync') },
         ].map((tab: any) => (
           <button
             key={tab.id}
@@ -1401,6 +1400,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
                         name: '',
                         username: '',
                         email: '',
+                        password: '',
                         roleId: roles?.[0]?.id || 'admin',
                         storeIds: [currentStore?.id || 'store-lis-1'],
                         pin: '1234',
@@ -1820,7 +1820,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
                 <input
                   type="text"
                   required
-                  value={userForm.name}
+                  value={userForm.name || ''}
                   onChange={(e) => setUserForm({ ...userForm, name: e.target.value })}
                   className="w-full bg-[#0d0d0d] border border-[#262626] rounded-md px-3 py-2 text-xs text-neutral-200 focus:outline-hidden"
                 />
@@ -1831,7 +1831,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
                 <input
                   type="text"
                   required
-                  value={userForm.username}
+                  value={userForm.username || ''}
                   onChange={(e) => setUserForm({ ...userForm, username: e.target.value })}
                   placeholder="ex: manuel.silva"
                   className="w-full bg-[#0d0d0d] border border-[#262626] rounded-md px-3 py-2 text-xs text-neutral-200 font-mono focus:outline-hidden"
@@ -1845,7 +1845,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
                     <input
                       type={showFormPassword ? 'text' : 'password'}
                       required
-                      value={userForm.password}
+                      value={userForm.password || ''}
                       onChange={(e) => setUserForm({ ...userForm, password: e.target.value })}
                       placeholder="Palavra-passe de login"
                       className="w-full bg-[#0d0d0d] border border-[#262626] rounded-md pl-3 pr-8 py-2 text-xs text-neutral-200 font-mono focus:outline-hidden"
@@ -1865,7 +1865,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
                   <input
                     type="password"
                     maxLength={6}
-                    value={userForm.pin}
+                    value={userForm.pin || ''}
                     onChange={(e) => setUserForm({ ...userForm, pin: e.target.value })}
                     className="w-full bg-[#0d0d0d] border border-[#262626] rounded-md px-3 py-2 text-xs text-neutral-200 font-mono focus:outline-hidden"
                   />
@@ -1875,7 +1875,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
               <div>
                 <label className="block text-xs font-medium text-neutral-300 mb-1">Perfil / Função (Role)</label>
                 <select
-                  value={userForm.roleId}
+                  value={userForm.roleId || ''}
                   onChange={(e) => setUserForm({ ...userForm, roleId: e.target.value })}
                   className="w-full bg-[#0d0d0d] border border-[#262626] rounded-md px-3 py-2 text-xs text-neutral-200 focus:outline-hidden"
                 >
@@ -1889,7 +1889,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
                 <label className="block text-xs font-medium text-neutral-300 mb-1">Email</label>
                 <input
                   type="email"
-                  value={userForm.email}
+                  value={userForm.email || ''}
                   onChange={(e) => setUserForm({ ...userForm, email: e.target.value })}
                   className="w-full bg-[#0d0d0d] border border-[#262626] rounded-md px-3 py-2 text-xs text-neutral-200 focus:outline-hidden"
                 />
@@ -1943,7 +1943,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
                 <input
                   type="text"
                   required
-                  value={storeForm.name}
+                  value={storeForm.name || ''}
                   onChange={(e) => setStoreForm({ ...storeForm, name: e.target.value })}
                   className="w-full bg-[#0d0d0d] border border-[#262626] rounded-md px-3 py-2 text-xs text-neutral-200 focus:outline-hidden"
                 />
@@ -1955,7 +1955,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
                   <input
                     type="text"
                     required
-                    value={storeForm.code}
+                    value={storeForm.code || ''}
                     onChange={(e) => setStoreForm({ ...storeForm, code: e.target.value })}
                     className="w-full bg-[#0d0d0d] border border-[#262626] rounded-md px-3 py-2 text-xs text-neutral-200 font-mono focus:outline-hidden"
                   />
@@ -1964,7 +1964,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
                   <label className="block text-xs font-medium text-neutral-300 mb-1">Telefone</label>
                   <input
                     type="text"
-                    value={storeForm.phone}
+                    value={storeForm.phone || ''}
                     onChange={(e) => setStoreForm({ ...storeForm, phone: e.target.value })}
                     className="w-full bg-[#0d0d0d] border border-[#262626] rounded-md px-3 py-2 text-xs text-neutral-200 focus:outline-hidden"
                   />
@@ -1975,7 +1975,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
                 <label className="block text-xs font-medium text-neutral-300 mb-1">Morada</label>
                 <input
                   type="text"
-                  value={storeForm.address}
+                  value={storeForm.address || ''}
                   onChange={(e) => setStoreForm({ ...storeForm, address: e.target.value })}
                   className="w-full bg-[#0d0d0d] border border-[#262626] rounded-md px-3 py-2 text-xs text-neutral-200 focus:outline-hidden"
                 />
@@ -1986,7 +1986,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
                   <label className="block text-xs font-medium text-neutral-300 mb-1">Cidade</label>
                   <input
                     type="text"
-                    value={storeForm.city}
+                    value={storeForm.city || ''}
                     onChange={(e) => setStoreForm({ ...storeForm, city: e.target.value })}
                     className="w-full bg-[#0d0d0d] border border-[#262626] rounded-md px-3 py-2 text-xs text-neutral-200 focus:outline-hidden"
                   />
@@ -1995,7 +1995,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
                   <label className="block text-xs font-medium text-neutral-300 mb-1">Código Postal</label>
                   <input
                     type="text"
-                    value={storeForm.postalCode}
+                    value={storeForm.postalCode || ''}
                     onChange={(e) => setStoreForm({ ...storeForm, postalCode: e.target.value })}
                     className="w-full bg-[#0d0d0d] border border-[#262626] rounded-md px-3 py-2 text-xs text-neutral-200 focus:outline-hidden"
                   />
@@ -2050,7 +2050,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
                 <input
                   type="text"
                   required
-                  value={terminalForm.name}
+                  value={terminalForm.name || ''}
                   onChange={(e) => setTerminalForm({ ...terminalForm, name: e.target.value })}
                   className="w-full bg-[#0d0d0d] border border-[#262626] rounded-md px-3 py-2 text-xs text-neutral-200 focus:outline-hidden"
                 />
@@ -2062,7 +2062,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
                   <input
                     type="text"
                     required
-                    value={terminalForm.code}
+                    value={terminalForm.code || ''}
                     onChange={(e) => setTerminalForm({ ...terminalForm, code: e.target.value })}
                     className="w-full bg-[#0d0d0d] border border-[#262626] rounded-md px-3 py-2 text-xs text-neutral-200 font-mono focus:outline-hidden"
                   />
@@ -2071,7 +2071,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
                   <label className="block text-xs font-medium text-neutral-300 mb-1">Série Faturação</label>
                   <input
                     type="text"
-                    value={terminalForm.series}
+                    value={terminalForm.series || ''}
                     onChange={(e) => setTerminalForm({ ...terminalForm, series: e.target.value })}
                     className="w-full bg-[#0d0d0d] border border-[#262626] rounded-md px-3 py-2 text-xs text-neutral-200 font-mono focus:outline-hidden"
                   />
@@ -2081,7 +2081,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
               <div>
                 <label className="block text-xs font-medium text-neutral-300 mb-1">Loja Afeta</label>
                 <select
-                  value={terminalForm.storeId}
+                  value={terminalForm.storeId || ''}
                   onChange={(e) => setTerminalForm({ ...terminalForm, storeId: e.target.value })}
                   className="w-full bg-[#0d0d0d] border border-[#262626] rounded-md px-3 py-2 text-xs text-neutral-200 focus:outline-hidden"
                 >

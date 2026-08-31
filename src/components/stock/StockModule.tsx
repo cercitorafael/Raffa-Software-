@@ -34,6 +34,7 @@ import { defaultVatRates } from '../../mockData';
 import { ProductImportExportModal } from './ProductImportExportModal';
 import { CategoryManagementModal } from './CategoryManagementModal';
 import { CategoryManagementTab } from './CategoryManagementTab';
+import { InventoryExtractTab } from './InventoryExtractTab';
 
 export const StockModule: React.FC = () => {
   const {
@@ -64,6 +65,7 @@ export const StockModule: React.FC = () => {
     addPurchaseRequisition,
     hasPermission,
     requestConfirm,
+    setActiveNavTab,
     notify,
   } = useApp();
 
@@ -77,7 +79,7 @@ export const StockModule: React.FC = () => {
 
   const currencySymbol = currentCompany?.currencySymbol || currencyDefinition?.symbol || 'Mt';
 
-  const [activeTab, setActiveTab] = useState<'overview' | 'categories' | 'warehouses' | 'lots' | 'movements' | 'transfer' | 'inventory_count' | 'reorder'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'categories' | 'warehouses' | 'lots' | 'movements' | 'inventory_extract' | 'transfer' | 'inventory_count' | 'reorder'>('overview');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategoryFilter, setSelectedCategoryFilter] = useState<string>('all');
   const [selectedWarehouseFilter, setSelectedWarehouseFilter] = useState<string>('all');
@@ -155,9 +157,37 @@ export const StockModule: React.FC = () => {
   const [inventoryFinalized, setInventoryFinalized] = useState<boolean>(false);
 
   // Permissions check
+  const canRead = hasPermission('stock', 'read') || currentUser?.role === 'admin';
   const canCreate = hasPermission('stock', 'create');
   const canEdit = hasPermission('stock', 'edit');
   const canDelete = hasPermission('stock', 'delete');
+
+  // RBAC Restricted Access UI
+  if (!canRead) {
+    return (
+      <div className="flex-1 flex flex-col items-center justify-center p-8 bg-[#0a0a0a] text-center space-y-4 select-none">
+        <div className="w-16 h-16 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-400 flex items-center justify-center shadow-lg">
+          <ShieldAlert className="w-8 h-8" />
+        </div>
+        <div className="max-w-md space-y-2">
+          <h3 className="text-base font-serif font-bold text-white">
+            Acesso Restrito ao Stock & Inventário
+          </h3>
+          <p className="text-xs text-neutral-400">
+            O seu perfil atual (<strong>{currentUser?.name}</strong> &bull; {currentUser?.role?.toUpperCase()}) não tem permissão para aceder à gestão de stock, lotes, transferências e inventário.
+          </p>
+        </div>
+        <div className="pt-2 flex items-center space-x-3">
+          <button
+            onClick={() => setActiveNavTab('pos')}
+            className="px-4 py-2 bg-[#c5a47e] hover:bg-[#b5946e] text-neutral-950 font-bold text-xs rounded-xl cursor-pointer shadow-md transition-colors"
+          >
+            Ir para o Ponto de Venda (POS)
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   // Filtered Stock Table (Strictly alphabetical across all sectors)
   const filteredProducts = products
@@ -495,6 +525,7 @@ export const StockModule: React.FC = () => {
           { id: 'warehouses', label: 'Armazéns & Lojas', icon: WarehouseIcon, count: warehouses.length },
           { id: 'lots', label: 'Lotes & Validades', icon: Tag, count: lots.length },
           { id: 'movements', label: 'Histórico de Movimentos', icon: ArrowUpDown, count: stockMovements.length },
+          { id: 'inventory_extract', label: 'Extrato de Inventário', icon: FileSpreadsheet },
           { id: 'transfer', label: 'Transferências Internas', icon: RefreshCw },
           { id: 'inventory_count', label: 'Contagem Física', icon: FileSpreadsheet },
           { id: 'reorder', label: 'Reposição Automática', icon: AlertTriangle, count: lowStockProducts.length },
@@ -992,6 +1023,11 @@ export const StockModule: React.FC = () => {
               </table>
             </div>
           </div>
+        )}
+
+        {/* TAB: INVENTORY EXTRACT (Extrato de Inventário Filtrado) */}
+        {activeTab === 'inventory_extract' && (
+          <InventoryExtractTab />
         )}
 
         {/* TAB 5: STOCK TRANSFER */}

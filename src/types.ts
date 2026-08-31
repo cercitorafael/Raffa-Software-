@@ -266,6 +266,47 @@ export interface StockMovement {
   operatorId: string;
 }
 
+export interface InventoryExtractFilterState {
+  periodType: 'day' | 'month' | 'year' | 'custom';
+  selectedDate: string; // YYYY-MM-DD
+  selectedMonth: string; // YYYY-MM
+  selectedYear: number; // e.g. 2026
+  startDate: string;
+  endDate: string;
+  productId: string;
+  categoryId: string;
+  warehouseId: string;
+  movementType: string;
+  searchQuery: string;
+}
+
+export interface InventoryExtractRow {
+  id: string;
+  timestamp: string;
+  dateStr?: string;
+  productId: string;
+  productName: string;
+  sku: string;
+  unit: string;
+  category?: string;
+  categoryName?: string;
+  type: MovementType | string;
+  typeLabel: string;
+  originWarehouseName?: string;
+  targetWarehouseName?: string;
+  warehouseName: string;
+  quantityIn: number;
+  quantityOut: number;
+  netQuantity?: number;
+  runningBalance: number;
+  unitCost: number;
+  totalCost: number;
+  referenceDoc: string;
+  reason: string;
+  operatorName: string;
+  batchNumber?: string;
+}
+
 export interface LotBatch {
   id: string;
   productId: string;

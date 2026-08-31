@@ -25,6 +25,9 @@ export const LoginScreen: React.FC = () => {
     currentCompany,
     stores,
     currentStore,
+    currentTerminal,
+    activeShift,
+    formatCurrency,
     login,
     loginWithPin,
   } = useApp();

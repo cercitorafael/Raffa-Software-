@@ -2068,13 +2068,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const hasPermission = (module: keyof UserPermissions, action: keyof ModulePermission): boolean => {
     if (currentUser.role === 'admin' || currentUser.roleId === 'admin') return true;
-    if (!currentUser.permissions) {
-      const rolePerms = defaultPermissionsByRole[currentUser.role];
-      if (!rolePerms) return false;
-      const modPerm = rolePerms[module];
+    if (currentUser.permissions && currentUser.permissions[module]) {
+      const modPerm = currentUser.permissions[module];
       return modPerm ? !!modPerm[action] : false;
     }
-    const modPerm = currentUser.permissions[module];
+    const roleDef = roles.find((r) => r.id === currentUser.role || r.id === currentUser.roleId);
+    const rolePerms = roleDef?.permissions || defaultPermissionsByRole[currentUser.role];
+    if (!rolePerms) return false;
+    const modPerm = rolePerms[module];
     return modPerm ? !!modPerm[action] : false;
   };
 
@@ -4800,7 +4801,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       isOffline: !isOnline,
       isSynced: isOnline,
       invoiceTemplateId: currentCompany.activeInvoiceTemplateId,
-      notes: `Gerada a partir da Encomenda Omnicanal ${order.orderNumber}`,
+      notes: `Gerada a partir da Encomenda ${order.orderNumber}`,
     };
 
     // Check stock before converting omnichannel order
@@ -4828,7 +4829,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       items,
       order.pickupStoreId ? stores.find((s) => s.id === order.pickupStoreId)?.defaultWarehouseId : currentStore.defaultWarehouseId,
       invNumber,
-      `Venda de Encomenda Omnicanal ${order.orderNumber}`
+      `Venda de Encomenda ${order.orderNumber}`
     );
 
     setSalesHistory((prev) => [sale, ...prev]);

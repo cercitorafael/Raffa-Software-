@@ -12,6 +12,7 @@ import {
   Clock,
   Wifi,
   WifiOff,
+  Wallet,
 } from 'lucide-react';
 import { sound } from '../../utils/audio';
 
@@ -21,6 +22,8 @@ export const LockScreen: React.FC = () => {
     currentCompany,
     currentStore,
     currentTerminal,
+    activeShift,
+    formatCurrency,
     unlockScreen,
     logout,
     isOnline,
@@ -191,7 +194,7 @@ export const LockScreen: React.FC = () => {
         <h2 className="text-lg font-serif font-bold text-[#e5e5e5] text-center">
           {currentUser.name}
         </h2>
-        <div className="flex items-center space-x-2 mt-1 mb-4">
+        <div className="flex items-center space-x-2 mt-1 mb-2.5">
           <span className="text-[10px] px-2 py-0.5 rounded-full font-bold uppercase bg-[#c5a47e]/15 text-[#c5a47e] border border-[#c5a47e]/30">
             {currentUser.role.toUpperCase()}
           </span>
@@ -199,6 +202,23 @@ export const LockScreen: React.FC = () => {
           <span className="text-xs text-neutral-400 font-mono">
             {currentTerminal.code} ({currentStore.name})
           </span>
+        </div>
+
+        {/* Live Cash Register Status on Lock Screen */}
+        <div
+          className={`mb-4 px-3 py-1.5 rounded-xl border flex items-center space-x-2 text-xs transition-all ${
+            activeShift
+              ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
+              : 'bg-rose-500/10 border-rose-500/30 text-rose-300'
+          }`}
+        >
+          <Wallet className={`w-3.5 h-3.5 ${activeShift ? 'text-emerald-400' : 'text-rose-400'}`} />
+          <span className="font-semibold">{activeShift ? 'Caixa Aberto' : 'Caixa Fechado'}</span>
+          {activeShift && (
+            <span className="text-[10px] text-emerald-400/80 font-mono">
+              &bull; {activeShift.operatorName.split(' ')[0]} ({formatCurrency(activeShift.initialCash)})
+            </span>
+          )}
         </div>
 
         <p className="text-xs text-neutral-400 text-center mb-4">

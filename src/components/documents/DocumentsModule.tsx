@@ -50,6 +50,8 @@ import {
   ArrowRightCircle,
   Tag,
   ChevronDown,
+  Ban,
+  ArrowLeft,
 } from 'lucide-react';
 import { sound } from '../../utils/audio';
 import {
@@ -614,6 +616,30 @@ export const DocumentsModule: React.FC = () => {
   const taxTotal = Object.values(taxSummary).reduce((acc, t) => acc + t.tax, 0);
   const total = subtotal;
 
+  // Cancel Document Emission Handler
+  const handleCancelEmission = () => {
+    if (docItems.length > 0) {
+      requestConfirm({
+        title: 'Cancelar Emissão de Documento',
+        message: 'Tem a certeza que deseja cancelar a emissão deste documento? Todas as linhas e artigos adicionados serão descartados.',
+        confirmLabel: 'Sim, Cancelar Emissão',
+        cancelLabel: 'Continuar a Editar',
+        variant: 'danger',
+        onConfirm: () => {
+          setDocItems([]);
+          setDocumentNotes('');
+          setActiveTab('archive');
+          notify('Emissão de documento cancelada.', 'info');
+        },
+      });
+    } else {
+      setDocItems([]);
+      setDocumentNotes('');
+      setActiveTab('archive');
+      notify('Emissão cancelada.', 'info');
+    }
+  };
+
   // Emit Document Handler
   const handleEmitDocument = (e: React.FormEvent) => {
     e.preventDefault();
@@ -920,7 +946,7 @@ export const DocumentsModule: React.FC = () => {
             }`}
           >
             <Package className="w-3.5 h-3.5" />
-            <span>Encomendas & Omnicanal ({omnichannelOrders.length})</span>
+            <span>Encomendas ({omnichannelOrders.length})</span>
           </button>
 
           <button
@@ -944,11 +970,22 @@ export const DocumentsModule: React.FC = () => {
             {/* Step 1: Select Document Type */}
             <div className="bg-[#121212] border border-[#262626] rounded-2xl p-5 space-y-3 shadow-md">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <h3 className="text-xs font-bold uppercase tracking-wider text-neutral-300 flex items-center space-x-2">
-                  <ShieldCheck className="w-4 h-4 text-[#c5a47e]" />
-                  <span>1. Tipo de Documento Fiscal / Comercial</span>
-                </h3>
+                <div className="flex items-center space-x-3">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-neutral-300 flex items-center space-x-2">
+                    <ShieldCheck className="w-4 h-4 text-[#c5a47e]" />
+                    <span>1. Tipo de Documento Fiscal / Comercial</span>
+                  </h3>
+                </div>
                 <div className="flex items-center space-x-3 text-[11px] font-mono">
+                  <button
+                    type="button"
+                    onClick={handleCancelEmission}
+                    className="flex items-center space-x-1 px-3 py-1.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 rounded-xl text-xs font-semibold transition-all cursor-pointer shadow-xs active:scale-95 mr-2"
+                    title="Cancelar emissão de documento e voltar ao arquivo"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                    <span>Cancelar Emissão</span>
+                  </button>
                   <span className="text-neutral-400">
                     Série AT: <strong className="text-[#c5a47e]">{selectedSeries}</strong>
                   </span>
@@ -1726,13 +1763,24 @@ export const DocumentsModule: React.FC = () => {
 
             {/* Bottom Final Action Bar */}
             <div className="flex items-center justify-between pt-2">
-              <button
-                type="button"
-                onClick={() => setDocItems([])}
-                className="px-4 py-2 bg-[#181818] hover:bg-[#222] border border-[#2a2a2a] text-neutral-400 hover:text-white rounded-xl text-xs font-semibold cursor-pointer"
-              >
-                Limpar Formulário
-              </button>
+              <div className="flex items-center space-x-3">
+                <button
+                  type="button"
+                  onClick={handleCancelEmission}
+                  id="btn-cancel-document-emission"
+                  className="flex items-center space-x-1.5 px-4 py-2.5 bg-rose-950/30 hover:bg-rose-900/40 border border-rose-500/30 text-rose-300 rounded-xl text-xs font-semibold transition-all cursor-pointer shadow-sm active:scale-95"
+                >
+                  <X className="w-4 h-4" />
+                  <span>Cancelar Emissão</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDocItems([])}
+                  className="px-4 py-2.5 bg-[#181818] hover:bg-[#222] border border-[#2a2a2a] text-neutral-400 hover:text-white rounded-xl text-xs font-semibold cursor-pointer"
+                >
+                  Limpar Linhas
+                </button>
+              </div>
 
               <button
                 type="submit"
@@ -2008,19 +2056,19 @@ export const DocumentsModule: React.FC = () => {
                               </>
                             )}
 
-                            {/* Credit Note for standard sales */}
-                            {!isCreditNote && !isQuote && (
+                            {/* Credit Note / Cancel Document for standard sales */}
+                            {!isCreditNote && !isQuote && doc.status !== 'anulado' && (
                               <button
                                 onClick={() => {
                                   setCreditNoteModalDoc(doc);
                                   setCreditNoteModalReason(`Devolução / Anulação do documento ${doc.invoiceNumber}`);
                                   setCreditNoteModalRestock(true);
                                 }}
-                                className="p-1.5 bg-amber-950/20 hover:bg-amber-950/40 text-amber-400 rounded-lg transition-colors cursor-pointer flex items-center space-x-1"
-                                title="Emitir Nota de Crédito (Estorno & Reposição de Stock)"
+                                className="px-2 py-1 bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/30 rounded-lg transition-colors cursor-pointer flex items-center space-x-1"
+                                title="Cancelar Documento (Emitir Nota de Crédito de Anulação / Estorno)"
                               >
-                                <X className="w-3.5 h-3.5" />
-                                <span className="hidden xl:inline text-[10px]">NC</span>
+                                <Ban className="w-3.5 h-3.5 text-amber-400" />
+                                <span className="text-[10px] font-semibold">Cancelar / NC</span>
                               </button>
                             )}
 

@@ -27,10 +27,14 @@ import {
   Percent,
   FileSpreadsheet,
   Store as StoreIcon,
+  ShieldAlert,
+  Wallet,
 } from 'lucide-react';
 
 export const DashboardModule: React.FC = () => {
   const {
+    currentUser,
+    hasPermission,
     salesHistory,
     products,
     stock,
@@ -39,6 +43,7 @@ export const DashboardModule: React.FC = () => {
     accountsReceivable,
     currentCompany,
     stores,
+    currentTerminal,
     activeShift,
     setActiveNavTab,
     setShowPriceCheckerModal,
@@ -47,6 +52,33 @@ export const DashboardModule: React.FC = () => {
   } = useApp();
 
   const [timeRange, setTimeRange] = useState<'hoje' | 'semana' | 'mes' | 'ano'>('hoje');
+
+  // RBAC Permission check for Dashboard/Overview
+  if (!hasPermission('analytics', 'read') && currentUser?.role !== 'admin') {
+    return (
+      <div className="flex-1 flex flex-col items-center justify-center p-8 bg-[#0a0a0a] text-center space-y-4 select-none">
+        <div className="w-16 h-16 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-400 flex items-center justify-center shadow-lg">
+          <ShieldAlert className="w-8 h-8" />
+        </div>
+        <div className="max-w-md space-y-2">
+          <h3 className="text-base font-serif font-bold text-white">
+            Acesso Restrito à Visão Geral & Métricas
+          </h3>
+          <p className="text-xs text-neutral-400">
+            O seu perfil atual (<strong>{currentUser?.name}</strong> &bull; {currentUser?.role?.toUpperCase()}) não tem permissão para aceder à visão geral e indicadores executivos.
+          </p>
+        </div>
+        <div className="pt-2 flex items-center space-x-3">
+          <button
+            onClick={() => setActiveNavTab('pos')}
+            className="px-4 py-2 bg-[#c5a47e] hover:bg-[#b5946e] text-neutral-950 font-bold text-xs rounded-xl cursor-pointer shadow-md transition-colors"
+          >
+            Ir para o Ponto de Venda (POS)
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   // Key Calculated Metrics - STRICTLY Commercial Sales (FT, FS, FR, VD, ND minus NC).
   // Proformas (PF), Transport Guides (GT/GR) are NEVER counted as sales.
@@ -143,12 +175,23 @@ export const DashboardModule: React.FC = () => {
       {/* Header Bar */}
       <div className="bg-[#0f0f0f] border-b border-[#262626] px-6 py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
-          <div className="flex items-center space-x-2.5">
+          <div className="flex items-center space-x-2.5 flex-wrap gap-y-1">
             <h1 className="text-lg font-bold text-white tracking-wide">
               Cockpit Executivo & Inteligência de Negócio
             </h1>
             <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-semibold bg-[#c5a47e]/20 text-[#c5a47e] border border-[#c5a47e]/40">
               Live Real-Time
+            </span>
+            <span
+              className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-semibold flex items-center space-x-1 border ${
+                activeShift
+                  ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+                  : 'bg-rose-500/15 text-rose-400 border-rose-500/30'
+              }`}
+              title={activeShift ? `Caixa Aberto por ${activeShift.operatorName} (${currentTerminal?.code || 'POS-01'})` : 'Caixa Fechado'}
+            >
+              <Wallet className="w-3 h-3 shrink-0" />
+              <span>{activeShift ? `Caixa Aberto (${activeShift.operatorName.split(' ')[0]})` : 'Caixa Fechado'}</span>
             </span>
           </div>
           <p className="text-xs text-neutral-400 mt-0.5">
@@ -332,12 +375,12 @@ export const DashboardModule: React.FC = () => {
             </button>
 
             <button
-              onClick={() => setShowOfflineSyncModal(true)}
+              onClick={() => setActiveNavTab('documents')}
               className="p-3 rounded-lg bg-[#171717] hover:bg-[#202020] border border-[#262626] hover:border-[#c5a47e]/50 flex flex-col items-center text-center group transition-all cursor-pointer"
             >
               <Clock className="w-5 h-5 text-cyan-400 mb-1.5 group-hover:scale-110 transition-transform" />
-              <span className="text-xs font-semibold text-white">Modo Offline</span>
-              <span className="text-[10px] text-neutral-400">IndexedDB & Sync</span>
+              <span className="text-xs font-semibold text-white">Arquivo Fiscal</span>
+              <span className="text-[10px] text-neutral-400">Histórico de Vendas</span>
             </button>
 
             <button

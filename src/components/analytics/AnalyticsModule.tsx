@@ -24,6 +24,7 @@ import {
   ChevronDown,
   PieChart as PieIcon,
   CheckCircle2,
+  ShieldAlert,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -68,8 +69,45 @@ type DatePreset =
   | 'custom';
 
 export const AnalyticsModule: React.FC = () => {
-  const { salesHistory, products, categories, stores, currentCompany, formatCurrency, notify } =
-    useApp();
+  const {
+    currentUser,
+    hasPermission,
+    setActiveNavTab,
+    salesHistory,
+    products,
+    categories,
+    stores,
+    currentCompany,
+    formatCurrency,
+    notify,
+  } = useApp();
+
+  // RBAC Permission check for Analytics/BI
+  if (!hasPermission('analytics', 'read') && currentUser?.role !== 'admin') {
+    return (
+      <div className="flex-1 flex flex-col items-center justify-center p-8 bg-[#0a0a0a] text-center space-y-4 select-none">
+        <div className="w-16 h-16 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-400 flex items-center justify-center shadow-lg">
+          <ShieldAlert className="w-8 h-8" />
+        </div>
+        <div className="max-w-md space-y-2">
+          <h3 className="text-base font-serif font-bold text-white">
+            Acesso Restrito aos Relatórios Analíticos & BI
+          </h3>
+          <p className="text-xs text-neutral-400">
+            O seu perfil atual (<strong>{currentUser?.name}</strong> &bull; {currentUser?.role?.toUpperCase()}) não tem permissão para aceder aos relatórios analíticos, gráficos e métricas de desempenho.
+          </p>
+        </div>
+        <div className="pt-2 flex items-center space-x-3">
+          <button
+            onClick={() => setActiveNavTab('pos')}
+            className="px-4 py-2 bg-[#c5a47e] hover:bg-[#b5946e] text-neutral-950 font-bold text-xs rounded-xl cursor-pointer shadow-md transition-colors"
+          >
+            Ir para o Ponto de Venda (POS)
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   // Filter States
   const [datePreset, setDatePreset] = useState<DatePreset>('this_month');

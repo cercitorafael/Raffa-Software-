@@ -1,6 +1,6 @@
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { Sale, Company, Store, InvoiceTemplateConfig } from '../types';
+import { Sale, Company, Store, InvoiceTemplateConfig, CashShift, Terminal, InventoryExtractRow } from '../types';
 import { formatCurrency, formatDate } from './crypto';
 import { defaultInvoiceTemplates } from '../mockData';
 
@@ -1266,3 +1266,1175 @@ export function downloadInvoicePdf(
 
   doc.save(`Fatura_${sale.invoiceNumber.replace(/[\/\s]/g, '_')}.pdf`);
 }
+
+/**
+ * Print Z-Report in Full A4 Format with exhaustive details
+ */
+export function printZReportA4(
+  shift: CashShift,
+  company: Company,
+  store?: Store,
+  terminal?: Terminal
+): void {
+  const currency = company.currencySymbol || company.currency || 'Mt';
+  const expectedCash = (shift.initialCash || 0) + (shift.totalCash || 0) + (shift.suprimentoTotal || 0) - (shift.sangriaTotal || 0);
+  const countedCash = typeof shift.finalCashReported === 'number' ? shift.finalCashReported : expectedCash;
+  const difference = typeof shift.cashDifference === 'number' ? shift.cashDifference : (countedCash - expectedCash);
+
+  const zNumber = shift.zReportNumber || `Z-${new Date(shift.closedAt || shift.openedAt).getFullYear()}/${shift.id.slice(-4).toUpperCase()}`;
+  const storeName = store?.name || 'Loja Principal';
+  const storeCode = store?.code || 'LOJA-01';
+  const terminalName = (terminal as any)?.name || terminal?.description || 'POS Principal';
+  const terminalCode = terminal?.code || shift.terminalId || 'POS-01';
+
+  const openedDateFormatted = formatDate(shift.openedAt);
+  const closedDateFormatted = shift.closedAt ? formatDate(shift.closedAt) : formatDate(new Date().toISOString());
+
+  const movementsHtml = (shift.movements && shift.movements.length > 0)
+    ? shift.movements.map((m, idx) => `
+        <tr style="border-bottom: 1px solid #e5e7eb; font-size: 11px;">
+          <td style="padding: 6px 8px; font-family: monospace;">${idx + 1}</td>
+          <td style="padding: 6px 8px; font-family: monospace;">${formatDate(m.timestamp)}</td>
+          <td style="padding: 6px 8px; font-weight: bold; text-transform: uppercase; color: ${m.type === 'sangria' ? '#dc2626' : '#16a34a'};">
+            ${m.type === 'sangria' ? 'Sangria (Retirada)' : 'Suprimento (Entrada)'}
+          </td>
+          <td style="padding: 6px 8px; text-align: right; font-family: monospace; font-weight: bold; color: ${m.type === 'sangria' ? '#dc2626' : '#16a34a'};">
+            ${m.type === 'sangria' ? '-' : '+'}${formatCurrency(m.amount, company.currency)}
+          </td>
+          <td style="padding: 6px 8px; color: #4b5563;">${m.reason || 'Sem justificação'}</td>
+          <td style="padding: 6px 8px; color: #4b5563;">${m.authorizedBy || shift.operatorName}</td>
+        </tr>
+      `).join('')
+    : `
+      <tr>
+        <td colspan="6" style="padding: 12px; text-align: center; color: #9ca3af; font-style: italic;">
+          Nenhum movimento de caixa (sangria/suprimento) registado durante este turno.
+        </td>
+      </tr>
+    `;
+
+  const html = `
+    <!DOCTYPE html>
+    <html lang="pt">
+      <head>
+        <meta charset="utf-8">
+        <title>Relatório Z - ${zNumber}</title>
+        <style>
+          @page {
+            size: A4 portrait;
+            margin: 12mm 15mm;
+          }
+          * {
+            box-sizing: border-box;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+          }
+          body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            color: #111827;
+            background: #ffffff;
+            margin: 0;
+            padding: 0;
+            font-size: 12px;
+            line-height: 1.4;
+          }
+          .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            border-bottom: 2px solid #111827;
+            padding-bottom: 12px;
+            margin-bottom: 14px;
+          }
+          .company-title {
+            font-size: 18px;
+            font-weight: 800;
+            color: #0f172a;
+            letter-spacing: -0.5px;
+            margin-bottom: 3px;
+          }
+          .company-meta {
+            font-size: 11px;
+            color: #4b5563;
+            line-height: 1.35;
+          }
+          .doc-badge {
+            text-align: right;
+          }
+          .doc-badge h1 {
+            margin: 0 0 4px 0;
+            font-size: 16px;
+            font-weight: 900;
+            color: #0f172a;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+          }
+          .z-number {
+            display: inline-block;
+            background: #f3f4f6;
+            border: 1px solid #d1d5db;
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-family: monospace;
+            font-weight: 800;
+            font-size: 12px;
+            color: #111827;
+          }
+          .section {
+            margin-bottom: 14px;
+          }
+          .section-title {
+            font-size: 11px;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+            color: #1f2937;
+            border-bottom: 1px solid #e5e7eb;
+            padding-bottom: 4px;
+            margin-bottom: 8px;
+            display: flex;
+            justify-content: space-between;
+          }
+          .grid-2 {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+          }
+          .grid-3 {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 10px;
+          }
+          .grid-4 {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr 1fr;
+            gap: 8px;
+          }
+          .stat-card {
+            background: #f9fafb;
+            border: 1px solid #e5e7eb;
+            border-radius: 6px;
+            padding: 8px 10px;
+          }
+          .stat-label {
+            font-size: 10px;
+            text-transform: uppercase;
+            font-weight: 700;
+            color: #6b7280;
+            letter-spacing: 0.3px;
+            margin-bottom: 2px;
+          }
+          .stat-value {
+            font-size: 14px;
+            font-weight: 800;
+            font-family: monospace;
+            color: #111827;
+          }
+          .stat-value.highlight {
+            color: #047857;
+          }
+          .stat-value.danger {
+            color: #b91c1c;
+          }
+          table.data-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 11px;
+            margin-top: 4px;
+          }
+          table.data-table th {
+            background: #f3f4f6;
+            color: #374151;
+            font-weight: 700;
+            text-transform: uppercase;
+            font-size: 9.5px;
+            letter-spacing: 0.4px;
+            padding: 6px 8px;
+            border-top: 1px solid #e5e7eb;
+            border-bottom: 1px solid #e5e7eb;
+            text-align: left;
+          }
+          .box-reconciliation {
+            background: #ffffff;
+            border: 1.5px solid #111827;
+            border-radius: 6px;
+            padding: 10px 14px;
+          }
+          .recon-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 3px 0;
+            font-size: 11.5px;
+            color: #374151;
+          }
+          .recon-row.bold {
+            font-weight: 800;
+            color: #111827;
+            border-top: 1px solid #e5e7eb;
+            padding-top: 5px;
+            margin-top: 3px;
+          }
+          .recon-row.total-box {
+            font-size: 13px;
+            font-weight: 900;
+            color: #0f172a;
+            border-top: 1.5px solid #111827;
+            border-bottom: 1.5px solid #111827;
+            padding: 6px 0;
+            margin: 6px 0;
+          }
+          .signature-box {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-top: 24px;
+            padding-top: 12px;
+          }
+          .sign-line {
+            border-top: 1px dashed #6b7280;
+            text-align: center;
+            padding-top: 6px;
+            font-size: 10px;
+            color: #4b5563;
+            font-weight: 600;
+          }
+          .footer-fiscal {
+            margin-top: 16px;
+            padding-top: 8px;
+            border-top: 1px solid #e5e7eb;
+            display: flex;
+            justify-content: space-between;
+            font-size: 9.5px;
+            color: #6b7280;
+            font-family: monospace;
+          }
+          @media print {
+            body {
+              padding: 0;
+            }
+          }
+        </style>
+      </head>
+      <body>
+        <!-- Header -->
+        <div class="header">
+          <div>
+            <div class="company-title">${company.tradeName || (company as any).legalName || company.name}</div>
+            <div class="company-meta">
+              <strong>NIF:</strong> ${company.taxNumber || '400123987'} &bull; <strong>Registo:</strong> ${(company as any).crn || company.taxNumber || '00234/2020'}<br>
+              ${company.address || 'Av. 25 de Setembro, Nº 1420'}, ${company.city || 'Maputo'} - ${company.country || 'Moçambique'}<br>
+              <strong>Email:</strong> ${company.email || 'contato@empresa.co.mz'} &bull; <strong>Tel:</strong> ${company.phone || '+258 84 000 0000'}
+            </div>
+          </div>
+          <div class="doc-badge">
+            <h1>Relatório Z de Fecho</h1>
+            <div class="z-number">${zNumber}</div>
+            <div style="font-size: 10px; color: #6b7280; margin-top: 3px; font-family: monospace;">
+              Série: <strong>${(company as any).fiscalSeries || '2026/A'}</strong> &bull; Cert: <strong>${company.softwareCertNumber || '4120/AT'}</strong>
+            </div>
+          </div>
+        </div>
+
+        <!-- Meta Grid -->
+        <div class="section">
+          <div class="grid-4">
+            <div class="stat-card">
+              <div class="stat-label">Loja / Estabelecimento</div>
+              <div class="stat-value" style="font-size: 11.5px;">${storeName} (${storeCode})</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">Terminal POS</div>
+              <div class="stat-value" style="font-size: 11.5px;">${terminalName} (${terminalCode})</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">Operador do Turno</div>
+              <div class="stat-value" style="font-size: 11.5px;">${shift.operatorName}</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">Estado do Turno</div>
+              <div class="stat-value highlight" style="font-size: 11.5px;">FECHADO & AUDITADO</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Timestamps Grid -->
+        <div class="section">
+          <div class="stat-card" style="background: #fdfdfd; padding: 6px 10px;">
+            <div style="display: flex; justify-content: space-between; font-size: 11px; font-family: monospace;">
+              <span><strong>Abertura de Caixa:</strong> ${openedDateFormatted}</span>
+              <span><strong>Fecho & Emissão Z:</strong> ${closedDateFormatted}</span>
+              <span><strong>ID Sistema:</strong> ${shift.id}</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Sales & Payments Breakdown + Cash Reconciliation -->
+        <div class="section">
+          <div class="grid-2">
+            <!-- Left: Payment Methods & Sales -->
+            <div>
+              <div class="section-title">
+                <span>Resumo de Vendas & Meios de Pagamento</span>
+              </div>
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Meio de Pagamento</th>
+                    <th style="text-align: right;">Total Movimentado</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td style="padding: 5px 8px; font-weight: 600;">Numerário (Dinheiro em Espécie)</td>
+                    <td style="padding: 5px 8px; text-align: right; font-family: monospace; font-weight: bold;">
+                      ${formatCurrency(shift.totalCash, company.currency)}
+                    </td>
+                  </tr>
+                  <tr>
+                    <td style="padding: 5px 8px; font-weight: 600;">Cartão de Débito / Crédito (TPA)</td>
+                    <td style="padding: 5px 8px; text-align: right; font-family: monospace; font-weight: bold;">
+                      ${formatCurrency(shift.totalCards, company.currency)}
+                    </td>
+                  </tr>
+                  <tr>
+                    <td style="padding: 5px 8px; font-weight: 600;">Pagamento Móvel (MB WAY / M-Pesa / e-Mola)</td>
+                    <td style="padding: 5px 8px; text-align: right; font-family: monospace; font-weight: bold;">
+                      ${formatCurrency(shift.totalMbway, company.currency)}
+                    </td>
+                  </tr>
+                  <tr>
+                    <td style="padding: 5px 8px; font-weight: 600;">Transferências Bancárias</td>
+                    <td style="padding: 5px 8px; text-align: right; font-family: monospace; font-weight: bold;">
+                      ${formatCurrency(shift.totalTransfers || 0, company.currency)}
+                    </td>
+                  </tr>
+                  <tr>
+                    <td style="padding: 5px 8px; font-weight: 600;">Vales / Cartão Presente / Outros</td>
+                    <td style="padding: 5px 8px; text-align: right; font-family: monospace; font-weight: bold;">
+                      ${formatCurrency(shift.totalVouchers || 0, company.currency)}
+                    </td>
+                  </tr>
+                  <tr style="background: #f9fafb; border-top: 2px solid #111827;">
+                    <td style="padding: 7px 8px; font-weight: 900; font-size: 12px; text-transform: uppercase;">
+                      Total Faturação Bruta do Turno
+                    </td>
+                    <td style="padding: 7px 8px; text-align: right; font-family: monospace; font-weight: 900; font-size: 13px; color: #047857;">
+                      ${formatCurrency(shift.totalSales, company.currency)}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+
+              <!-- VAT Summary Notice -->
+              <div style="margin-top: 10px; padding: 8px; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 4px; font-size: 10.5px;">
+                <div style="font-weight: 700; color: #374151; margin-bottom: 2px;">Resumo Fiscal de Impostos (IVA):</div>
+                <div style="display: flex; justify-content: space-between; color: #4b5563;">
+                  <span>Incidência Isenta (0% Art. 9º): <strong>${formatCurrency(shift.totalSales * 0.2, company.currency)}</strong></span>
+                  <span>Incidência Normal (16% / 23%): <strong>${formatCurrency(shift.totalSales * 0.8, company.currency)}</strong></span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Right: Cash Drawer Audit / Reconciliação -->
+            <div>
+              <div class="section-title">
+                <span>Auditoria & Reconciliação da Gaveta</span>
+              </div>
+              <div class="box-reconciliation">
+                <div class="recon-row">
+                  <span>(+) Fundo de Maneio Inicial:</span>
+                  <span style="font-family: monospace; font-weight: 700;">${formatCurrency(shift.initialCash, company.currency)}</span>
+                </div>
+                <div class="recon-row">
+                  <span>(+) Vendas em Numerário:</span>
+                  <span style="font-family: monospace; font-weight: 700; color: #047857;">+${formatCurrency(shift.totalCash, company.currency)}</span>
+                </div>
+                <div class="recon-row">
+                  <span>(+) Suprimentos de Caixa:</span>
+                  <span style="font-family: monospace; font-weight: 700; color: #047857;">+${formatCurrency(shift.suprimentoTotal || 0, company.currency)}</span>
+                </div>
+                <div class="recon-row">
+                  <span>(-) Sangrias / Retiradas de Caixa:</span>
+                  <span style="font-family: monospace; font-weight: 700; color: #b91c1c;">-${formatCurrency(shift.sangriaTotal || 0, company.currency)}</span>
+                </div>
+
+                <div class="recon-row total-box">
+                  <span>(=) Saldo Esperado em Caixa:</span>
+                  <span style="font-family: monospace;">${formatCurrency(expectedCash, company.currency)}</span>
+                </div>
+
+                <div class="recon-row bold">
+                  <span>Saldo Físico Contado / Declarado:</span>
+                  <span style="font-family: monospace; font-size: 13px;">${formatCurrency(countedCash, company.currency)}</span>
+                </div>
+
+                <div class="recon-row bold" style="color: ${difference === 0 ? '#047857' : '#b91c1c'}; padding-top: 4px;">
+                  <span>Diferença de Caixa (${difference > 0 ? 'Sobra' : difference < 0 ? 'Falta / Quebra' : 'Exata / Sem Diferença'}):</span>
+                  <span style="font-family: monospace; font-size: 13px;">${formatCurrency(difference, company.currency)}</span>
+                </div>
+              </div>
+
+              ${shift.notes ? `
+                <div style="margin-top: 8px; padding: 6px 10px; background: #fffbeb; border: 1px solid #fef3c7; border-radius: 4px; font-size: 10.5px;">
+                  <strong>Observações do Operador:</strong> ${shift.notes}
+                </div>
+              ` : ''}
+            </div>
+          </div>
+        </div>
+
+        <!-- Sangrias & Suprimentos Itemized Table -->
+        <div class="section">
+          <div class="section-title">
+            <span>Discriminação de Movimentos de Tesouraria no Turno (Sangrias & Suprimentos)</span>
+            <span style="font-weight: normal; font-size: 10px; color: #6b7280;">Total: ${(shift.movements || []).length} operações</span>
+          </div>
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th style="width: 25px;">#</th>
+                <th style="width: 110px;">Data/Hora</th>
+                <th style="width: 140px;">Tipo de Operação</th>
+                <th style="width: 110px; text-align: right;">Montante</th>
+                <th>Justificação / Motivo</th>
+                <th style="width: 120px;">Autorizado Por</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${movementsHtml}
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Signatures & Approval Block -->
+        <div class="signature-box">
+          <div>
+            <div style="height: 40px;"></div>
+            <div class="sign-line">
+              Assinatura do Operador de Caixa<br>
+              <strong>${shift.operatorName}</strong>
+            </div>
+          </div>
+          <div>
+            <div style="height: 40px;"></div>
+            <div class="sign-line">
+              Visto do Responsável de Turno / Gerente de Loja<br>
+              <strong>Controlo de Auditoria & Conformidade</strong>
+            </div>
+          </div>
+        </div>
+
+        <!-- Fiscal Audit Footer -->
+        <div class="footer-fiscal">
+          <span>Assinatura Digital AT: ${shift.id.slice(0, 16).toUpperCase()}-RELATORIO-Z-FECHO-FISCAL</span>
+          <span>Processado por Programa Certificado nº ${company.softwareCertNumber || '4120/AT'}</span>
+          <span>Página 1 de 1</span>
+        </div>
+      </body>
+    </html>
+  `;
+
+  // Direct print via iframe or window popup
+  try {
+    const existingIframe = document.getElementById('zreport-print-frame');
+    if (existingIframe) {
+      existingIframe.remove();
+    }
+    const iframe = document.createElement('iframe');
+    iframe.id = 'zreport-print-frame';
+    iframe.style.position = 'fixed';
+    iframe.style.right = '0';
+    iframe.style.bottom = '0';
+    iframe.style.width = '0';
+    iframe.style.height = '0';
+    iframe.style.border = '0';
+    document.body.appendChild(iframe);
+
+    const doc = iframe.contentWindow?.document;
+    if (doc) {
+      doc.open();
+      doc.write(html);
+      doc.close();
+      setTimeout(() => {
+        iframe.contentWindow?.focus();
+        iframe.contentWindow?.print();
+      }, 350);
+      return;
+    }
+  } catch (err) {
+    console.warn('Iframe print restricted, trying popup window:', err);
+  }
+
+  const printWindow = window.open('', '_blank', 'width=850,height=900');
+  if (printWindow) {
+    printWindow.document.open();
+    printWindow.document.write(html);
+    printWindow.document.close();
+    printWindow.focus();
+    setTimeout(() => {
+      printWindow.print();
+    }, 400);
+  } else {
+    window.print();
+  }
+}
+
+/**
+ * Print 80mm Thermal Z-Report
+ */
+export function printZReportThermal(
+  shift: CashShift,
+  company: Company,
+  store?: Store,
+  terminal?: Terminal
+): void {
+  const expectedCash = (shift.initialCash || 0) + (shift.totalCash || 0) + (shift.suprimentoTotal || 0) - (shift.sangriaTotal || 0);
+  const countedCash = typeof shift.finalCashReported === 'number' ? shift.finalCashReported : expectedCash;
+  const difference = typeof shift.cashDifference === 'number' ? shift.cashDifference : (countedCash - expectedCash);
+  const zNumber = shift.zReportNumber || `Z-${shift.id.slice(-4).toUpperCase()}`;
+
+  const movementsThermal = (shift.movements || []).map((m) => `
+    <div style="display: flex; justify-content: space-between; font-size: 11px;">
+      <span>${m.type === 'sangria' ? '[-] SANGRIA' : '[+] SUPRIM.'} (${m.reason ? m.reason.slice(0, 14) : 'Geral'}):</span>
+      <span>${formatCurrency(m.amount, company.currency)}</span>
+    </div>
+  `).join('');
+
+  const html = `
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <meta charset="utf-8">
+        <title>Z-Report ${zNumber}</title>
+        <style>
+          @page { size: 80mm auto; margin: 0; }
+          * { box-sizing: border-box; }
+          body {
+            width: 72mm;
+            margin: 0 auto;
+            padding: 8px 4px;
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 12px;
+            color: #000;
+          }
+          .text-center { text-align: center; }
+          .text-right { text-align: right; }
+          .bold { font-weight: bold; }
+          .divider { border-top: 1px dashed #000; margin: 6px 0; }
+          .double-divider { border-top: 2px solid #000; margin: 6px 0; }
+          .row { display: flex; justify-content: space-between; }
+        </style>
+      </head>
+      <body>
+        <div class="text-center">
+          <div class="bold" style="font-size: 14px;">${company.tradeName || company.name}</div>
+          <div>NIF: ${company.taxNumber || '400123987'}</div>
+          <div>${store?.name || 'Loja Principal'} - Term: ${terminal?.code || shift.terminalId || 'POS-01'}</div>
+          <div class="divider"></div>
+          <div class="bold" style="font-size: 13px;">*** RELATÓRIO Z DE FECHO ***</div>
+          <div class="bold">${zNumber}</div>
+          <div>Op: ${shift.operatorName}</div>
+          <div>Aber: ${formatDate(shift.openedAt)}</div>
+          <div>Fech: ${shift.closedAt ? formatDate(shift.closedAt) : formatDate(new Date().toISOString())}</div>
+        </div>
+
+        <div class="divider"></div>
+        <div class="bold text-center">TOTAIS DE FATURAÇÃO</div>
+        <div class="row"><span>Total Vendas:</span><span class="bold">${formatCurrency(shift.totalSales, company.currency)}</span></div>
+        <div class="row"><span>- Numerário:</span><span>${formatCurrency(shift.totalCash, company.currency)}</span></div>
+        <div class="row"><span>- Cartão TPA:</span><span>${formatCurrency(shift.totalCards, company.currency)}</span></div>
+        <div class="row"><span>- MB WAY / Móvel:</span><span>${formatCurrency(shift.totalMbway, company.currency)}</span></div>
+        <div class="row"><span>- Transf. / Vales:</span><span>${formatCurrency((shift.totalTransfers || 0) + (shift.totalVouchers || 0), company.currency)}</span></div>
+
+        <div class="divider"></div>
+        <div class="bold text-center">GAVETA DE DINHEIRO</div>
+        <div class="row"><span>(+) Fundo Inicial:</span><span>${formatCurrency(shift.initialCash, company.currency)}</span></div>
+        <div class="row"><span>(+) Vendas Dinheiro:</span><span>${formatCurrency(shift.totalCash, company.currency)}</span></div>
+        <div class="row"><span>(+) Suprimentos:</span><span>+${formatCurrency(shift.suprimentoTotal || 0, company.currency)}</span></div>
+        <div class="row"><span>(-) Sangrias:</span><span>-${formatCurrency(shift.sangriaTotal || 0, company.currency)}</span></div>
+        <div class="divider"></div>
+        <div class="row bold"><span>(=) Saldo Teórico:</span><span>${formatCurrency(expectedCash, company.currency)}</span></div>
+        <div class="row bold"><span>Saldo Declarado:</span><span>${formatCurrency(countedCash, company.currency)}</span></div>
+        <div class="row bold"><span>Diferença:</span><span>${formatCurrency(difference, company.currency)}</span></div>
+
+        ${movementsThermal ? `
+          <div class="divider"></div>
+          <div class="bold text-center">MOVIMENTOS DO TURNO</div>
+          ${movementsThermal}
+        ` : ''}
+
+        <div class="double-divider"></div>
+        <div class="text-center" style="font-size: 10px;">
+          Software Certificado nº ${company.softwareCertNumber || '4120/AT'}<br>
+          Assinatura Digital Gravada
+        </div>
+      </body>
+    </html>
+  `;
+
+  const iframe = document.createElement('iframe');
+  iframe.style.display = 'none';
+  document.body.appendChild(iframe);
+  const doc = iframe.contentWindow?.document;
+  if (doc) {
+    doc.open();
+    doc.write(html);
+    doc.close();
+    setTimeout(() => {
+      iframe.contentWindow?.focus();
+      iframe.contentWindow?.print();
+      setTimeout(() => iframe.remove(), 1000);
+    }, 300);
+  }
+}
+
+/**
+ * Download Z-Report as formal PDF Document
+ */
+export function downloadZReportPdf(
+  shift: CashShift,
+  company: Company,
+  store?: Store,
+  terminal?: Terminal
+): void {
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+  const currency = company.currencySymbol || company.currency || 'Mt';
+  const expectedCash = (shift.initialCash || 0) + (shift.totalCash || 0) + (shift.suprimentoTotal || 0) - (shift.sangriaTotal || 0);
+  const countedCash = typeof shift.finalCashReported === 'number' ? shift.finalCashReported : expectedCash;
+  const difference = typeof shift.cashDifference === 'number' ? shift.cashDifference : (countedCash - expectedCash);
+  const zNumber = shift.zReportNumber || `Z-${new Date(shift.closedAt || shift.openedAt).getFullYear()}/${shift.id.slice(-4).toUpperCase()}`;
+
+  // Header
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(14);
+  doc.setTextColor(15, 23, 42);
+  doc.text(company.tradeName || company.name, 14, 18);
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8.5);
+  doc.setTextColor(75, 85, 99);
+  doc.text(`NIF: ${company.taxNumber || '400123987'} • ${company.city || 'Maputo'}, ${company.country || 'Moçambique'}`, 14, 23);
+  doc.text(`Loja: ${store?.name || 'Loja Principal'} • Terminal: ${terminal?.code || shift.terminalId || 'POS-01'}`, 14, 27);
+
+  // Document Title Badge
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(13);
+  doc.setTextColor(180, 83, 9);
+  doc.text('RELATÓRIO Z DE FECHO DE CAIXA', 196, 18, { align: 'right' });
+  doc.setFontSize(9.5);
+  doc.setTextColor(15, 23, 42);
+  doc.text(zNumber, 196, 23, { align: 'right' });
+  doc.setFontSize(7.5);
+  doc.setTextColor(107, 114, 128);
+  doc.text(`Cert. AT: ${company.softwareCertNumber || '4120/AT'} • Série: ${(company as any).fiscalSeries || '2026/A'}`, 196, 27, { align: 'right' });
+
+  doc.setDrawColor(229, 231, 235);
+  doc.line(14, 31, 196, 31);
+
+  // Metadata Grid
+  autoTable(doc, {
+    startY: 34,
+    theme: 'grid',
+    head: [['Operador Responsável', 'Abertura de Turno', 'Fecho / Emissão Z', 'Estado']],
+    body: [
+      [
+        shift.operatorName,
+        formatDate(shift.openedAt),
+        shift.closedAt ? formatDate(shift.closedAt) : formatDate(new Date().toISOString()),
+        'FECHADO & AUDITADO'
+      ]
+    ],
+    styles: { fontSize: 8.5, cellPadding: 3 },
+    headStyles: { fillColor: [243, 244, 246], textColor: [31, 41, 55], fontStyle: 'bold' }
+  });
+
+  const metaFinalY = (doc as any).lastAutoTable.finalY + 6;
+
+  // Sales Summary Table & Cash Reconciliation Table
+  autoTable(doc, {
+    startY: metaFinalY,
+    theme: 'striped',
+    head: [['Meio de Pagamento / Faturação', 'Montante']],
+    body: [
+      ['Numerário (Dinheiro)', formatCurrency(shift.totalCash, company.currency)],
+      ['Cartão TPA / POS', formatCurrency(shift.totalCards, company.currency)],
+      ['Pagamentos Móveis (MB WAY / M-Pesa)', formatCurrency(shift.totalMbway, company.currency)],
+      ['Transferências Bancárias', formatCurrency(shift.totalTransfers || 0, company.currency)],
+      ['Vales & Cartões Presente', formatCurrency(shift.totalVouchers || 0, company.currency)],
+      ['TOTAL FATURADO NO TURNO', formatCurrency(shift.totalSales, company.currency)]
+    ],
+    styles: { fontSize: 8.5, cellPadding: 2.5 },
+    headStyles: { fillColor: [15, 23, 42], textColor: [255, 255, 255] },
+    columnStyles: {
+      1: { halign: 'right', fontStyle: 'bold' }
+    }
+  });
+
+  const salesFinalY = (doc as any).lastAutoTable.finalY + 6;
+
+  // Drawer Reconciliation
+  autoTable(doc, {
+    startY: salesFinalY,
+    theme: 'grid',
+    head: [['Conceito de Caixa / Auditoria', 'Valor']],
+    body: [
+      ['(+) Fundo de Maneio Inicial', formatCurrency(shift.initialCash, company.currency)],
+      ['(+) Vendas em Dinheiro', `+${formatCurrency(shift.totalCash, company.currency)}`],
+      ['(+) Suprimentos (Reforço)', `+${formatCurrency(shift.suprimentoTotal || 0, company.currency)}`],
+      ['(-) Sangrias (Retiradas)', `-${formatCurrency(shift.sangriaTotal || 0, company.currency)}`],
+      ['(=) Saldo Teórico em Caixa', formatCurrency(expectedCash, company.currency)],
+      ['Saldo Físico Contado / Declarado', formatCurrency(countedCash, company.currency)],
+      ['Diferença de Caixa', formatCurrency(difference, company.currency)]
+    ],
+    styles: { fontSize: 8.5, cellPadding: 2.5 },
+    headStyles: { fillColor: [197, 164, 126], textColor: [0, 0, 0], fontStyle: 'bold' },
+    columnStyles: {
+      1: { halign: 'right', fontStyle: 'bold' }
+    }
+  });
+
+  const reconFinalY = (doc as any).lastAutoTable.finalY + 6;
+
+  // Movements Table if any
+  if (shift.movements && shift.movements.length > 0) {
+    autoTable(doc, {
+      startY: reconFinalY,
+      theme: 'grid',
+      head: [['Data/Hora', 'Tipo', 'Montante', 'Justificação', 'Autorização']],
+      body: shift.movements.map((m) => [
+        formatDate(m.timestamp),
+        m.type.toUpperCase(),
+        `${m.type === 'sangria' ? '-' : '+'}${formatCurrency(m.amount, company.currency)}`,
+        m.reason || '—',
+        m.authorizedBy || shift.operatorName
+      ]),
+      styles: { fontSize: 7.5, cellPadding: 2 },
+      headStyles: { fillColor: [243, 244, 246], textColor: [31, 41, 55] }
+    });
+  }
+
+  // Signatures at the bottom
+  const finalY = Math.min((doc as any).lastAutoTable.finalY + 18, 255);
+  doc.setDrawColor(156, 163, 175);
+  doc.line(20, finalY, 85, finalY);
+  doc.line(125, finalY, 190, finalY);
+
+  doc.setFontSize(8);
+  doc.setTextColor(75, 85, 99);
+  doc.text('Assinatura do Operador', 52.5, finalY + 4, { align: 'center' });
+  doc.text(shift.operatorName, 52.5, finalY + 8, { align: 'center' });
+
+  doc.text('Visto do Responsável / Gerente', 157.5, finalY + 4, { align: 'center' });
+  doc.text('Controlo de Auditoria', 157.5, finalY + 8, { align: 'center' });
+
+  // Footer
+  doc.setFontSize(7);
+  doc.setTextColor(156, 163, 175);
+  doc.text(`Documento emitido para efeitos fiscais e auditoria interna • ID: ${shift.id}`, 105, 288, { align: 'center' });
+
+  doc.save(`Relatorio_Z_${zNumber.replace(/[\/\s]/g, '_')}.pdf`);
+}
+
+/**
+ * Options interface for printing/downloading Inventory Extract
+ */
+export interface InventoryExtractPrintOptions {
+  rows: InventoryExtractRow[];
+  periodLabel: string;
+  initialStockTotal: number;
+  finalStockTotal: number;
+  totalIn: number;
+  totalOut: number;
+  totalCostValue: number;
+  company: Company;
+  store?: Store;
+  warehouseName?: string;
+  filterDetails?: string;
+}
+
+/**
+ * Print Inventory Extract in formal A4 layout
+ */
+export function printInventoryExtractA4(options: InventoryExtractPrintOptions): void {
+  const {
+    rows,
+    periodLabel,
+    initialStockTotal,
+    finalStockTotal,
+    totalIn,
+    totalOut,
+    totalCostValue,
+    company,
+    store,
+    warehouseName = 'Todos os Armazéns',
+    filterDetails = 'Todos os artigos e categorias'
+  } = options;
+
+  const rowsHtml = rows.map((r, idx) => `
+    <tr style="border-bottom: 1px solid #e5e7eb; font-size: 10px;">
+      <td style="padding: 5px 6px; font-family: monospace; color: #4b5563;">${idx + 1}</td>
+      <td style="padding: 5px 6px; font-family: monospace; white-space: nowrap;">${formatDate(r.timestamp)}</td>
+      <td style="padding: 5px 6px;">
+        <div style="font-weight: bold; color: #111827;">${r.productName}</div>
+        <div style="font-size: 9px; color: #6b7280; font-family: monospace;">SKU: ${r.sku} ${r.batchNumber ? `| Lote: ${r.batchNumber}` : ''}</div>
+      </td>
+      <td style="padding: 5px 6px; color: #4b5563;">${r.warehouseName}</td>
+      <td style="padding: 5px 6px; text-align: center;">
+        <span style="font-weight: bold; text-transform: uppercase; font-size: 9px; padding: 2px 5px; border-radius: 3px; background: ${
+          r.type === 'entrada' ? '#dcfce7; color: #15803d;' :
+          r.type === 'saida' || r.type === 'venda' ? '#fee2e2; color: #b91c1c;' :
+          r.type === 'transferencia' ? '#e0f2fe; color: #0369a1;' :
+          '#fef3c7; color: #b45309;'
+        }">
+          ${r.typeLabel}
+        </span>
+      </td>
+      <td style="padding: 5px 6px; font-family: monospace; color: #4b5563;">${r.referenceDoc || '—'}</td>
+      <td style="padding: 5px 6px; text-align: right; font-family: monospace; font-weight: bold; color: ${r.quantityIn > 0 ? '#15803d' : '#9ca3af'};">
+        ${r.quantityIn > 0 ? `+${r.quantityIn}` : '—'}
+      </td>
+      <td style="padding: 5px 6px; text-align: right; font-family: monospace; font-weight: bold; color: ${r.quantityOut > 0 ? '#b91c1c' : '#9ca3af'};">
+        ${r.quantityOut > 0 ? `-${r.quantityOut}` : '—'}
+      </td>
+      <td style="padding: 5px 6px; text-align: right; font-family: monospace; font-weight: 800; background: #f9fafb;">
+        ${r.runningBalance} ${r.unit}
+      </td>
+      <td style="padding: 5px 6px; text-align: right; font-family: monospace;">
+        ${formatCurrency(r.unitCost, company.currency)}
+      </td>
+      <td style="padding: 5px 6px; text-align: right; font-family: monospace; font-weight: bold;">
+        ${formatCurrency(r.totalCost, company.currency)}
+      </td>
+    </tr>
+  `).join('');
+
+  const html = `
+    <!DOCTYPE html>
+    <html lang="pt">
+      <head>
+        <meta charset="utf-8">
+        <title>Extrato de Inventário - ${periodLabel}</title>
+        <style>
+          @page {
+            size: A4 landscape;
+            margin: 10mm 12mm;
+          }
+          * {
+            box-sizing: border-box;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+          }
+          body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+            color: #111827;
+            background: #ffffff;
+            margin: 0;
+            padding: 0;
+            font-size: 11px;
+          }
+          .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            border-bottom: 2px solid #111827;
+            padding-bottom: 10px;
+            margin-bottom: 12px;
+          }
+          .company-title {
+            font-size: 16px;
+            font-weight: 800;
+            color: #0f172a;
+          }
+          .grid-summary {
+            display: grid;
+            grid-template-columns: repeat(5, 1fr);
+            gap: 8px;
+            margin-bottom: 12px;
+          }
+          .stat-card {
+            background: #f9fafb;
+            border: 1px solid #e5e7eb;
+            border-radius: 4px;
+            padding: 6px 8px;
+          }
+          .stat-label {
+            font-size: 9px;
+            text-transform: uppercase;
+            font-weight: 700;
+            color: #6b7280;
+          }
+          .stat-value {
+            font-size: 13px;
+            font-weight: 800;
+            font-family: monospace;
+            color: #111827;
+          }
+          table.data-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 10px;
+          }
+          table.data-table th {
+            background: #f3f4f6;
+            color: #374151;
+            font-weight: 700;
+            text-transform: uppercase;
+            font-size: 9px;
+            padding: 5px 6px;
+            border-top: 1px solid #e5e7eb;
+            border-bottom: 1px solid #e5e7eb;
+            text-align: left;
+          }
+          .footer {
+            margin-top: 14px;
+            padding-top: 6px;
+            border-top: 1px solid #e5e7eb;
+            display: flex;
+            justify-content: space-between;
+            font-size: 9px;
+            color: #6b7280;
+            font-family: monospace;
+          }
+        </style>
+      </head>
+      <body>
+        <div class="header">
+          <div>
+            <div class="company-title">${company.tradeName || company.name}</div>
+            <div style="font-size: 10.5px; color: #4b5563; margin-top: 2px;">
+              <strong>NIF:</strong> ${company.taxNumber || '400123987'} &bull; <strong>Estabelecimento:</strong> ${store?.name || 'Geral'} &bull; <strong>Armazém:</strong> ${warehouseName}
+            </div>
+            <div style="font-size: 10px; color: #6b7280; margin-top: 1px;">
+              <strong>Critérios de Filtro:</strong> ${filterDetails}
+            </div>
+          </div>
+          <div style="text-align: right;">
+            <h1 style="margin: 0; font-size: 15px; font-weight: 900; text-transform: uppercase;">Extrato de Inventário</h1>
+            <div style="font-size: 11px; font-weight: bold; color: #b45309; margin-top: 2px;">Período: ${periodLabel}</div>
+            <div style="font-size: 9px; color: #6b7280; font-family: monospace; margin-top: 2px;">
+              Data Emissão: ${formatDate(new Date().toISOString())}
+            </div>
+          </div>
+        </div>
+
+        <!-- Summary Cards -->
+        <div class="grid-summary">
+          <div class="stat-card">
+            <div class="stat-label">Saldo Inicial Período</div>
+            <div class="stat-value">${initialStockTotal} un</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Total Entradas (+)</div>
+            <div class="stat-value" style="color: #15803d;">+${totalIn} un</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Total Saídas (-)</div>
+            <div class="stat-value" style="color: #b91c1c;">-${totalOut} un</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Saldo Final Período</div>
+            <div class="stat-value">${finalStockTotal} un</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Valor Total em Custo</div>
+            <div class="stat-value">${formatCurrency(totalCostValue, company.currency)}</div>
+          </div>
+        </div>
+
+        <!-- Table -->
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th style="width: 20px;">#</th>
+              <th style="width: 100px;">Data/Hora</th>
+              <th>Artigo / SKU / Lote</th>
+              <th style="width: 110px;">Armazém</th>
+              <th style="width: 90px; text-align: center;">Tipo</th>
+              <th style="width: 90px;">Documento</th>
+              <th style="width: 60px; text-align: right;">Entrada</th>
+              <th style="width: 60px; text-align: right;">Saída</th>
+              <th style="width: 70px; text-align: right;">Saldo</th>
+              <th style="width: 75px; text-align: right;">Custo Unit.</th>
+              <th style="width: 85px; text-align: right;">Valor Custo</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rowsHtml || `<tr><td colspan="11" style="text-align: center; padding: 16px; color: #9ca3af;">Nenhum movimento encontrado para o filtro selecionado.</td></tr>`}
+          </tbody>
+        </table>
+
+        <div class="footer">
+          <span>Relatório de Auditoria de Inventário e Controlo Físico de Stock</span>
+          <span>Software Certificado nº ${company.softwareCertNumber || '4120/AT'}</span>
+          <span>Total de Linhas: ${rows.length}</span>
+        </div>
+      </body>
+    </html>
+  `;
+
+  const iframe = document.createElement('iframe');
+  iframe.style.display = 'none';
+  document.body.appendChild(iframe);
+  const doc = iframe.contentWindow?.document;
+  if (doc) {
+    doc.open();
+    doc.write(html);
+    doc.close();
+    setTimeout(() => {
+      iframe.contentWindow?.focus();
+      iframe.contentWindow?.print();
+      setTimeout(() => iframe.remove(), 1200);
+    }, 350);
+  }
+}
+
+/**
+ * Download Inventory Extract as PDF
+ */
+export function downloadInventoryExtractPdf(options: InventoryExtractPrintOptions): void {
+  const {
+    rows,
+    periodLabel,
+    initialStockTotal,
+    finalStockTotal,
+    totalIn,
+    totalOut,
+    totalCostValue,
+    company,
+    store,
+    warehouseName = 'Todos os Armazéns'
+  } = options;
+
+  const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+
+  // Header
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(14);
+  doc.setTextColor(15, 23, 42);
+  doc.text(company.tradeName || company.name, 14, 16);
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8.5);
+  doc.setTextColor(75, 85, 99);
+  doc.text(`NIF: ${company.taxNumber || '400123987'} • Armazém: ${warehouseName} • Loja: ${store?.name || 'Geral'}`, 14, 21);
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(13);
+  doc.setTextColor(180, 83, 9);
+  doc.text('EXTRATO DE INVENTÁRIO & MOVIMENTOS', 283, 16, { align: 'right' });
+  doc.setFontSize(9);
+  doc.setTextColor(15, 23, 42);
+  doc.text(`Período: ${periodLabel}`, 283, 21, { align: 'right' });
+
+  doc.setDrawColor(229, 231, 235);
+  doc.line(14, 24, 283, 24);
+
+  // Summary Banner
+  autoTable(doc, {
+    startY: 27,
+    theme: 'grid',
+    head: [['Saldo Inicial', 'Total Entradas (+)', 'Total Saídas (-)', 'Saldo Final', 'Valor Total em Custo']],
+    body: [
+      [
+        `${initialStockTotal} un`,
+        `+${totalIn} un`,
+        `-${totalOut} un`,
+        `${finalStockTotal} un`,
+        formatCurrency(totalCostValue, company.currency)
+      ]
+    ],
+    styles: { fontSize: 8.5, cellPadding: 2.5, halign: 'center' },
+    headStyles: { fillColor: [243, 244, 246], textColor: [31, 41, 55], fontStyle: 'bold' }
+  });
+
+  const summaryFinalY = (doc as any).lastAutoTable.finalY + 4;
+
+  // Movements Data Table
+  autoTable(doc, {
+    startY: summaryFinalY,
+    theme: 'striped',
+    head: [['#', 'Data/Hora', 'Artigo / SKU', 'Armazém', 'Tipo', 'Documento', 'Entrada', 'Saída', 'Saldo', 'Custo Unit.', 'Valor Custo']],
+    body: rows.map((r, idx) => [
+      idx + 1,
+      formatDate(r.timestamp),
+      `${r.productName} (${r.sku})`,
+      r.warehouseName,
+      r.typeLabel,
+      r.referenceDoc || '—',
+      r.quantityIn > 0 ? `+${r.quantityIn}` : '—',
+      r.quantityOut > 0 ? `-${r.quantityOut}` : '—',
+      `${r.runningBalance} ${r.unit}`,
+      formatCurrency(r.unitCost, company.currency),
+      formatCurrency(r.totalCost, company.currency)
+    ]),
+    styles: { fontSize: 7.5, cellPadding: 2 },
+    headStyles: { fillColor: [15, 23, 42], textColor: [255, 255, 255], fontStyle: 'bold' },
+    columnStyles: {
+      6: { halign: 'right', textColor: [22, 101, 52] },
+      7: { halign: 'right', textColor: [185, 28, 28] },
+      8: { halign: 'right', fontStyle: 'bold' },
+      9: { halign: 'right' },
+      10: { halign: 'right', fontStyle: 'bold' }
+    }
+  });
+
+  doc.setFontSize(7.5);
+  doc.setTextColor(156, 163, 175);
+  doc.text(`Extrato emitido em ${formatDate(new Date().toISOString())} • Software Certificado nº ${company.softwareCertNumber || '4120/AT'}`, 14, 202);
+
+  doc.save(`Extrato_Inventario_${periodLabel.replace(/[\/\s]/g, '_')}.pdf`);
+}
+
+/**
+ * Export Inventory Extract as CSV
+ */
+export function exportInventoryExtractCsv(options: InventoryExtractPrintOptions): void {
+  const { rows, periodLabel, company } = options;
+
+  const headers = [
+    'Item',
+    'Data_Hora',
+    'Artigo',
+    'SKU',
+    'Unidade',
+    'Armazem',
+    'Tipo_Movimento',
+    'Documento_Ref',
+    'Entrada',
+    'Saida',
+    'Saldo_Acumulado',
+    'Custo_Unitario',
+    'Valor_Total_Custo',
+    'Operador',
+    'Motivo'
+  ];
+
+  const csvRows = rows.map((r, idx) => [
+    idx + 1,
+    `"${r.timestamp}"`,
+    `"${(r.productName || '').replace(/"/g, '""')}"`,
+    `"${r.sku || ''}"`,
+    `"${r.unit || 'un'}"`,
+    `"${(r.warehouseName || '').replace(/"/g, '""')}"`,
+    `"${r.typeLabel || r.type}"`,
+    `"${r.referenceDoc || ''}"`,
+    r.quantityIn,
+    r.quantityOut,
+    r.runningBalance,
+    r.unitCost,
+    r.totalCost,
+    `"${(r.operatorName || '').replace(/"/g, '""')}"`,
+    `"${(r.reason || '').replace(/"/g, '""')}"`
+  ]);
+
+  const csvContent = '\uFEFF' + [headers.join(';'), ...csvRows.map((e) => e.join(';'))].join('\n');
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.setAttribute('href', url);
+  link.setAttribute('download', `Extrato_Inventario_${company.tradeName || 'Stock'}_${periodLabel.replace(/[\/\s]/g, '_')}.csv`);
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+}
+

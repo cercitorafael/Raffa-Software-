@@ -22,6 +22,7 @@ import {
   ArrowLeftRight,
   Database,
   ShieldAlert,
+  Wallet,
 } from 'lucide-react';
 import { sound } from '../utils/audio';
 import { UserPermissions } from '../types';
@@ -37,6 +38,9 @@ export const Sidebar: React.FC = () => {
     omnichannelOrders,
     users,
     stores,
+    currentTerminal,
+    activeShift,
+    formatCurrency,
     lockScreen,
     logout,
     notify,
@@ -84,7 +88,7 @@ export const Sidebar: React.FC = () => {
       badge: 'BI',
       shortBadge: 'BI',
       badgeColor: 'bg-[#c5a47e]/20 text-[#c5a47e]',
-      roles: ['admin', 'gerente', 'financeiro', 'caixa'],
+      roles: ['admin', 'gerente', 'financeiro'],
       permissionModule: 'analytics',
     },
     {
@@ -121,7 +125,7 @@ export const Sidebar: React.FC = () => {
       id: 'stock',
       label: 'Stock & Inventário',
       icon: Boxes,
-      roles: ['gerente', 'comprador', 'admin', 'caixa', 'financeiro'],
+      roles: ['gerente', 'comprador', 'admin', 'financeiro'],
       permissionModule: 'stock',
     },
     {
@@ -163,15 +167,6 @@ export const Sidebar: React.FC = () => {
       permissionModule: 'users',
     },
     {
-      id: 'supabase',
-      label: 'Supabase (DB & Cloud)',
-      icon: Database,
-      badge: 'Cloud DB',
-      shortBadge: 'DB',
-      badgeColor: 'bg-emerald-500/20 text-emerald-400',
-      roles: ['admin', 'gerente'],
-    },
-    {
       id: 'events',
       label: 'Barramento de Eventos',
       icon: Activity,
@@ -187,12 +182,16 @@ export const Sidebar: React.FC = () => {
     },
   ];
 
+  const checkItemAccess = (item: (typeof menuItems)[0]): boolean => {
+    if (currentUser.role === 'admin' || currentUser.roleId === 'admin') return true;
+    if (item.permissionModule) {
+      return hasPermission(item.permissionModule, 'read');
+    }
+    return item.roles.includes(currentUser.role);
+  };
+
   const handleNavClick = (item: typeof menuItems[0]) => {
-    const isAllowed =
-      currentUser.role === 'admin' ||
-      currentUser.roleId === 'admin' ||
-      item.roles.includes(currentUser.role) ||
-      (item.permissionModule && hasPermission(item.permissionModule, 'read'));
+    const isAllowed = checkItemAccess(item);
 
     if (!isAllowed) {
       sound.playError();
@@ -249,11 +248,7 @@ export const Sidebar: React.FC = () => {
         {menuItems.map((item) => {
           const Icon = item.icon;
           const isActive = activeNavTab === item.id;
-          const hasAccess =
-            currentUser.role === 'admin' ||
-            currentUser.roleId === 'admin' ||
-            item.roles.includes(currentUser.role) ||
-            (item.permissionModule && hasPermission(item.permissionModule, 'read'));
+          const hasAccess = checkItemAccess(item);
 
           if (isSidebarCollapsed) {
             return (
@@ -347,6 +342,70 @@ export const Sidebar: React.FC = () => {
         ) : (
           <div className="flex justify-center">
             <SubscriptionBadge variant="compact" />
+          </div>
+        )}
+
+        {/* Live Cash Register Status Card */}
+        {!isSidebarCollapsed ? (
+          <div
+            className={`p-2 rounded-lg border text-xs flex items-center justify-between transition-all ${
+              activeShift
+                ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
+                : 'bg-[#141414] border-[#262626] text-neutral-400'
+            }`}
+          >
+            <div className="flex items-center space-x-2 min-w-0">
+              <div
+                className={`w-6 h-6 rounded-md flex items-center justify-center shrink-0 border ${
+                  activeShift
+                    ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40'
+                    : 'bg-neutral-800 text-neutral-500 border-neutral-700'
+                }`}
+              >
+                <Wallet className="w-3.5 h-3.5" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center space-x-1.5 leading-none">
+                  <span className="font-semibold text-xs truncate">
+                    {activeShift ? 'Caixa Aberto' : 'Caixa Fechado'}
+                  </span>
+                  <span
+                    className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                      activeShift ? 'bg-emerald-400 animate-pulse' : 'bg-rose-500'
+                    }`}
+                  />
+                </div>
+                <p className="text-[10px] text-neutral-400 truncate mt-0.5 font-mono">
+                  {activeShift ? `${activeShift.operatorName.split(' ')[0]} • ${formatCurrency(activeShift.initialCash)}` : 'Sem turno ativo'}
+                </p>
+              </div>
+            </div>
+            <span
+              className={`text-[9px] font-mono font-bold px-1.5 py-0.5 rounded-sm border shrink-0 ${
+                activeShift
+                  ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                  : 'bg-rose-500/10 text-rose-400 border-rose-500/30'
+              }`}
+            >
+              {activeShift ? 'ATIVO' : 'FECHADO'}
+            </span>
+          </div>
+        ) : (
+          <div className="flex justify-center" title={`Caixa: ${activeShift ? `Aberto (${activeShift.operatorName})` : 'Fechado'}`}>
+            <div
+              className={`w-7 h-7 rounded-lg flex items-center justify-center border relative ${
+                activeShift
+                  ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/40'
+                  : 'bg-neutral-900 text-neutral-500 border-neutral-800'
+              }`}
+            >
+              <Wallet className="w-3.5 h-3.5" />
+              <span
+                className={`absolute -top-1 -right-1 w-2 h-2 rounded-full ${
+                  activeShift ? 'bg-emerald-400 animate-pulse' : 'bg-rose-500'
+                }`}
+              />
+            </div>
           </div>
         )}
 

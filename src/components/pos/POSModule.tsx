@@ -28,6 +28,7 @@ import {
   Unlock,
   AlertTriangle,
   ShieldAlert,
+  Wallet,
 } from 'lucide-react';
 import { PaymentModal } from './PaymentModal';
 import { ReceiptModal } from './ReceiptModal';
@@ -183,7 +184,7 @@ export const POSModule: React.FC = () => {
       {/* Left Workspace: Product Catalog & Fast Search */}
       <div className="flex-1 flex flex-col min-w-0 p-4 overflow-hidden">
         {/* Closed Cash Register Notice */}
-        {!activeShift && (
+        {!activeShift ? (
           <div className="mb-3 p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs">
             <div className="flex items-center space-x-2.5 text-amber-300">
               <div className="w-8 h-8 rounded-lg bg-amber-500/20 flex items-center justify-center shrink-0">
@@ -203,6 +204,37 @@ export const POSModule: React.FC = () => {
             >
               <Unlock className="w-3.5 h-3.5" />
               <span>Abrir Caixa</span>
+            </button>
+          </div>
+        ) : (
+          <div className="mb-3 px-3 py-2 bg-emerald-500/10 border border-emerald-500/25 rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-xs">
+            <div className="flex items-center space-x-2.5 text-emerald-300 min-w-0">
+              <div className="w-7 h-7 rounded-lg bg-emerald-500/20 flex items-center justify-center shrink-0 border border-emerald-500/30 text-emerald-400">
+                <Wallet className="w-3.5 h-3.5" />
+              </div>
+              <div className="min-w-0">
+                <div className="flex items-center space-x-2">
+                  <span className="font-bold text-emerald-200 flex items-center space-x-1.5">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse inline-block" />
+                    <span>Caixa Aberto</span>
+                  </span>
+                  <span className="text-[11px] text-neutral-400 font-mono">
+                    &bull; Operador: <strong className="text-neutral-200">{activeShift.operatorName}</strong>
+                  </span>
+                </div>
+                <div className="text-[10px] text-neutral-400 font-mono flex items-center space-x-3 mt-0.5">
+                  <span>Fundo Inicial: <strong className="text-neutral-200">{formatCurrency(activeShift.initialCash)}</strong></span>
+                  <span>Total Faturado no Turno: <strong className="text-[#c5a47e]">{formatCurrency(activeShift.totalSales)}</strong></span>
+                </div>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowShiftModal(true)}
+              className="px-2.5 py-1 bg-[#1a1a1a] hover:bg-[#252525] text-neutral-300 hover:text-white border border-[#333333] rounded-lg text-[11px] font-medium flex items-center space-x-1.5 transition-all cursor-pointer shrink-0"
+              title="Gerir Turno, Sangria, Suprimento e Fecho Z"
+            >
+              <span>Gerir Turno / Fecho Z</span>
             </button>
           </div>
         )}
@@ -1017,14 +1049,10 @@ export const POSModule: React.FC = () => {
 
             {!isOnline && (
               <div
-                onClick={() => setShowOfflineSyncModal(true)}
-                className="mt-2 p-2 rounded-lg bg-amber-500/10 border border-amber-500/30 flex items-center justify-between text-[11px] text-amber-300 cursor-pointer hover:bg-amber-500/15 transition-all"
+                className="mt-2 p-2 rounded-lg bg-amber-500/10 border border-amber-500/30 flex items-center space-x-1.5 text-[11px] text-amber-300"
               >
-                <div className="flex items-center space-x-1.5">
-                  <WifiOff className="w-3.5 h-3.5 text-amber-400 shrink-0 animate-pulse" />
-                  <span>Modo Offline: Armazenamento seguro via IndexedDB</span>
-                </div>
-                <span className="text-[10px] font-bold underline font-mono">Ver Fila</span>
+                <WifiOff className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                <span>Modo Offline: Os dados sincronizam automaticamente ao restaurar conexão.</span>
               </div>
             )}
           </div>

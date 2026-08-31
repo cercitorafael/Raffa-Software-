@@ -257,90 +257,38 @@ export const Navbar: React.FC<{ onOpenShiftModal: () => void }> = ({ onOpenShift
             <span>SAF-T PT</span>
           </button>
 
-          {/* Offline / Online Switcher & Diagnostic */}
-          <button
-            onClick={() => setShowOfflineSyncModal(true)}
-            title="Gestor de Resiliência Offline & IndexedDB"
-            className="flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border bg-[#141414] hover:bg-[#1f1f1f] border-[#262626] hover:border-[#383838] text-neutral-300 transition-all cursor-pointer shrink-0 whitespace-nowrap shadow-xs"
+          {/* Online Realtime Cloud Indicator */}
+          <div
+            title="Conexão com a Nuvem em Tempo Real Ativa"
+            className="flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border bg-emerald-500/10 text-emerald-400 border-emerald-500/30 shrink-0 whitespace-nowrap shadow-xs"
           >
-            <Database className="w-3.5 h-3.5 text-[#c5a47e]" />
-            <span>Offline & IDB</span>
-          </button>
-
-          {/* Supabase Realtime Live Status Button */}
-          <button
-            onClick={() => setActiveNavTab('supabase')}
-            title={`Supabase Realtime: ${supabaseRealtimeStatus === 'connected' ? '🟢 Conectado em direto (escutando INSERT/UPDATE/DELETE)' : supabaseRealtimeStatus === 'connecting' ? '🟡 A conectar...' : '🔴 Desconectado'}. Clique para abrir o Painel Supabase.`}
-            className={`flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-all cursor-pointer shrink-0 whitespace-nowrap shadow-xs ${
-              supabaseRealtimeStatus === 'connected'
-                ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/20'
-                : supabaseRealtimeStatus === 'connecting'
-                ? 'bg-amber-500/10 text-amber-400 border-amber-500/30 hover:bg-amber-500/20 animate-pulse'
-                : 'bg-rose-500/10 text-rose-400 border-rose-500/30 hover:bg-rose-500/20'
-            }`}
-          >
-            <span
-              className={`w-2 h-2 rounded-full ${
-                supabaseRealtimeStatus === 'connected'
-                  ? 'bg-emerald-400 animate-pulse'
-                  : supabaseRealtimeStatus === 'connecting'
-                  ? 'bg-amber-400 animate-ping'
-                  : 'bg-rose-400'
-              }`}
-            />
-            <span className="font-medium">
-              Supabase Realtime
-            </span>
-          </button>
-
-          <button
-            onClick={() => setIsOnline(!isOnline)}
-            title={isOnline ? 'Online (Conectado ao Backend Central). Clique para alternar.' : 'Modo Offline (Operando via IndexedDB). Clique para alternar.'}
-            className={`flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-all cursor-pointer shrink-0 whitespace-nowrap shadow-xs ${
-              isOnline
-                ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/20'
-                : 'bg-amber-500/10 text-amber-400 border-amber-500/30 hover:bg-amber-500/20 animate-pulse'
-            }`}
-          >
-            {isOnline ? (
-              <>
-                <Wifi className="w-3.5 h-3.5 text-emerald-400" />
-                <span>Online</span>
-              </>
-            ) : (
-              <>
-                <WifiOff className="w-3.5 h-3.5 text-amber-400" />
-                <span>Offline</span>
-              </>
-            )}
-          </button>
-
-          {syncQueue.length > 0 && (
-            <button
-              onClick={triggerManualSync}
-              disabled={isSyncing}
-              className="flex items-center space-x-1.5 px-2.5 py-1.5 bg-[#c5a47e] text-black font-semibold rounded-lg text-xs hover:bg-[#d4b896] active:scale-95 transition-all shadow-xs cursor-pointer shrink-0 whitespace-nowrap"
-              title="Sincronizar vendas offline pendentes com a nuvem central"
-            >
-              <RotateCw className={`w-3.5 h-3.5 text-black ${isSyncing ? 'animate-spin' : ''}`} />
-              <span>{isSyncing ? 'Syncing...' : `Sync (${syncQueue.length})`}</span>
-            </button>
-          )}
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+            <span className="font-medium">Online</span>
+          </div>
 
           {/* Cash Register Shift Button */}
           <button
             onClick={onOpenShiftModal}
-            className={`flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-colors shrink-0 whitespace-nowrap shadow-xs ${
+            className={`flex items-center space-x-2 px-3 py-1.5 rounded-lg text-xs font-medium border transition-all shrink-0 whitespace-nowrap shadow-xs cursor-pointer ${
               activeShift
-                ? 'bg-[#141414] text-[#e5e5e5] border-[#262626] hover:bg-[#1a1a1a]'
-                : 'bg-rose-500/10 text-rose-400 border-rose-500/30 hover:bg-rose-500/20'
+                ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30 hover:bg-emerald-500/20'
+                : 'bg-rose-500/10 text-rose-300 border-rose-500/30 hover:bg-rose-500/20'
             }`}
-            title="Gestão de Turno de Caixa (Abertura, Sangria, Suprimento, Fecho Z)"
+            title={`Estado do Caixa: ${activeShift ? `Aberto por ${activeShift.operatorName} (${currentTerminal?.code || 'POS-01'})` : 'Caixa Fechado - Clique para gerir'}`}
           >
-            <Wallet className="w-3.5 h-3.5 text-[#c5a47e]" />
-            <span>{activeShift ? 'Caixa Aberto' : 'Caixa Fechado'}</span>
+            <div className="relative flex items-center justify-center">
+              <Wallet className={`w-3.5 h-3.5 ${activeShift ? 'text-emerald-400' : 'text-rose-400'}`} />
+              <span
+                className={`absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full ${
+                  activeShift ? 'bg-emerald-400 animate-ping' : 'bg-rose-500'
+                }`}
+              />
+            </div>
+            <span className="font-semibold">{activeShift ? 'Caixa Aberto' : 'Caixa Fechado'}</span>
             {activeShift && (
-              <span className="inline-block w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+              <span className="hidden md:inline text-[10px] opacity-80 font-mono pl-1 border-l border-emerald-500/30">
+                {activeShift.operatorName.split(' ')[0]}
+              </span>
             )}
           </button>
 
@@ -445,6 +393,13 @@ export const Navbar: React.FC<{ onOpenShiftModal: () => void }> = ({ onOpenShift
                 <div>
                   <span className="text-neutral-500 block">Terminal:</span>
                   <span className="text-neutral-300 font-medium truncate block">{currentTerminal?.name || 'POS-01'}</span>
+                </div>
+                <div className="col-span-2 pt-1 border-t border-[#1a1a1a] flex items-center justify-between">
+                  <span className="text-neutral-500">Estado da Caixa:</span>
+                  <span className={`font-medium flex items-center space-x-1 ${activeShift ? 'text-emerald-400' : 'text-amber-400'}`}>
+                    <span className={`w-1.5 h-1.5 rounded-full ${activeShift ? 'bg-emerald-400' : 'bg-amber-400'}`} />
+                    <span>{activeShift ? `Aberto (${activeShift.operatorName.split(' ')[0]})` : 'Fechado'}</span>
+                  </span>
                 </div>
               </div>
             </div>

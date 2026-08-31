@@ -21,7 +21,8 @@ import {
   HeartHandshake,
   Settings,
   Store,
-  FileSpreadsheet
+  FileSpreadsheet,
+  TrendingUp
 } from 'lucide-react';
 
 interface ModuleDef {
@@ -157,6 +158,12 @@ export const UserPermissionsMatrix: React.FC = () => {
       label: 'CRM & Clientes',
       description: 'Base de dados de clientes, histórico de compras, limites de crédito e fidelização',
       icon: HeartHandshake,
+    },
+    {
+      key: 'analytics',
+      label: 'Relatórios Analíticos & Visão Geral (BI)',
+      description: 'Dashboard executivo, faturamento líquido, curvas ABC, gráficos de vendas e rentabilidade',
+      icon: TrendingUp,
     },
     {
       key: 'settings',

@@ -30,6 +30,7 @@ import {
   MessageSquare,
   Receipt,
   FileSpreadsheet,
+  ShieldAlert,
 } from 'lucide-react';
 import { Customer, CallLog } from '../../types';
 import { CustomerCallModal } from './CustomerCallModal';
@@ -38,6 +39,9 @@ import { TopBuyersReport } from './TopBuyersReport';
 
 export const CRMModule: React.FC = () => {
   const {
+    currentUser,
+    hasPermission,
+    setActiveNavTab,
     customers,
     currentCompany,
     addCustomer,
@@ -49,6 +53,34 @@ export const CRMModule: React.FC = () => {
     deleteCallLog,
     notify,
   } = useApp();
+
+  const canRead = hasPermission('crm', 'read') || currentUser?.role === 'admin';
+
+  if (!canRead) {
+    return (
+      <div className="flex-1 flex flex-col items-center justify-center p-8 bg-[#0a0a0a] text-center space-y-4 select-none">
+        <div className="w-16 h-16 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-400 flex items-center justify-center shadow-lg">
+          <ShieldAlert className="w-8 h-8" />
+        </div>
+        <div className="max-w-md space-y-2">
+          <h3 className="text-base font-serif font-bold text-white">
+            Acesso Restrito ao Módulo de CRM
+          </h3>
+          <p className="text-xs text-neutral-400">
+            O seu perfil atual (<strong>{currentUser?.name}</strong> &bull; {currentUser?.role?.toUpperCase()}) não tem permissão para aceder à gestão de clientes e CRM.
+          </p>
+        </div>
+        <div className="pt-2 flex items-center space-x-3">
+          <button
+            onClick={() => setActiveNavTab('pos')}
+            className="px-4 py-2 bg-[#c5a47e] hover:bg-[#b5946e] text-neutral-950 font-bold text-xs rounded-xl cursor-pointer shadow-md transition-colors"
+          >
+            Ir para o Ponto de Venda (POS)
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   const [activeTab, setActiveTab] = useState<
     'customers' | 'top_buyers' | 'calls' | 'loyalty' | 'giftcards' | 'campaigns'

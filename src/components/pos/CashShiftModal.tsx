@@ -13,7 +13,12 @@ import {
   History,
   CheckCircle2,
   Clock,
+  Printer,
+  FileDown,
+  Receipt,
+  FileText,
 } from 'lucide-react';
+import { printZReportA4, printZReportThermal, downloadZReportPdf } from '../../utils/print';
 
 interface CashShiftModalProps {
   onClose: () => void;
@@ -70,24 +75,19 @@ export const CashShiftModal: React.FC<CashShiftModalProps> = ({ onClose }) => {
 
   const handleCloseShift = () => {
     const diff = countedCashInput - expectedCashInDrawer;
-    const report = {
-      terminal: currentTerminal.code,
-      operator: currentUser.name,
-      openedAt: activeShift?.openedAt,
-      closedAt: new Date().toISOString(),
-      initialCash: activeShift?.initialCash,
-      totalSales: activeShift?.totalSales,
-      totalCash: activeShift?.totalCash,
-      totalCards: activeShift?.totalCards,
-      totalMbway: activeShift?.totalMbway,
-      sangriaTotal: activeShift?.sangriaTotal,
-      suprimentoTotal: activeShift?.suprimentoTotal,
-      expectedCash: expectedCashInDrawer,
-      countedCash: countedCashInput,
-      difference: diff,
-    };
-    closeShift(countedCashInput);
-    setClosedZReport(report);
+    const closed = closeShift(countedCashInput);
+    if (closed) {
+      setClosedZReport(closed);
+    } else if (activeShift) {
+      setClosedZReport({
+        ...activeShift,
+        closedAt: new Date().toISOString(),
+        status: 'fechado',
+        finalCashReported: countedCashInput,
+        finalCashSystem: expectedCashInDrawer,
+        cashDifference: diff,
+      });
+    }
   };
 
   return (
@@ -104,7 +104,7 @@ export const CashShiftModal: React.FC<CashShiftModalProps> = ({ onClose }) => {
               </p>
             </div>
           </div>
-          <button onClick={onClose} className="text-neutral-400 hover:text-white p-1 rounded-md">
+          <button onClick={onClose} className="text-neutral-400 hover:text-white p-1 rounded-md cursor-pointer">
             <X className="w-5 h-5" />
           </button>
         </div>
@@ -117,7 +117,9 @@ export const CashShiftModal: React.FC<CashShiftModalProps> = ({ onClose }) => {
               <div className="p-4 bg-[#0d0d0d] border border-[#262626] rounded-lg text-center font-mono text-xs text-neutral-300">
                 <FileSpreadsheet className="w-8 h-8 text-[#c5a47e] mx-auto mb-2" />
                 <h4 className="font-bold text-sm text-[#c5a47e] font-serif">RELATÓRIO Z DE FECHO</h4>
-                <p className="text-[11px] text-neutral-400">Terminal {closedZReport.terminal} - {formatDate(closedZReport.closedAt)}</p>
+                <p className="text-[11px] text-neutral-400">
+                  Terminal {closedZReport.terminalId || closedZReport.terminal || currentTerminal.code} - {formatDate(closedZReport.closedAt || new Date().toISOString())}
+                </p>
 
                 <div className="my-3 py-2 border-y border-dashed border-[#333333] space-y-1 text-left">
                   <div className="flex justify-between">
@@ -133,8 +135,12 @@ export const CashShiftModal: React.FC<CashShiftModalProps> = ({ onClose }) => {
                     <span>{formatCurrency(closedZReport.totalCash)}</span>
                   </div>
                   <div className="flex justify-between text-neutral-400">
-                    <span>- Vendas TPA / MB WAY:</span>
-                    <span>{formatCurrency(closedZReport.totalCards + closedZReport.totalMbway)}</span>
+                    <span>- Vendas TPA / Cartão:</span>
+                    <span>{formatCurrency(closedZReport.totalCards)}</span>
+                  </div>
+                  <div className="flex justify-between text-neutral-400">
+                    <span>- Vendas MB WAY / Móvel:</span>
+                    <span>{formatCurrency(closedZReport.totalMbway)}</span>
                   </div>
                   <div className="flex justify-between text-neutral-400">
                     <span>- Total Sangrias:</span>
@@ -146,26 +152,66 @@ export const CashShiftModal: React.FC<CashShiftModalProps> = ({ onClose }) => {
                   </div>
                   <div className="flex justify-between font-bold text-[#e5e5e5] pt-1 border-t border-[#262626]">
                     <span>Saldo Esperado em Caixa:</span>
-                    <span className="text-[#c5a47e]">{formatCurrency(closedZReport.expectedCash)}</span>
+                    <span className="text-[#c5a47e]">{formatCurrency(closedZReport.finalCashSystem || closedZReport.expectedCash)}</span>
                   </div>
                   <div className="flex justify-between font-bold text-[#e5e5e5]">
                     <span>Saldo Contado / Declarado:</span>
-                    <span className="text-[#c5a47e]">{formatCurrency(closedZReport.countedCash)}</span>
+                    <span className="text-[#c5a47e]">{formatCurrency(closedZReport.finalCashReported || closedZReport.countedCash)}</span>
                   </div>
-                  <div className={`flex justify-between font-bold pt-1 ${closedZReport.difference === 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                  <div className={`flex justify-between font-bold pt-1 ${closedZReport.cashDifference === 0 || closedZReport.difference === 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
                     <span>Diferença de Caixa:</span>
-                    <span>{formatCurrency(closedZReport.difference)}</span>
+                    <span>{formatCurrency(closedZReport.cashDifference !== undefined ? closedZReport.cashDifference : closedZReport.difference)}</span>
                   </div>
                 </div>
 
                 <p className="text-[10px] text-neutral-400">
-                  Turno encerrado por {closedZReport.operator}. Lançamentos fiscais gravados.
+                  Turno encerrado por {closedZReport.operatorName || closedZReport.operator || currentUser.name}. Lançamentos fiscais gravados.
                 </p>
+              </div>
+
+              {/* Action Buttons for Z-Report */}
+              <div className="space-y-2">
+                <div className="text-[11px] font-bold text-neutral-400 uppercase tracking-wider flex items-center space-x-1.5">
+                  <Printer className="w-3.5 h-3.5 text-[#c5a47e]" />
+                  <span>Opções de Impressão do Relatório Z</span>
+                </div>
+                
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => printZReportA4(closedZReport, currentCompany, currentStore, currentTerminal)}
+                    className="flex items-center justify-center space-x-1.5 py-2.5 px-3 bg-[#c5a47e] hover:bg-[#b5946e] text-neutral-950 rounded-lg text-xs font-bold transition-colors cursor-pointer shadow-sm"
+                    title="Imprimir Relatório Z Completo em Formato A4"
+                  >
+                    <Printer className="w-3.5 h-3.5" />
+                    <span>Imprimir A4</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => downloadZReportPdf(closedZReport, currentCompany, currentStore, currentTerminal)}
+                    className="flex items-center justify-center space-x-1.5 py-2.5 px-3 bg-[#1a1a1a] hover:bg-[#262626] text-[#e5e5e5] border border-[#333333] rounded-lg text-xs font-semibold transition-colors cursor-pointer"
+                    title="Descarregar Relatório Z em PDF A4 Oficial"
+                  >
+                    <FileDown className="w-3.5 h-3.5 text-[#c5a47e]" />
+                    <span>PDF A4</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => printZReportThermal(closedZReport, currentCompany, currentStore, currentTerminal)}
+                    className="flex items-center justify-center space-x-1.5 py-2.5 px-3 bg-[#1a1a1a] hover:bg-[#262626] text-[#e5e5e5] border border-[#333333] rounded-lg text-xs font-semibold transition-colors cursor-pointer"
+                    title="Imprimir Talão Térmico 80mm"
+                  >
+                    <Receipt className="w-3.5 h-3.5 text-neutral-400" />
+                    <span>Talão 80mm</span>
+                  </button>
+                </div>
               </div>
 
               <button
                 onClick={onClose}
-                className="w-full py-2.5 bg-[#c5a47e] hover:bg-[#d4b896] text-black rounded-lg text-xs font-bold uppercase tracking-wider"
+                className="w-full py-2.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 rounded-lg text-xs font-bold uppercase tracking-wider transition-colors cursor-pointer mt-2"
               >
                 Concluir & Fechar
               </button>
@@ -182,7 +228,7 @@ export const CashShiftModal: React.FC<CashShiftModalProps> = ({ onClose }) => {
                 </div>
                 <button
                   onClick={() => setSelectedHistoricalShift(null)}
-                  className="text-xs text-neutral-400 hover:text-white px-2 py-1 bg-[#1a1a1a] rounded-md border border-[#262626]"
+                  className="text-xs text-neutral-400 hover:text-white px-2 py-1 bg-[#1a1a1a] rounded-md border border-[#262626] cursor-pointer"
                 >
                   Voltar
                 </button>
@@ -221,6 +267,37 @@ export const CashShiftModal: React.FC<CashShiftModalProps> = ({ onClose }) => {
                   <span>Vendas MB WAY:</span>
                   <span className="text-neutral-300">{formatCurrency(selectedHistoricalShift.totalMbway)}</span>
                 </div>
+                <div className="flex justify-between text-neutral-400">
+                  <span>Total Suprimentos:</span>
+                  <span className="text-emerald-400 font-bold">+{formatCurrency(selectedHistoricalShift.suprimentoTotal || 0)}</span>
+                </div>
+                <div className="flex justify-between text-neutral-400">
+                  <span>Total Sangrias:</span>
+                  <span className="text-rose-400 font-bold">-{formatCurrency(selectedHistoricalShift.sangriaTotal || 0)}</span>
+                </div>
+                <div className="flex justify-between font-bold text-[#e5e5e5] pt-2 border-t border-[#262626]">
+                  <span>Saldo Teórico:</span>
+                  <span className="text-[#c5a47e]">
+                    {formatCurrency(
+                      (selectedHistoricalShift.initialCash || 0) +
+                      (selectedHistoricalShift.totalCash || 0) +
+                      (selectedHistoricalShift.suprimentoTotal || 0) -
+                      (selectedHistoricalShift.sangriaTotal || 0)
+                    )}
+                  </span>
+                </div>
+                {selectedHistoricalShift.finalCashReported !== undefined && (
+                  <div className="flex justify-between font-bold text-[#e5e5e5]">
+                    <span>Saldo Contado / Declarado:</span>
+                    <span className="text-[#c5a47e]">{formatCurrency(selectedHistoricalShift.finalCashReported)}</span>
+                  </div>
+                )}
+                {selectedHistoricalShift.cashDifference !== undefined && (
+                  <div className={`flex justify-between font-bold ${selectedHistoricalShift.cashDifference === 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                    <span>Diferença:</span>
+                    <span>{formatCurrency(selectedHistoricalShift.cashDifference)}</span>
+                  </div>
+                )}
                 {selectedHistoricalShift.notes && (
                   <div className="pt-2 border-t border-[#262626] text-[11px] text-neutral-400">
                     <span className="font-bold text-neutral-300 block mb-0.5">Observações:</span>
@@ -229,9 +306,49 @@ export const CashShiftModal: React.FC<CashShiftModalProps> = ({ onClose }) => {
                 )}
               </div>
 
+              {/* Print buttons for historical shift */}
+              <div className="space-y-2">
+                <div className="text-[11px] font-bold text-neutral-400 uppercase tracking-wider flex items-center space-x-1.5">
+                  <Printer className="w-3.5 h-3.5 text-[#c5a47e]" />
+                  <span>Opções de Impressão do Relatório Z</span>
+                </div>
+                
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => printZReportA4(selectedHistoricalShift, currentCompany, currentStore, currentTerminal)}
+                    className="flex items-center justify-center space-x-1.5 py-2.5 px-3 bg-[#c5a47e] hover:bg-[#b5946e] text-neutral-950 rounded-lg text-xs font-bold transition-colors cursor-pointer shadow-sm"
+                    title="Imprimir Relatório Z Completo em Formato A4"
+                  >
+                    <Printer className="w-3.5 h-3.5" />
+                    <span>Imprimir A4</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => downloadZReportPdf(selectedHistoricalShift, currentCompany, currentStore, currentTerminal)}
+                    className="flex items-center justify-center space-x-1.5 py-2.5 px-3 bg-[#1a1a1a] hover:bg-[#262626] text-[#e5e5e5] border border-[#333333] rounded-lg text-xs font-semibold transition-colors cursor-pointer"
+                    title="Descarregar Relatório Z em PDF A4 Oficial"
+                  >
+                    <FileDown className="w-3.5 h-3.5 text-[#c5a47e]" />
+                    <span>PDF A4</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => printZReportThermal(selectedHistoricalShift, currentCompany, currentStore, currentTerminal)}
+                    className="flex items-center justify-center space-x-1.5 py-2.5 px-3 bg-[#1a1a1a] hover:bg-[#262626] text-[#e5e5e5] border border-[#333333] rounded-lg text-xs font-semibold transition-colors cursor-pointer"
+                    title="Imprimir Talão Térmico 80mm"
+                  >
+                    <Receipt className="w-3.5 h-3.5 text-neutral-400" />
+                    <span>Talão 80mm</span>
+                  </button>
+                </div>
+              </div>
+
               <button
                 onClick={() => setSelectedHistoricalShift(null)}
-                className="w-full py-2 bg-[#1a1a1a] hover:bg-[#262626] text-neutral-200 border border-[#262626] rounded-lg text-xs font-bold transition-colors"
+                className="w-full py-2 bg-[#1a1a1a] hover:bg-[#262626] text-neutral-200 border border-[#262626] rounded-lg text-xs font-bold transition-colors cursor-pointer"
               >
                 Voltar à Gestão de Caixa
               </button>
@@ -523,19 +640,49 @@ export const CashShiftModal: React.FC<CashShiftModalProps> = ({ onClose }) => {
               {/* Actions Grid */}
               <div className="grid grid-cols-2 gap-2 pt-1">
                 <button
+                  type="button"
                   onClick={() => setMode('suprimento')}
-                  className="flex items-center justify-center space-x-1.5 py-2 px-3 bg-[#0d0d0d] hover:bg-[#1a1a1a] text-neutral-300 rounded-lg text-xs font-semibold border border-[#262626] transition-colors"
+                  className="flex items-center justify-center space-x-1.5 py-2 px-3 bg-[#0d0d0d] hover:bg-[#1a1a1a] text-neutral-300 rounded-lg text-xs font-semibold border border-[#262626] transition-colors cursor-pointer"
                 >
                   <ArrowUpRight className="w-4 h-4 text-emerald-400" />
                   <span>Suprimento</span>
                 </button>
                 <button
+                  type="button"
                   onClick={() => setMode('sangria')}
-                  className="flex items-center justify-center space-x-1.5 py-2 px-3 bg-[#0d0d0d] hover:bg-[#1a1a1a] text-neutral-300 rounded-lg text-xs font-semibold border border-[#262626] transition-colors"
+                  className="flex items-center justify-center space-x-1.5 py-2 px-3 bg-[#0d0d0d] hover:bg-[#1a1a1a] text-neutral-300 rounded-lg text-xs font-semibold border border-[#262626] transition-colors cursor-pointer"
                 >
                   <ArrowDownRight className="w-4 h-4 text-rose-400" />
                   <span>Sangria</span>
                 </button>
+              </div>
+
+              {/* Interim / X-Report Print Options */}
+              <div className="p-3 bg-[#0d0d0d] rounded-lg border border-[#262626] space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-bold uppercase tracking-widest text-neutral-400 flex items-center space-x-1">
+                    <Printer className="w-3.5 h-3.5 text-[#c5a47e]" />
+                    <span>Relatório X (Posição Atual em A4)</span>
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => printZReportA4(activeShift, currentCompany, currentStore, currentTerminal)}
+                    className="flex items-center justify-center space-x-1.5 py-2 bg-[#1a1a1a] hover:bg-[#262626] text-neutral-200 border border-[#333333] rounded-lg text-xs font-semibold transition-colors cursor-pointer"
+                  >
+                    <Printer className="w-3.5 h-3.5 text-[#c5a47e]" />
+                    <span>Imprimir A4</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => downloadZReportPdf(activeShift, currentCompany, currentStore, currentTerminal)}
+                    className="flex items-center justify-center space-x-1.5 py-2 bg-[#1a1a1a] hover:bg-[#262626] text-neutral-200 border border-[#333333] rounded-lg text-xs font-semibold transition-colors cursor-pointer"
+                  >
+                    <FileDown className="w-3.5 h-3.5 text-[#c5a47e]" />
+                    <span>PDF A4</span>
+                  </button>
+                </div>
               </div>
 
               <button
@@ -543,7 +690,7 @@ export const CashShiftModal: React.FC<CashShiftModalProps> = ({ onClose }) => {
                   setCountedCashInput(expectedCashInDrawer);
                   setMode('close');
                 }}
-                className="w-full py-2.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-bold uppercase tracking-wider transition-colors flex items-center justify-center space-x-1.5 shadow-md"
+                className="w-full py-2.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-bold uppercase tracking-wider transition-colors flex items-center justify-center space-x-1.5 shadow-md cursor-pointer"
               >
                 <Lock className="w-4 h-4" />
                 <span>Encerrar Turno (Fecho Z)</span>
