@@ -160,7 +160,12 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ onClose, onSuccess }
       : true);
 
   const quickDenominations =
-    currencyDefinition.code === 'MZN' || currencyDefinition.code === 'AOA' || currencyDefinition.symbol === 'Mt' || currencyDefinition.symbol === 'Kz'
+    currencyDefinition.code === 'MZN' ||
+    currencyDefinition.code === 'AOA' ||
+    currencyDefinition.symbol === 'Mt' ||
+    currencyDefinition.symbol === 'MT' ||
+    currencyDefinition.symbol === 'Meticais' ||
+    currencyDefinition.symbol === 'Kz'
       ? [20, 50, 100, 200, 500, 1000]
       : [5, 10, 20, 50, 100, 200];
 

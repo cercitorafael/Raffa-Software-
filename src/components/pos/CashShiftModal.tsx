@@ -39,9 +39,14 @@ export const CashShiftModal: React.FC<CashShiftModalProps> = ({ onClose, initial
     currencyDefinition,
   } = useApp();
 
-  const currencySymbol = currentCompany?.currencySymbol || currencyDefinition.symbol || 'Mt';
+  const currencySymbol = currentCompany?.currencySymbol || currencyDefinition.symbol || 'MT';
   const quickShiftAmounts =
-    currencyDefinition.code === 'MZN' || currencyDefinition.code === 'AOA' || currencyDefinition.symbol === 'Mt' || currencyDefinition.symbol === 'Kz'
+    currencyDefinition.code === 'MZN' ||
+    currencyDefinition.code === 'AOA' ||
+    currencyDefinition.symbol === 'Mt' ||
+    currencyDefinition.symbol === 'MT' ||
+    currencyDefinition.symbol === 'Meticais' ||
+    currencyDefinition.symbol === 'Kz'
       ? [500, 1000, 2000, 5000]
       : [50, 100, 150, 200];
 

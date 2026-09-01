@@ -3,8 +3,8 @@ import { CurrencyDefinition } from '../types';
 export const SUPPORTED_CURRENCIES: CurrencyDefinition[] = [
   {
     code: 'MZN',
-    symbol: 'Mt',
-    name: 'Metical Moçambicano',
+    symbol: 'MT',
+    name: 'Metical Moçambicano (Meticais)',
     country: 'Moçambique',
     flag: '🇲🇿',
     position: 'suffix',
@@ -171,8 +171,8 @@ export function getCurrencyDefinition(codeOrSymbol?: string): CurrencyDefinition
   const target = (codeOrSymbol || globalActiveCurrencyCode || 'EUR').trim().toUpperCase();
 
   // Special matchers for Mozambique Metical
-  if (target === 'MZN' || target === 'MT' || target === 'MTN' || target === 'MOÇAMBIQUE' || target === 'MOCAMBIQUE') {
-    return SUPPORTED_CURRENCIES[0]; // MZN - Mt
+  if (target === 'MZN' || target === 'MT' || target === 'MTN' || target === 'METICAIS' || target === 'METICAL' || target === 'MOÇAMBIQUE' || target === 'MOCAMBIQUE') {
+    return SUPPORTED_CURRENCIES[0]; // MZN - MT (Meticais)
   }
 
   // Special matchers for Euro

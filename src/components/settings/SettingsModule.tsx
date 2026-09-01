@@ -921,12 +921,33 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
                         type="text"
                         value={companyForm.currencySymbol}
                         onChange={(e) => setCompanyForm({ ...companyForm, currencySymbol: e.target.value })}
-                        placeholder="Ex: Mt, MT, €, $, Kz"
+                        placeholder="Ex: MT, Meticais, Mt, €, $"
                         className="w-full px-3 py-2 bg-[#0d0d0d] border border-[#262626] rounded-lg font-mono font-bold text-white focus:outline-hidden focus:border-[#c5a47e]"
                       />
-                      <span className="text-[10px] text-neutral-500 mt-1 block">
-                        Texto ou símbolo exibido nos ecrãs (ex: Mt, €, $, Kz)
-                      </span>
+                      <div className="flex items-center space-x-1.5 mt-1 text-[10px]">
+                        <span className="text-neutral-500">Atalhos rápidos:</span>
+                        <button
+                          type="button"
+                          onClick={() => setCompanyForm({ ...companyForm, currencySymbol: 'MT' })}
+                          className="px-1.5 py-0.5 rounded bg-[#1f1f1f] hover:bg-[#2a2a2a] text-neutral-300 font-mono font-bold cursor-pointer"
+                        >
+                          MT
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setCompanyForm({ ...companyForm, currencySymbol: 'Meticais' })}
+                          className="px-1.5 py-0.5 rounded bg-[#1f1f1f] hover:bg-[#2a2a2a] text-neutral-300 font-mono font-bold cursor-pointer"
+                        >
+                          Meticais
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setCompanyForm({ ...companyForm, currencySymbol: 'Mt' })}
+                          className="px-1.5 py-0.5 rounded bg-[#1f1f1f] hover:bg-[#2a2a2a] text-neutral-300 font-mono font-bold cursor-pointer"
+                        >
+                          Mt
+                        </button>
+                      </div>
                     </div>
 
                     <div>
