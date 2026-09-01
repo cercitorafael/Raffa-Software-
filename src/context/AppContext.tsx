@@ -5054,6 +5054,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return salesHistory.filter((s) => !s.companyId || s.companyId === compId);
   }, [salesHistory, currentCompany?.id]);
 
+  const scopedStockMovements = useMemo(() => {
+    const compId = currentCompany?.id || 'comp-1';
+    const currentProdIds = new Set(scopedProducts.map((p) => p.id));
+    return stockMovements.filter((m) => {
+      if (m.companyId) {
+        return m.companyId === compId;
+      }
+      return currentProdIds.has(m.productId);
+    });
+  }, [stockMovements, scopedProducts, currentCompany?.id]);
+
   const scopedCustomers = useMemo(() => {
     const compId = currentCompany?.id || 'comp-1';
     return customers.filter((c) => !c.companyId || c.companyId === compId);
@@ -5194,7 +5205,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         addLot,
         updateLot,
         deleteLot,
-        stockMovements,
+        stockMovements: scopedStockMovements,
         recordStockMovement,
         deleteStockMovement,
         createStockAdjustment,

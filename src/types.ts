@@ -245,7 +245,17 @@ export interface StockItem {
   expiryDate?: string;
 }
 
-export type MovementType = 'entrada' | 'saida' | 'transferencia' | 'ajuste' | 'quebra' | 'venda' | 'devolucao';
+export type MovementType =
+  | 'entrada'
+  | 'entrada_compra'
+  | 'saida'
+  | 'saida_venda'
+  | 'transferencia'
+  | 'ajuste'
+  | 'quebra'
+  | 'perda'
+  | 'venda'
+  | 'devolucao';
 
 export interface StockMovement {
   id: string;
@@ -261,6 +271,7 @@ export interface StockMovement {
   quantity: number;
   unitCost: number;
   batchNumber?: string;
+  lotNumber?: string;
   referenceDoc?: string; // ex: "FT 2026/0142" or "RC 2026/001"
   reason?: string;
   operatorId: string;
