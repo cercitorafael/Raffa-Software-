@@ -20,7 +20,14 @@ import {
   Layers,
   ChevronRight,
 } from 'lucide-react';
-import { calculateSubscription, getWhatsAppRenewalUrl, WHATSAPP_CONTACTS } from '../../utils/subscription';
+import {
+  calculateSubscription,
+  getWhatsAppRenewalUrl,
+  getWhatsAppPlanRenewalUrl,
+  PROFESSIONAL_PLANS,
+  PricingPlan,
+  WHATSAPP_CONTACTS,
+} from '../../utils/subscription';
 import { sound } from '../../utils/audio';
 
 interface SubscriptionModalProps {
@@ -29,7 +36,7 @@ interface SubscriptionModalProps {
 }
 
 export const SubscriptionModal: React.FC<SubscriptionModalProps> = ({ isOpen, onClose }) => {
-  const { currentCompany, updateCompany, refreshCompanySubscription, notify, currentUser } = useApp();
+  const { currentCompany, refreshCompanySubscription, notify } = useApp();
   const [copiedPhone, setCopiedPhone] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
@@ -47,7 +54,7 @@ export const SubscriptionModal: React.FC<SubscriptionModalProps> = ({ isOpen, on
       setTimeout(() => {
         setIsRefreshing(false);
       }, 1000);
-    } catch (err) {
+    } catch {
       setIsRefreshing(false);
     }
   };
@@ -58,20 +65,6 @@ export const SubscriptionModal: React.FC<SubscriptionModalProps> = ({ isOpen, on
     sound.playClick();
     notify(`Copiado para a área de transferência: ${text}`, 'success');
     setTimeout(() => setCopiedPhone(null), 2500);
-  };
-
-  // Quick testing tools for admin
-  const handleQuickAddDays = (days: number) => {
-    const baseDate = subInfo.expiresAt && subInfo.expiresAt.getTime() > Date.now()
-      ? subInfo.expiresAt
-      : new Date();
-    const newExpires = new Date(baseDate.getTime() + days * 24 * 60 * 60 * 1000);
-    updateCompany(currentCompany.id, {
-      subscriptionExpiresAt: newExpires.toISOString(),
-      status: 'active',
-      subscriptionStartedAt: new Date().toISOString(),
-    });
-    notify(`Assinatura estendida em +${days} dias com sucesso!`, 'success');
   };
 
   // Progress Bar color logic
@@ -97,7 +90,7 @@ export const SubscriptionModal: React.FC<SubscriptionModalProps> = ({ isOpen, on
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-sm overflow-y-auto">
-      <div className="w-full max-w-2xl bg-[#0f0f0f] border border-[#282828] rounded-2xl shadow-2xl overflow-hidden flex flex-col my-auto animate-in fade-in zoom-in-95 duration-200">
+      <div className="w-full max-w-3xl bg-[#0f0f0f] border border-[#282828] rounded-2xl shadow-2xl overflow-hidden flex flex-col my-auto animate-in fade-in zoom-in-95 duration-200">
         {/* Header */}
         <div className="px-6 py-4 border-b border-[#222222] bg-[#141414] flex items-center justify-between">
           <div className="flex items-center space-x-3">
@@ -119,15 +112,26 @@ export const SubscriptionModal: React.FC<SubscriptionModalProps> = ({ isOpen, on
             </div>
           </div>
 
-          <button
-            onClick={() => {
-              sound.playClick();
-              onClose();
-            }}
-            className="p-1.5 rounded-lg text-neutral-400 hover:text-white hover:bg-[#222222] transition-colors cursor-pointer"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          <div className="flex items-center space-x-2">
+            <button
+              type="button"
+              onClick={handleRefresh}
+              disabled={isRefreshing}
+              title="Sincronizar estado da subscrição com o Supabase"
+              className="p-1.5 rounded-lg text-neutral-400 hover:text-[#c5a47e] hover:bg-[#222222] transition-colors cursor-pointer disabled:opacity-50"
+            >
+              <RotateCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin text-[#c5a47e]' : ''}`} />
+            </button>
+            <button
+              onClick={() => {
+                sound.playClick();
+                onClose();
+              }}
+              className="p-1.5 rounded-lg text-neutral-400 hover:text-white hover:bg-[#222222] transition-colors cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
         {/* Modal Body */}
@@ -187,6 +191,96 @@ export const SubscriptionModal: React.FC<SubscriptionModalProps> = ({ isOpen, on
                 <span className="text-[10px] text-neutral-500 uppercase font-mono block">SAF-T</span>
                 <span className="font-medium text-neutral-300">{currentCompany?.saftVersion || '1.04_01'}</span>
               </div>
+            </div>
+          </div>
+
+          {/* CHOOSE PROFESSIONAL PLAN SECTION (FROM USER IMAGE) */}
+          <div className="space-y-3 pt-1">
+            <div className="text-center space-y-0.5">
+              <h3 className="text-base font-black uppercase tracking-wider text-[#98b87a] flex items-center justify-center space-x-1.5">
+                <Sparkles className="w-4 h-4 text-[#98b87a]" />
+                <span>ESCOLHA O SEU PLANO PROFISSIONAL</span>
+                <Sparkles className="w-4 h-4 text-[#98b87a]" />
+              </h3>
+              <p className="text-xs text-neutral-400">
+                Clique num dos planos para solicitar renovação ou extensão imediata via WhatsApp
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
+              {PROFESSIONAL_PLANS.map((plan) => {
+                const isSemestral = plan.id === 'semestral';
+                const isAnual = plan.id === 'anual';
+                const isTrimestral = plan.id === 'trimestral';
+                const planUrl = getWhatsAppPlanRenewalUrl(WHATSAPP_CONTACTS[0].rawPhone, plan, currentCompany);
+
+                return (
+                  <a
+                    key={plan.id}
+                    href={planUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={() => sound.playClick()}
+                    className={`group relative text-left p-3.5 rounded-xl border transition-all duration-200 cursor-pointer flex flex-col justify-between hover:scale-[1.02] active:scale-[0.99] shadow-md ${
+                      isAnual
+                        ? 'bg-gradient-to-b from-[#1a1710] to-[#121212] border-amber-500/50 hover:border-amber-400'
+                        : isSemestral
+                        ? 'bg-gradient-to-b from-[#141812] to-[#121212] border-emerald-500/50 hover:border-emerald-400'
+                        : isTrimestral
+                        ? 'bg-gradient-to-b from-[#10141a] to-[#121212] border-sky-500/40 hover:border-sky-400'
+                        : 'bg-[#141414] border-[#2a2a2a] hover:border-[#c5a47e]/60'
+                    }`}
+                  >
+                    {plan.badge && (
+                      <div className="absolute -top-2 right-2">
+                        <span className={`px-1.5 py-0.2 rounded-full text-[9px] font-extrabold uppercase tracking-wide shadow-xs ${
+                          isAnual
+                            ? 'bg-amber-500 text-black'
+                            : isSemestral
+                            ? 'bg-emerald-500 text-black'
+                            : 'bg-sky-500 text-black'
+                        }`}>
+                          {plan.badge}
+                        </span>
+                      </div>
+                    )}
+
+                    <div>
+                      <div className="border-b border-[#262626] pb-1.5 mb-2 flex items-center justify-between">
+                        <h4 className="text-xs font-black uppercase tracking-wider text-[#88b04b] group-hover:text-[#a2cc5d] transition-colors">
+                          {plan.name}
+                        </h4>
+                        <span className="text-[10px] font-mono text-neutral-400">
+                          {plan.period}
+                        </span>
+                      </div>
+
+                      <div className="p-2 rounded-lg bg-[#0a0a0a]/80 border border-[#222222] group-hover:border-neutral-700 transition-colors mb-2">
+                        <p className="text-[10px] font-bold text-blue-400 group-hover:text-blue-300 leading-snug uppercase tracking-tight text-center">
+                          {plan.formattedText}
+                        </p>
+                      </div>
+
+                      <div className="text-center my-1.5">
+                        <span className="text-lg font-black text-white font-mono tracking-tight group-hover:text-[#c5a47e] transition-colors">
+                          {plan.price}
+                        </span>
+                        <p className="text-[9px] text-neutral-400 font-mono">
+                          {plan.durationText}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="mt-2.5 pt-2 border-t border-[#222222]">
+                      <div className="w-full py-1.5 px-2 rounded-lg bg-emerald-600 group-hover:bg-emerald-500 text-white text-[11px] font-bold transition-all flex items-center justify-center space-x-1 shadow-xs">
+                        <MessageSquare className="w-3 h-3" />
+                        <span>Subscrever</span>
+                        <ExternalLink className="w-2.5 h-2.5 opacity-80" />
+                      </div>
+                    </div>
+                  </a>
+                );
+              })}
             </div>
           </div>
 
@@ -275,55 +369,6 @@ export const SubscriptionModal: React.FC<SubscriptionModalProps> = ({ isOpen, on
               Ao enviar o comprovativo pelo WhatsApp acima, a sua subscrição será sincronizada em tempo real.
             </p>
           </div>
-
-          {/* Admin Simulation & Control Bar */}
-          {currentUser.role === 'admin' && (
-            <div className="p-3.5 bg-[#101010] border border-[#262626] rounded-xl space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-[11px] font-bold text-neutral-400 uppercase font-mono flex items-center space-x-1">
-                  <Sparkles className="w-3 h-3 text-[#c5a47e]" />
-                  <span>Ações Administrativas / Simulação de Licença</span>
-                </span>
-                <button
-                  onClick={handleRefresh}
-                  disabled={isRefreshing}
-                  className="text-[11px] text-[#c5a47e] hover:underline flex items-center space-x-1 cursor-pointer"
-                >
-                  <RotateCw className={`w-3 h-3 ${isRefreshing ? 'animate-spin' : ''}`} />
-                  <span>Sincronizar Supabase</span>
-                </button>
-              </div>
-
-              <div className="flex flex-wrap gap-2 pt-1">
-                <button
-                  onClick={() => handleQuickAddDays(30)}
-                  className="px-2.5 py-1 rounded bg-[#1e1e1e] hover:bg-[#2a2a2a] text-neutral-200 text-xs border border-[#333] transition-colors cursor-pointer"
-                >
-                  +30 Dias (Mensal)
-                </button>
-                <button
-                  onClick={() => handleQuickAddDays(365)}
-                  className="px-2.5 py-1 rounded bg-[#1e1e1e] hover:bg-[#2a2a2a] text-neutral-200 text-xs border border-[#333] transition-colors cursor-pointer"
-                >
-                  +365 Dias (Anual)
-                </button>
-                <button
-                  onClick={() => {
-                    const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-                    updateCompany(currentCompany.id, {
-                      subscriptionExpiresAt: yesterday,
-                      status: 'expired',
-                    });
-                    notify('Simulação: Licença expirada ativada.', 'warning');
-                    onClose();
-                  }}
-                  className="px-2.5 py-1 rounded bg-rose-950/40 hover:bg-rose-900/50 text-rose-300 text-xs border border-rose-800/40 transition-colors cursor-pointer"
-                >
-                  Simular Bloqueio / Expirada
-                </button>
-              </div>
-            </div>
-          )}
         </div>
 
         {/* Footer */}

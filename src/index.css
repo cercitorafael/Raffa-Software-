@@ -67,52 +67,124 @@ html.theme-light, [data-theme="light"] {
 }
 
 html.theme-light body, [data-theme="light"] body {
-  background-color: #f3f4f6 !important;
-  color: #111827 !important;
+  background-color: #f1f5f9 !important;
+  color: #0f172a !important;
 }
 
-html.theme-light .bg-\[\#0a0a0a\], [data-theme="light"] .bg-\[\#0a0a0a\] {
-  background-color: #f3f4f6 !important;
+/* Base Canvas & Main Backgrounds */
+html.theme-light .bg-\[\#000\], html.theme-light .bg-black,
+html.theme-light .bg-\[\#050505\], html.theme-light .bg-\[\#070707\], html.theme-light .bg-\[\#080808\],
+html.theme-light .bg-\[\#090909\], html.theme-light .bg-\[\#0a0a0a\], html.theme-light .bg-\[\#0b0b0b\],
+html.theme-light .bg-\[\#0c0c0c\], html.theme-light .bg-\[\#0d0d0d\], [data-theme="light"] .bg-\[\#0a0a0a\],
+[data-theme="light"] .bg-\[\#0d0d0d\], [data-theme="light"] .bg-\[\#070707\], [data-theme="light"] .bg-\[\#050505\] {
+  background-color: #f8fafc !important;
 }
 
-html.theme-light .bg-\[\#0d0d0d\], [data-theme="light"] .bg-\[\#0d0d0d\] {
-  background-color: #f9fafb !important;
-}
-
-html.theme-light .bg-\[\#141414\], [data-theme="light"] .bg-\[\#141414\] {
+/* Primary Cards, Panels, Modals, Topbar & Sidebar */
+html.theme-light .bg-\[\#0e0e0e\], html.theme-light .bg-\[\#0f0f0f\], html.theme-light .bg-\[\#101010\],
+html.theme-light .bg-\[\#111111\], html.theme-light .bg-\[\#121212\], html.theme-light .bg-\[\#141414\],
+html.theme-light .bg-\[\#151515\], html.theme-light .bg-\[\#161616\],
+[data-theme="light"] .bg-\[\#0f0f0f\], [data-theme="light"] .bg-\[\#101010\], [data-theme="light"] .bg-\[\#121212\],
+[data-theme="light"] .bg-\[\#141414\], [data-theme="light"] .bg-\[\#151515\], [data-theme="light"] .bg-\[\#161616\] {
   background-color: #ffffff !important;
-  box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.06), 0 1px 2px 0 rgba(0, 0, 0, 0.04) !important;
+  box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05), 0 1px 2px -1px rgba(0, 0, 0, 0.05);
 }
 
-html.theme-light .bg-\[\#161616\], html.theme-light .bg-\[\#1a1a1a\], html.theme-light .bg-\[\#1f1f1f\],
-[data-theme="light"] .bg-\[\#161616\], [data-theme="light"] .bg-\[\#1a1a1a\], [data-theme="light"] .bg-\[\#1f1f1f\] {
-  background-color: #f3f4f6 !important;
+/* Secondary Inner Containers, Table Headers, Inputs & Sub-Boxes */
+html.theme-light .bg-\[\#171717\], html.theme-light .bg-\[\#181818\], html.theme-light .bg-\[\#191919\],
+html.theme-light .bg-\[\#1a1a1a\], html.theme-light .bg-\[\#1c1c1c\], html.theme-light .bg-\[\#1e1e1e\],
+html.theme-light .bg-\[\#1f1f1f\], html.theme-light .bg-\[\#202020\], html.theme-light .bg-\[\#222\],
+html.theme-light .bg-\[\#222222\], html.theme-light .bg-\[\#242424\], html.theme-light .bg-\[\#252525\],
+html.theme-light .bg-\[\#262626\], html.theme-light .bg-\[\#282828\], html.theme-light .bg-\[\#2a2a2a\],
+html.theme-light .bg-\[\#2b2b2b\], html.theme-light .bg-\[\#303030\], html.theme-light .bg-\[\#333\],
+html.theme-light .bg-\[\#333333\],
+[data-theme="light"] .bg-\[\#171717\], [data-theme="light"] .bg-\[\#181818\], [data-theme="light"] .bg-\[\#1a1a1a\],
+[data-theme="light"] .bg-\[\#1c1c1c\], [data-theme="light"] .bg-\[\#1e1e1e\], [data-theme="light"] .bg-\[\#1f1f1f\],
+[data-theme="light"] .bg-\[\#202020\], [data-theme="light"] .bg-\[\#222\], [data-theme="light"] .bg-\[\#222222\],
+[data-theme="light"] .bg-\[\#242424\], [data-theme="light"] .bg-\[\#252525\], [data-theme="light"] .bg-\[\#262626\],
+[data-theme="light"] .bg-\[\#282828\], [data-theme="light"] .bg-\[\#2a2a2a\], [data-theme="light"] .bg-\[\#333\],
+[data-theme="light"] .bg-\[\#333333\] {
+  background-color: #f1f5f9 !important;
 }
 
-html.theme-light .border-\[\#262626\], html.theme-light .border-\[\#202020\], html.theme-light .border-\[\#333\], html.theme-light .border-\[\#222\],
-[data-theme="light"] .border-\[\#262626\], [data-theme="light"] .border-\[\#202020\], [data-theme="light"] .border-\[\#333\], [data-theme="light"] .border-\[\#222\] {
-  border-color: #e5e7eb !important;
+/* Hover Background States */
+html.theme-light .hover\:bg-\[\#141414\]:hover, html.theme-light .hover\:bg-\[\#181818\]:hover,
+html.theme-light .hover\:bg-\[\#1a1a1a\]:hover, html.theme-light .hover\:bg-\[\#1c1c1c\]:hover,
+html.theme-light .hover\:bg-\[\#1f1f1f\]:hover, html.theme-light .hover\:bg-\[\#202020\]:hover,
+html.theme-light .hover\:bg-\[\#222222\]:hover, html.theme-light .hover\:bg-\[\#252525\]:hover,
+html.theme-light .hover\:bg-\[\#282828\]:hover, html.theme-light .hover\:bg-\[\#2a2a2a\]:hover,
+html.theme-light .hover\:bg-\[\#333\]:hover,
+[data-theme="light"] .hover\:bg-\[\#141414\]:hover, [data-theme="light"] .hover\:bg-\[\#1a1a1a\]:hover,
+[data-theme="light"] .hover\:bg-\[\#1f1f1f\]:hover, [data-theme="light"] .hover\:bg-\[\#202020\]:hover,
+[data-theme="light"] .hover\:bg-\[\#222222\]:hover, [data-theme="light"] .hover\:bg-\[\#252525\]:hover,
+[data-theme="light"] .hover\:bg-\[\#282828\]:hover {
+  background-color: #e2e8f0 !important;
 }
 
-html.theme-light .divide-\[\#262626\] > :not([hidden]) ~ :not([hidden]),
+/* Light Theme Borders */
+html.theme-light .border-\[\#141414\], html.theme-light .border-\[\#1a1a1a\], html.theme-light .border-\[\#1c1c1c\],
+html.theme-light .border-\[\#1f1f1f\], html.theme-light .border-\[\#202020\], html.theme-light .border-\[\#222\],
+html.theme-light .border-\[\#222222\], html.theme-light .border-\[\#242424\], html.theme-light .border-\[\#262626\],
+html.theme-light .border-\[\#282828\], html.theme-light .border-\[\#2a2a2a\], html.theme-light .border-\[\#2b2b2b\],
+html.theme-light .border-\[\#2c2c2c\], html.theme-light .border-\[\#2e2e2e\], html.theme-light .border-\[\#303030\],
+html.theme-light .border-\[\#333\], html.theme-light .border-\[\#333333\], html.theme-light .border-\[\#383838\],
+html.theme-light .border-\[\#3a3a3a\], html.theme-light .border-\[\#3f3f3f\], html.theme-light .border-\[\#444\],
+[data-theme="light"] .border-\[\#141414\], [data-theme="light"] .border-\[\#1a1a1a\],
+[data-theme="light"] .border-\[\#202020\], [data-theme="light"] .border-\[\#222\],
+[data-theme="light"] .border-\[\#222222\], [data-theme="light"] .border-\[\#242424\],
+[data-theme="light"] .border-\[\#262626\], [data-theme="light"] .border-\[\#282828\],
+[data-theme="light"] .border-\[\#2a2a2a\], [data-theme="light"] .border-\[\#333\],
+[data-theme="light"] .border-\[\#333333\], [data-theme="light"] .border-\[\#383838\] {
+  border-color: #e2e8f0 !important;
+}
+
+html.theme-light .hover\:border-\[\#383838\]:hover, html.theme-light .hover\:border-\[\#444\]:hover,
+[data-theme="light"] .hover\:border-\[\#383838\]:hover {
+  border-color: #cbd5e1 !important;
+}
+
+/* Light Theme Dividers */
+html.theme-light .divide-\[\#1c1c1c\] > :not([hidden]) ~ :not([hidden]),
+html.theme-light .divide-\[\#1e1e1e\] > :not([hidden]) ~ :not([hidden]),
+html.theme-light .divide-\[\#1f1f1f\] > :not([hidden]) ~ :not([hidden]),
 html.theme-light .divide-\[\#202020\] > :not([hidden]) ~ :not([hidden]),
+html.theme-light .divide-\[\#222\] > :not([hidden]) ~ :not([hidden]),
+html.theme-light .divide-\[\#262626\] > :not([hidden]) ~ :not([hidden]),
 [data-theme="light"] .divide-\[\#262626\] > :not([hidden]) ~ :not([hidden]),
 [data-theme="light"] .divide-\[\#202020\] > :not([hidden]) ~ :not([hidden]) {
-  border-color: #e5e7eb !important;
+  border-color: #e2e8f0 !important;
 }
 
-html.theme-light .text-\[\#e5e5e5\], html.theme-light .text-neutral-100, html.theme-light .text-neutral-200,
+/* Light Theme Typography & Contrasting Text */
+html.theme-light .text-\[\#e5e5e5\], html.theme-light .text-\[\#f2f2f2\],
+html.theme-light .text-neutral-100, html.theme-light .text-neutral-200,
 [data-theme="light"] .text-\[\#e5e5e5\], [data-theme="light"] .text-neutral-100, [data-theme="light"] .text-neutral-200 {
-  color: #111827 !important;
+  color: #0f172a !important;
+}
+
+/* Text white override (excluding elements inside explicitly colored buttons) */
+html.theme-light div:not([class*="bg-emerald-"]):not([class*="bg-rose-"]):not([class*="bg-blue-"]):not([class*="bg-amber-"]):not([class*="bg-purple-"]):not([class*="bg-sky-"]) > .text-white,
+html.theme-light span:not([class*="bg-emerald-"]):not([class*="bg-rose-"]):not([class*="bg-blue-"]):not([class*="bg-amber-"]):not([class*="bg-purple-"]):not([class*="bg-sky-"]) > .text-white,
+html.theme-light p.text-white, html.theme-light h1.text-white, html.theme-light h2.text-white,
+html.theme-light h3.text-white, html.theme-light h4.text-white, html.theme-light h5.text-white,
+html.theme-light h6.text-white, html.theme-light td.text-white, html.theme-light th.text-white,
+[data-theme="light"] p.text-white, [data-theme="light"] h1.text-white, [data-theme="light"] h2.text-white,
+[data-theme="light"] h3.text-white, [data-theme="light"] h4.text-white, [data-theme="light"] h5.text-white,
+[data-theme="light"] span.text-white:not([class*="bg-"]), [data-theme="light"] div.text-white:not([class*="bg-"]) {
+  color: #0f172a !important;
 }
 
 html.theme-light .text-neutral-300, html.theme-light .text-neutral-400,
 [data-theme="light"] .text-neutral-300, [data-theme="light"] .text-neutral-400 {
-  color: #4b5563 !important;
+  color: #475569 !important;
 }
 
 html.theme-light .text-neutral-500, [data-theme="light"] .text-neutral-500 {
-  color: #6b7280 !important;
+  color: #64748b !important;
+}
+
+html.theme-light .hover\:text-white:hover, [data-theme="light"] .hover\:text-white:hover {
+  color: #0f172a !important;
 }
 
 html.theme-light .text-\[\#c5a47e\], [data-theme="light"] .text-\[\#c5a47e\] {
@@ -120,21 +192,88 @@ html.theme-light .text-\[\#c5a47e\], [data-theme="light"] .text-\[\#c5a47e\] {
 }
 
 html.theme-light .border-\[\#c5a47e\], [data-theme="light"] .border-\[\#c5a47e\] {
-  border-color: #b45309 !important;
+  border-color: #d97706 !important;
 }
 
 html.theme-light .bg-\[\#c5a47e\]\/10, html.theme-light .bg-\[\#c5a47e\]\/15, html.theme-light .bg-\[\#c5a47e\]\/20,
 [data-theme="light"] .bg-\[\#c5a47e\]\/10, [data-theme="light"] .bg-\[\#c5a47e\]\/15, [data-theme="light"] .bg-\[\#c5a47e\]\/20 {
-  background-color: rgba(180, 83, 9, 0.12) !important;
+  background-color: rgba(180, 83, 9, 0.1) !important;
 }
 
-/* MIDNIGHT BLUE THEME */
+/* Light Theme Form Controls & Select Options */
+html.theme-light select, html.theme-light input, html.theme-light textarea,
+[data-theme="light"] select, [data-theme="light"] input, [data-theme="light"] textarea {
+  color: #0f172a !important;
+}
+
+html.theme-light ::placeholder, [data-theme="light"] ::placeholder {
+  color: #94a3b8 !important;
+}
+
+html.theme-light select option, [data-theme="light"] select option {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+}
+
+/* Light Theme Tables */
+html.theme-light table, [data-theme="light"] table {
+  color: #0f172a !important;
+}
+
+html.theme-light thead, [data-theme="light"] thead {
+  background-color: #f1f5f9 !important;
+  color: #475569 !important;
+}
+
+html.theme-light tbody tr:hover, [data-theme="light"] tbody tr:hover {
+  background-color: #f8fafc !important;
+}
+
+/* Recharts Integration for Light Theme */
+html.theme-light .recharts-default-tooltip, [data-theme="light"] .recharts-default-tooltip {
+  background-color: #ffffff !important;
+  border: 1px solid #e2e8f0 !important;
+  color: #0f172a !important;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1) !important;
+  border-radius: 8px !important;
+}
+
+html.theme-light .recharts-tooltip-item, [data-theme="light"] .recharts-tooltip-item {
+  color: #0f172a !important;
+}
+
+html.theme-light .recharts-cartesian-axis-tick text, [data-theme="light"] .recharts-cartesian-axis-tick text {
+  fill: #64748b !important;
+}
+
+html.theme-light .recharts-cartesian-grid line, [data-theme="light"] .recharts-cartesian-grid line {
+  stroke: #e2e8f0 !important;
+}
+
+/* Light Theme Scrollbars */
+html.theme-light ::-webkit-scrollbar-thumb, [data-theme="light"] ::-webkit-scrollbar-thumb {
+  background: #cbd5e1 !important;
+}
+html.theme-light ::-webkit-scrollbar-thumb:hover, [data-theme="light"] ::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8 !important;
+}
+html.theme-light .custom-horizontal-scrollbar, [data-theme="light"] .custom-horizontal-scrollbar {
+  scrollbar-color: #b45309 #f1f5f9 !important;
+}
+html.theme-light .custom-horizontal-scrollbar::-webkit-scrollbar-track, [data-theme="light"] .custom-horizontal-scrollbar::-webkit-scrollbar-track {
+  background: #f1f5f9 !important;
+}
+html.theme-light .custom-horizontal-scrollbar::-webkit-scrollbar-thumb, [data-theme="light"] .custom-horizontal-scrollbar::-webkit-scrollbar-thumb {
+  background: #b45309 !important;
+}
+
+/* ==================== MIDNIGHT BLUE THEME ==================== */
 html.theme-midnight body, [data-theme="midnight"] body {
   background-color: #060c18 !important;
   color: #f1f5f9 !important;
 }
 
-html.theme-midnight .bg-\[\#0a0a0a\], [data-theme="midnight"] .bg-\[\#0a0a0a\] {
+html.theme-midnight .bg-\[\#0a0a0a\], html.theme-midnight .bg-\[\#070707\], [data-theme="midnight"] .bg-\[\#0a0a0a\] {
   background-color: #060c18 !important;
 }
 
@@ -142,16 +281,19 @@ html.theme-midnight .bg-\[\#0d0d0d\], [data-theme="midnight"] .bg-\[\#0d0d0d\] {
   background-color: #0b1424 !important;
 }
 
-html.theme-midnight .bg-\[\#141414\], [data-theme="midnight"] .bg-\[\#141414\] {
+html.theme-midnight .bg-\[\#121212\], html.theme-midnight .bg-\[\#141414\], html.theme-midnight .bg-\[\#0f0f0f\],
+[data-theme="midnight"] .bg-\[\#121212\], [data-theme="midnight"] .bg-\[\#141414\] {
   background-color: #0f1c33 !important;
 }
 
-html.theme-midnight .bg-\[\#161616\], html.theme-midnight .bg-\[\#1a1a1a\], html.theme-midnight .bg-\[\#1f1f1f\],
+html.theme-midnight .bg-\[\#161616\], html.theme-midnight .bg-\[\#171717\], html.theme-midnight .bg-\[\#181818\],
+html.theme-midnight .bg-\[\#1a1a1a\], html.theme-midnight .bg-\[\#1f1f1f\], html.theme-midnight .bg-\[\#202020\],
 [data-theme="midnight"] .bg-\[\#161616\], [data-theme="midnight"] .bg-\[\#1a1a1a\], [data-theme="midnight"] .bg-\[\#1f1f1f\] {
   background-color: #142340 !important;
 }
 
 html.theme-midnight .border-\[\#262626\], html.theme-midnight .border-\[\#202020\], html.theme-midnight .border-\[\#333\],
+html.theme-midnight .border-\[\#222\], html.theme-midnight .border-\[\#282828\],
 [data-theme="midnight"] .border-\[\#262626\], [data-theme="midnight"] .border-\[\#202020\], [data-theme="midnight"] .border-\[\#333\] {
   border-color: #1e3256 !important;
 }
@@ -169,13 +311,13 @@ html.theme-midnight .bg-\[\#c5a47e\]\/10, html.theme-midnight .bg-\[\#c5a47e\]\/
   background-color: rgba(56, 189, 248, 0.15) !important;
 }
 
-/* EMERALD THEME */
+/* ==================== EMERALD THEME ==================== */
 html.theme-emerald body, [data-theme="emerald"] body {
   background-color: #04100c !important;
   color: #ecfdf5 !important;
 }
 
-html.theme-emerald .bg-\[\#0a0a0a\], [data-theme="emerald"] .bg-\[\#0a0a0a\] {
+html.theme-emerald .bg-\[\#0a0a0a\], html.theme-emerald .bg-\[\#070707\], [data-theme="emerald"] .bg-\[\#0a0a0a\] {
   background-color: #04100c !important;
 }
 
@@ -183,16 +325,19 @@ html.theme-emerald .bg-\[\#0d0d0d\], [data-theme="emerald"] .bg-\[\#0d0d0d\] {
   background-color: #071c15 !important;
 }
 
-html.theme-emerald .bg-\[\#141414\], [data-theme="emerald"] .bg-\[\#141414\] {
+html.theme-emerald .bg-\[\#121212\], html.theme-emerald .bg-\[\#141414\], html.theme-emerald .bg-\[\#0f0f0f\],
+[data-theme="emerald"] .bg-\[\#121212\], [data-theme="emerald"] .bg-\[\#141414\] {
   background-color: #0a261d !important;
 }
 
-html.theme-emerald .bg-\[\#161616\], html.theme-emerald .bg-\[\#1a1a1a\], html.theme-emerald .bg-\[\#1f1f1f\],
+html.theme-emerald .bg-\[\#161616\], html.theme-emerald .bg-\[\#171717\], html.theme-emerald .bg-\[\#181818\],
+html.theme-emerald .bg-\[\#1a1a1a\], html.theme-emerald .bg-\[\#1f1f1f\], html.theme-emerald .bg-\[\#202020\],
 [data-theme="emerald"] .bg-\[\#161616\], [data-theme="emerald"] .bg-\[\#1a1a1a\], [data-theme="emerald"] .bg-\[\#1f1f1f\] {
   background-color: #0f362a !important;
 }
 
 html.theme-emerald .border-\[\#262626\], html.theme-emerald .border-\[\#202020\], html.theme-emerald .border-\[\#333\],
+html.theme-emerald .border-\[\#222\], html.theme-emerald .border-\[\#282828\],
 [data-theme="emerald"] .border-\[\#262626\], [data-theme="emerald"] .border-\[\#202020\], [data-theme="emerald"] .border-\[\#333\] {
   border-color: #174a3b !important;
 }
