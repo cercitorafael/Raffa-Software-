@@ -79,6 +79,8 @@ export const SupabaseUserManager: React.FC = () => {
     reconnectSupabaseRealtime,
     pullFromSupabase,
     pushToSupabase,
+    pullUsersFromSupabase,
+    pushUsersToSupabase,
     companies,
     currentCompany,
     stores,
@@ -99,6 +101,7 @@ export const SupabaseUserManager: React.FC = () => {
 
   const [usuarios, setUsuarios] = useState<Usuario[]>([]);
   const [loading, setLoading] = useState(false);
+  const [syncingUsers, setSyncingUsers] = useState(false);
   const [syncingAll, setSyncingAll] = useState(false);
   const [pushingAll, setPushingAll] = useState(false);
   const [diagnosing, setDiagnosing] = useState(false);
@@ -1126,7 +1129,37 @@ const { data, error } = await supabase.from('produtos').upsert([
                     className="w-full pl-9 pr-3 py-2 bg-[#121212] border border-[#262626] rounded-lg text-xs text-white placeholder-neutral-500 focus:outline-hidden focus:border-[#c5a47e]"
                   />
                 </div>
-                <div className="flex items-center space-x-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    onClick={async () => {
+                      setSyncingUsers(true);
+                      await fetchUsuarios();
+                      await pullUsersFromSupabase({ companyId: currentCompany?.id });
+                      setSyncingUsers(false);
+                    }}
+                    disabled={syncingUsers}
+                    title="Carregar manualmente todos os utilizadores da tabela 'usuarios' no Supabase"
+                    className="px-3 py-1.5 bg-[#1a1a1a] hover:bg-[#252525] border border-[#333] text-neutral-200 font-medium text-xs rounded-lg flex items-center space-x-1.5 shadow-sm transition-all cursor-pointer disabled:opacity-50"
+                  >
+                    <ArrowDownToLine className={`w-3.5 h-3.5 text-[#c5a47e] ${syncingUsers ? 'animate-bounce' : ''}`} />
+                    <span>{syncingUsers ? 'A carregar...' : 'Carregar Usuários do Supabase'}</span>
+                  </button>
+
+                  <button
+                    onClick={async () => {
+                      setSyncingUsers(true);
+                      await pushUsersToSupabase({ companyId: currentCompany?.id });
+                      await fetchUsuarios();
+                      setSyncingUsers(false);
+                    }}
+                    disabled={syncingUsers}
+                    title="Exportar usuários locais para a base de dados Supabase"
+                    className="px-3 py-1.5 bg-[#1a1a1a] hover:bg-[#252525] border border-[#333] text-neutral-200 font-medium text-xs rounded-lg flex items-center space-x-1.5 shadow-sm transition-all cursor-pointer disabled:opacity-50"
+                  >
+                    <ArrowUpFromLine className="w-3.5 h-3.5 text-sky-400" />
+                    <span>Exportar p/ Supabase</span>
+                  </button>
+
                   <button
                     onClick={handleOpenCreate}
                     className="px-3 py-1.5 bg-[#c5a47e] hover:bg-[#b5946e] text-black font-bold text-xs rounded-lg flex items-center space-x-1.5 shadow-md transition-all cursor-pointer"

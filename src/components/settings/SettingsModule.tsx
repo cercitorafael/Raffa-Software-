@@ -81,6 +81,9 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
     addUser,
     updateUser,
     deleteUser,
+    pullUsersFromSupabase,
+    pushUsersToSupabase,
+    supabaseRealtimeStatus,
     roles,
     updateRolePermissions,
     events,
@@ -251,6 +254,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
     pin: '1234',
     isActive: true,
   });
+  const [isSyncingUsers, setIsSyncingUsers] = useState(false);
 
   // Store Management Modals
   const [showNewStoreModal, setShowNewStoreModal] = useState(false);
@@ -1392,7 +1396,35 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
                   </div>
                 </div>
 
-                <div className="flex items-center space-x-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    onClick={async () => {
+                      setIsSyncingUsers(true);
+                      await pullUsersFromSupabase({ companyId: currentCompany?.id });
+                      setIsSyncingUsers(false);
+                    }}
+                    disabled={isSyncingUsers}
+                    title="Carregar e sincronizar utilizadores a partir da base de dados Supabase"
+                    className="px-3 py-1.5 bg-[#1f1f1f] hover:bg-[#2a2a2a] text-neutral-200 border border-[#333] font-medium text-xs rounded-md cursor-pointer flex items-center space-x-1.5 transition-all disabled:opacity-50"
+                  >
+                    <Download className={`w-3.5 h-3.5 text-[#c5a47e] ${isSyncingUsers ? 'animate-bounce' : ''}`} />
+                    <span>{isSyncingUsers ? 'A carregar...' : 'Carregar do Supabase'}</span>
+                  </button>
+
+                  <button
+                    onClick={async () => {
+                      setIsSyncingUsers(true);
+                      await pushUsersToSupabase({ companyId: currentCompany?.id });
+                      setIsSyncingUsers(false);
+                    }}
+                    disabled={isSyncingUsers}
+                    title="Enviar utilizadores locais para a tabela 'usuarios' no Supabase"
+                    className="px-3 py-1.5 bg-[#1f1f1f] hover:bg-[#2a2a2a] text-neutral-200 border border-[#333] font-medium text-xs rounded-md cursor-pointer flex items-center space-x-1.5 transition-all disabled:opacity-50"
+                  >
+                    <Upload className="w-3.5 h-3.5 text-sky-400" />
+                    <span>Exportar p/ Supabase</span>
+                  </button>
+
                   <button
                     onClick={() => {
                       setEditingUser(null);
@@ -1408,7 +1440,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
                       });
                       setShowNewUserModal(true);
                     }}
-                    className="px-3.5 py-1.5 bg-[#c5a47e] text-neutral-950 font-medium text-xs rounded-md cursor-pointer hover:bg-[#b5946e] flex items-center space-x-1.5"
+                    className="px-3.5 py-1.5 bg-[#c5a47e] text-neutral-950 font-medium text-xs rounded-md cursor-pointer hover:bg-[#b5946e] flex items-center space-x-1.5 shadow-xs"
                   >
                     <Plus className="w-4 h-4" />
                     <span>Adicionar Utilizador</span>

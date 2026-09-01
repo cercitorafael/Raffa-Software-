@@ -98,6 +98,8 @@ import {
   pushBatchRecordsToSupabase,
   pullAllFromSupabase,
   pushAllToSupabase,
+  pullTableFromSupabase,
+  pushTableToSupabase,
   getSyncLogs,
   clearSyncLogs,
   SupabaseSyncLog,
@@ -125,6 +127,8 @@ export interface AppContextType {
   supabaseSyncLogs: SupabaseSyncLog[];
   pullFromSupabase: (options?: { companyId?: string; profileId?: string }) => Promise<any>;
   pushToSupabase: (options?: { companyId?: string; profileId?: string }) => Promise<any>;
+  pullUsersFromSupabase: (options?: { companyId?: string }) => Promise<any>;
+  pushUsersToSupabase: (options?: { companyId?: string }) => Promise<any>;
   reconnectSupabaseRealtime: () => void;
   clearSupabaseLogs: () => void;
 
@@ -1236,15 +1240,42 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           const idToDelete = item.id || rawOld?.id;
           if (idToDelete) {
             setShiftsHistory((prev) => prev.filter((s) => String(s.id) !== String(idToDelete)));
+            setActiveShift((curr) => {
+              if (curr && String(curr.id) === String(idToDelete)) {
+                saveToStorage('activeShift', null);
+                return null;
+              }
+              return curr;
+            });
           }
         } else if (item.id) {
+          const shiftItem = item as CashShift;
           setShiftsHistory((prev) => {
-            const exists = prev.some((s) => String(s.id) === String(item.id));
+            const exists = prev.some((s) => String(s.id) === String(shiftItem.id));
             if (exists) {
-              return prev.map((s) => (String(s.id) === String(item.id) ? ({ ...s, ...item } as CashShift) : s));
+              return prev.map((s) => (String(s.id) === String(shiftItem.id) ? shiftItem : s));
             }
-            return [item as CashShift, ...prev];
+            return [shiftItem, ...prev];
           });
+
+          // Multi-device sync for active cash register
+          if (shiftItem.status === 'aberto') {
+            setActiveShift((curr) => {
+              if (!curr || String(curr.id) === String(shiftItem.id) || new Date(shiftItem.openedAt) > new Date(curr.openedAt)) {
+                saveToStorage('activeShift', shiftItem);
+                return shiftItem;
+              }
+              return curr;
+            });
+          } else if (shiftItem.status === 'fechado') {
+            setActiveShift((curr) => {
+              if (curr && String(curr.id) === String(shiftItem.id)) {
+                saveToStorage('activeShift', null);
+                return null;
+              }
+              return curr;
+            });
+          }
         }
       },
     });
@@ -1280,7 +1311,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           if (res.data.stock && res.data.stock.length > 0) setStock(res.data.stock);
           if (res.data.accountsPayable && res.data.accountsPayable.length > 0) setAccountsPayable(res.data.accountsPayable);
           if (res.data.accountsReceivable && res.data.accountsReceivable.length > 0) setAccountsReceivable(res.data.accountsReceivable);
-          if (res.data.shifts && res.data.shifts.length > 0) setShiftsHistory(res.data.shifts);
+          if (res.data.shifts && res.data.shifts.length > 0) {
+            setShiftsHistory(res.data.shifts);
+            // Reconcile active cash shift across devices in the same company/store
+            const openShift = res.data.shifts.find(
+              (s: CashShift) => s.status === 'aberto' && (!s.companyId || s.companyId === currentCompany?.id)
+            );
+            if (openShift) {
+              setActiveShift(openShift);
+              saveToStorage('activeShift', openShift);
+            } else {
+              setActiveShift((curr) => {
+                if (curr && !res.data.shifts.some((s: CashShift) => String(s.id) === String(curr.id) && s.status === 'aberto')) {
+                  saveToStorage('activeShift', null);
+                  return null;
+                }
+                return curr;
+              });
+            }
+          }
         }
       } catch {
         // Silent failure in background - Realtime will continue to deliver deltas
@@ -1328,7 +1377,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (res.data.stock && res.data.stock.length > 0) setStock(res.data.stock);
     if (res.data.accountsPayable && res.data.accountsPayable.length > 0) setAccountsPayable(res.data.accountsPayable);
     if (res.data.accountsReceivable && res.data.accountsReceivable.length > 0) setAccountsReceivable(res.data.accountsReceivable);
-    if (res.data.shifts && res.data.shifts.length > 0) setShiftsHistory(res.data.shifts);
+    if (res.data.shifts && res.data.shifts.length > 0) {
+      setShiftsHistory(res.data.shifts);
+      const openShift = res.data.shifts.find(
+        (s: CashShift) => s.status === 'aberto' && (!s.companyId || s.companyId === currentCompany?.id)
+      );
+      if (openShift) {
+        setActiveShift(openShift);
+        saveToStorage('activeShift', openShift);
+      }
+    }
 
     const totalPulled = Object.values(res.counts).reduce((a, b) => a + b, 0);
     if (totalPulled > 0 || res.errors.length === 0) {
@@ -1338,6 +1396,59 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       notify(`Aviso: ${res.errors[0] || 'Nenhum dado encontrado no Supabase.'}`, 'warning');
     }
     return res;
+  };
+
+  const pullUsersFromSupabase = async (options?: { companyId?: string }) => {
+    const compId = options?.companyId || currentCompany?.id || 'ALL';
+    const scopeTxt = compId !== 'ALL' ? ` (Empresa: ${compId})` : '';
+    notify(`A carregar utilizadores do Supabase${scopeTxt}...`, 'info');
+    try {
+      const res = await pullTableFromSupabase('usuarios', { companyId: compId });
+      if (res.data && res.data.length > 0) {
+        setUsers((prev) => {
+          const merged = [...prev];
+          for (const u of res.data) {
+            const idx = merged.findIndex(
+              (m) => String(m.id) === String(u.id) || (m.email && u.email && m.email.toLowerCase() === u.email.toLowerCase())
+            );
+            if (idx >= 0) {
+              merged[idx] = { ...merged[idx], ...u };
+            } else {
+              merged.push(u);
+            }
+          }
+          saveToStorage('users', merged);
+          return merged;
+        });
+        notify(`Sucesso: ${res.data.length} utilizadores carregados e sincronizados do Supabase!`, 'success');
+        sound.playSuccessChime();
+      } else {
+        notify('Nenhum utilizador encontrado no Supabase para descarregar.', 'warning');
+      }
+      return res;
+    } catch (err: any) {
+      notify(`Erro ao carregar utilizadores: ${err?.message || 'Falha de conexão'}`, 'error');
+      return { data: [], error: err?.message };
+    }
+  };
+
+  const pushUsersToSupabase = async (options?: { companyId?: string }) => {
+    const compId = options?.companyId || currentCompany?.id || 'ALL';
+    const targetUsers = compId !== 'ALL' ? users.filter((u) => !u.companyId || u.companyId === compId) : users;
+    notify(`A enviar ${targetUsers.length} utilizadores para o Supabase...`, 'info');
+    try {
+      const res = await pushTableToSupabase('usuarios', targetUsers, { companyId: compId });
+      if (res.success) {
+        notify(`Sucesso: ${res.count} utilizadores enviados e guardados no Supabase!`, 'success');
+        sound.playSuccessChime();
+      } else {
+        notify(`Aviso ao enviar utilizadores: ${res.error || 'Verifique as permissões na tabela usuarios'}`, 'warning');
+      }
+      return res;
+    } catch (err: any) {
+      notify(`Erro ao exportar utilizadores: ${err?.message || 'Falha de rede'}`, 'error');
+      return { success: false, count: 0, error: err?.message };
+    }
   };
 
   const pushToSupabase = async (options?: { companyId?: string; profileId?: string }) => {
@@ -4976,6 +5087,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         supabaseSyncLogs,
         pullFromSupabase,
         pushToSupabase,
+        pullUsersFromSupabase,
+        pushUsersToSupabase,
         reconnectSupabaseRealtime,
         clearSupabaseLogs,
 

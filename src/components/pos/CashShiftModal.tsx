@@ -22,9 +22,10 @@ import { printZReportA4, printZReportThermal, downloadZReportPdf } from '../../u
 
 interface CashShiftModalProps {
   onClose: () => void;
+  initialMode?: 'info' | 'open' | 'close' | 'sangria' | 'suprimento' | 'history';
 }
 
-export const CashShiftModal: React.FC<CashShiftModalProps> = ({ onClose }) => {
+export const CashShiftModal: React.FC<CashShiftModalProps> = ({ onClose, initialMode = 'info' }) => {
   const {
     activeShift,
     shiftsHistory,
@@ -44,7 +45,7 @@ export const CashShiftModal: React.FC<CashShiftModalProps> = ({ onClose }) => {
       ? [500, 1000, 2000, 5000]
       : [50, 100, 150, 200];
 
-  const [mode, setMode] = useState<'info' | 'open' | 'close' | 'sangria' | 'suprimento' | 'history'>('info');
+  const [mode, setMode] = useState<'info' | 'open' | 'close' | 'sangria' | 'suprimento' | 'history'>(initialMode);
   const [initialCashInput, setInitialCashInput] = useState<number>(
     currencyDefinition.code === 'MZN' ? 2000 : 150
   );
