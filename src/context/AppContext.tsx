@@ -658,30 +658,51 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Products & Stock
   const [categories, setCategories] = useState<ProductCategory[]>(() => {
     const loaded = loadFromStorage('categories', initialCategories);
-    if (!loaded || !Array.isArray(loaded) || loaded.length === 0) {
-      return initialCategories;
-    }
-    // Auto-padronizar nomes de categorias existentes com correções ortográficas
-    return loaded.map((c: ProductCategory) => ({
+    const list = (!loaded || !Array.isArray(loaded) || loaded.length === 0) ? initialCategories : loaded;
+    // Auto-padronizar nomes de categorias existentes com correções ortográficas e assegurar isolamento por empresa
+    return list.map((c: ProductCategory) => ({
       ...c,
       name: standardizeCategoryName(c.name || 'Artigos Gerais'),
+      companyId: c.companyId || 'comp-1',
     }));
   });
-  const [products, setProducts] = useState<Product[]>(() =>
-    sortProductsAlphabetically(loadFromStorage('products', initialProducts))
-  );
-  const [warehouses, setWarehouses] = useState<Warehouse[]>(() =>
-    loadFromStorage('warehouses', initialWarehouses)
-  );
-  const [stock, setStock] = useState<StockItem[]>(() =>
-    loadFromStorage('stock', initialStock)
-  );
-  const [lots, setLots] = useState<LotBatch[]>(() =>
-    loadFromStorage('lots', initialLots)
-  );
-  const [stockMovements, setStockMovements] = useState<StockMovement[]>(() =>
-    loadFromStorage('stockMovements', [])
-  );
+  const [products, setProducts] = useState<Product[]>(() => {
+    const loaded = loadFromStorage<Product[]>('products', initialProducts);
+    return sortProductsAlphabetically(
+      (Array.isArray(loaded) ? loaded : initialProducts).map((p: Product) => ({
+        ...p,
+        companyId: p.companyId || 'comp-1',
+      }))
+    );
+  });
+  const [warehouses, setWarehouses] = useState<Warehouse[]>(() => {
+    const loaded = loadFromStorage<Warehouse[]>('warehouses', initialWarehouses);
+    return (Array.isArray(loaded) ? loaded : initialWarehouses).map((w: Warehouse) => ({
+      ...w,
+      companyId: w.companyId || 'comp-1',
+    }));
+  });
+  const [stock, setStock] = useState<StockItem[]>(() => {
+    const loaded = loadFromStorage<StockItem[]>('stock', initialStock);
+    return (Array.isArray(loaded) ? loaded : initialStock).map((s: StockItem) => ({
+      ...s,
+      companyId: s.companyId || 'comp-1',
+    }));
+  });
+  const [lots, setLots] = useState<LotBatch[]>(() => {
+    const loaded = loadFromStorage<LotBatch[]>('lots', initialLots);
+    return (Array.isArray(loaded) ? loaded : initialLots).map((l: LotBatch) => ({
+      ...l,
+      companyId: (l as any).companyId || 'comp-1',
+    }));
+  });
+  const [stockMovements, setStockMovements] = useState<StockMovement[]>(() => {
+    const loaded = loadFromStorage<StockMovement[]>('stockMovements', []);
+    return (Array.isArray(loaded) ? loaded : []).map((m: StockMovement) => ({
+      ...m,
+      companyId: m.companyId || 'comp-1',
+    }));
+  });
 
   // POS
   const [activeShift, setActiveShift] = useState<CashShift | null>(() => {
@@ -2761,6 +2782,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     const updatedCategories = categories.map((cat) => {
+      if (cat.companyId && cat.companyId !== compId && cat.companyId !== 'ALL') {
+        return cat;
+      }
       const fixedName = standardizeCategoryName(cat.name);
       if (fixedName !== cat.name || !cat.companyId) {
         changed++;
@@ -2775,8 +2799,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return cat;
     });
 
-    // Reconcilia produtos cujo category seja um nome textual ou slug antigo
+    // Reconcilia produtos da empresa atual cujo category seja um nome textual ou slug antigo
     const updatedProducts = products.map((prod) => {
+      if (prod.companyId !== compId) return prod;
+
       const exists = updatedCategories.some((c) => c.id === prod.category);
       if (exists) return prod;
 
@@ -2806,20 +2832,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const addProduct = (prodData: Omit<Product, 'id'>) => {
+    const compId = prodData.companyId || currentCompany?.id || 'comp-1';
     const newId = `prod-${Date.now()}`;
     const newProduct: Product = {
       ...prodData,
       id: newId,
-      companyId: prodData.companyId || currentCompany.id,
+      companyId: compId,
     };
     setProducts((prev) => sortProductsAlphabetically([newProduct, ...prev]));
 
     // Initialize stock record in current store's default warehouse
-    const targetWhId = currentStore.defaultWarehouseId || warehouses[0]?.id || 'wh-default';
+    const targetWhId = currentStore?.defaultWarehouseId || warehouses.find((w) => w.companyId === compId)?.id || 'wh-default';
     setStock((prev) => [
       ...prev,
       {
         id: `stk-${Date.now()}`,
+        companyId: compId,
         productId: newId,
         warehouseId: targetWhId,
         quantity: 0,
@@ -2831,6 +2859,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     pushRecordToSupabase('produtos', 'insert', newProduct);
 
     emitEvent('Stock', 'stock.product.created', {
+      companyId: compId,
       productId: newId,
       name: newProduct.name,
       sku: newProduct.sku,
@@ -2840,11 +2869,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const updateProduct = (id: string, updates: Partial<Product>) => {
+    const compId = currentCompany?.id || 'comp-1';
     setProducts((prev) =>
       sortProductsAlphabetically(
         prev.map((p) => {
           if (p.id === id) {
-            const updated = { ...p, ...updates };
+            const updated = {
+              ...p,
+              ...updates,
+              companyId: p.companyId || compId,
+            };
             pushRecordToSupabase('produtos', 'update', updated);
             return updated;
           }
@@ -2852,7 +2886,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         })
       )
     );
-    emitEvent('Stock', 'stock.product.updated', { productId: id, updates });
+    emitEvent('Stock', 'stock.product.updated', { productId: id, updates, companyId: compId });
     sound.playSuccessChime();
   };
 
@@ -2862,7 +2896,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setStock((prev) => prev.filter((s) => s.productId !== id));
     setCart((prev) => prev.filter((c) => c.productId !== id));
     pushRecordToSupabase('produtos', 'delete', { id });
-    emitEvent('Stock', 'stock.product.deleted', { productId: id, name: target?.name });
+    emitEvent('Stock', 'stock.product.deleted', { productId: id, name: target?.name, companyId: target?.companyId });
     sound.playSuccessChime();
     notify(`Artigo "${target?.name || id}" eliminado com sucesso.`, 'success');
   };
@@ -2890,19 +2924,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   ) => {
     let added = 0;
     let updated = 0;
+    const compId = currentCompany?.id || 'comp-1';
 
-    const defaultWhId = currentStore.defaultWarehouseId || warehouses[0]?.id || 'wh-default';
+    const defaultWhId = currentStore?.defaultWarehouseId || warehouses.find((w) => w.companyId === compId)?.id || 'wh-default';
 
     setProducts((prev) => {
+      // Partition products strictly by current company so we NEVER touch products of other companies
+      const currentCompanyProducts = prev.filter((p) => p.companyId === compId);
+      const otherCompanyProducts = prev.filter((p) => p.companyId !== compId);
+
       const productMap = new Map<string, Product>();
       if (mode === 'merge') {
-        prev.forEach((p) => {
+        currentCompanyProducts.forEach((p) => {
           if (p.sku) productMap.set(p.sku.toLowerCase().trim(), p);
           if (p.barcode) productMap.set(p.barcode.trim(), p);
         });
       }
 
-      const updatedList = mode === 'merge' ? [...prev] : [];
+      const updatedCompanyList = mode === 'merge' ? [...currentCompanyProducts] : [];
       const newStockItems: StockItem[] = [];
 
       items.forEach((item, index) => {
@@ -2911,10 +2950,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           (item.barcode ? productMap.get(item.barcode.trim()) : undefined);
 
         if (existing && mode === 'merge') {
-          // Update existing product
-          const idx = updatedList.findIndex((p) => p.id === existing.id);
+          // Update existing product within current company
+          const idx = updatedCompanyList.findIndex((p) => p.id === existing.id);
           if (idx !== -1) {
-            updatedList[idx] = {
+            updatedCompanyList[idx] = {
               ...existing,
               name: item.name || existing.name,
               price: item.price !== undefined ? item.price : existing.price,
@@ -2928,6 +2967,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               supplierId: item.supplierId || existing.supplierId,
               description: item.description || existing.description,
               imageUrl: item.imageUrl || existing.imageUrl,
+              companyId: compId,
             };
             updated++;
 
@@ -2938,13 +2978,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                 const sIdx = sPrev.findIndex((s) => s.productId === existing.id && s.warehouseId === targetWh);
                 if (sIdx !== -1) {
                   const copy = [...sPrev];
-                  copy[sIdx] = { ...copy[sIdx], quantity: item.initialStock! };
+                  copy[sIdx] = { ...copy[sIdx], quantity: item.initialStock!, companyId: compId };
                   return copy;
                 } else {
                   return [
                     ...sPrev,
                     {
                       id: `stk-${Date.now()}-${index}`,
+                      companyId: compId,
                       productId: existing.id,
                       warehouseId: targetWh,
                       quantity: item.initialStock!,
@@ -2957,11 +2998,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             }
           }
         } else {
-          // Add new product
+          // Add new product strictly bound to this company
           const newId = `prod-${Date.now()}-${index}-${Math.floor(Math.random() * 1000)}`;
           const newProd: Product = {
             id: newId,
-            companyId: currentCompany.id,
+            companyId: compId,
             name: item.name,
             sku: item.sku,
             barcode: item.barcode,
@@ -2977,7 +3018,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             description: item.description,
             imageUrl: item.imageUrl || 'https://images.unsplash.com/photo-1544816155-12df9643f363?w=300',
           };
-          updatedList.unshift(newProd);
+          updatedCompanyList.unshift(newProd);
           productMap.set(newProd.sku.toLowerCase().trim(), newProd);
           if (newProd.barcode) productMap.set(newProd.barcode.trim(), newProd);
           added++;
@@ -2986,6 +3027,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           const targetWh = item.warehouseId || defaultWhId;
           newStockItems.push({
             id: `stk-${Date.now()}-${index}`,
+            companyId: compId,
             productId: newId,
             warehouseId: targetWh,
             quantity: item.initialStock || 0,
@@ -2999,10 +3041,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setStock((sPrev) => [...sPrev, ...newStockItems]);
       }
 
-      return sortProductsAlphabetically(updatedList);
+      return sortProductsAlphabetically([...otherCompanyProducts, ...updatedCompanyList]);
     });
 
     emitEvent('Stock', 'stock.product.bulk_imported', {
+      companyId: compId,
       totalItems: items.length,
       added,
       updated,
@@ -3074,9 +3117,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const recordStockMovement = (mov: Omit<StockMovement, 'id' | 'timestamp'>) => {
+    const compId = mov.companyId || currentCompany?.id || 'comp-1';
     const newMov: StockMovement = {
       ...mov,
-      id: `mov-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      companyId: compId,
+      id: `mov-${Date.now()}-${Math.floor(Math.random() * 100000)}`,
       timestamp: new Date().toISOString(),
     };
     setStockMovements((prev) => [newMov, ...prev]);
@@ -3093,6 +3138,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     newQty: number,
     reason: string
   ) => {
+    const compId = currentCompany?.id || 'comp-1';
     const existing = stock.find(
       (s) => s.productId === productId && s.warehouseId === warehouseId
     );
@@ -3102,7 +3148,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     let updatedStockRecord: StockItem;
     if (existing) {
-      updatedStockRecord = { ...existing, quantity: Math.max(0, newQty) };
+      updatedStockRecord = {
+        ...existing,
+        companyId: existing.companyId || compId,
+        quantity: Math.max(0, newQty),
+      };
       setStock((prev) =>
         prev.map((s) =>
           s.productId === productId && s.warehouseId === warehouseId
@@ -3113,6 +3163,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     } else {
       updatedStockRecord = {
         id: `stk-${Date.now()}`,
+        companyId: compId,
         productId,
         warehouseId,
         quantity: Math.max(0, newQty),
@@ -3125,7 +3176,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     pushRecordToSupabase('stock', 'upsert', updatedStockRecord);
 
     recordStockMovement({
-      companyId: currentCompany.id,
+      companyId: compId,
       type: 'ajuste',
       productId,
       targetWarehouseId: warehouseId,
@@ -3136,6 +3187,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
 
     emitEvent('Stock', 'stock.adjusted', {
+      companyId: compId,
       product: prod?.name || productId,
       oldQuantity: oldQty,
       newQuantity: newQty,
@@ -3152,6 +3204,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     quantity: number
   ) => {
     if (quantity <= 0) return;
+    const compId = currentCompany?.id || 'comp-1';
     const prod = products.find((p) => p.id === productId);
 
     let updatedFrom: StockItem | undefined;
@@ -3164,6 +3217,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       );
       if (fromItem) {
         fromItem.quantity = Math.max(0, fromItem.quantity - quantity);
+        fromItem.companyId = fromItem.companyId || compId;
         updatedFrom = { ...fromItem };
       }
 
@@ -3172,10 +3226,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       );
       if (toItem) {
         toItem.quantity += quantity;
+        toItem.companyId = toItem.companyId || compId;
         updatedTo = { ...toItem };
       } else {
         const newTo: StockItem = {
           id: `stk-${Date.now()}`,
+          companyId: compId,
           productId,
           warehouseId: toWarehouseId,
           quantity,
@@ -3194,7 +3250,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     recordStockMovement({
-      companyId: currentCompany.id,
+      companyId: compId,
       type: 'transferencia',
       productId,
       originWarehouseId: fromWarehouseId,
@@ -3206,6 +3262,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
 
     emitEvent('Stock', 'stock.transferred', {
+      companyId: compId,
       product: prod?.name || productId,
       fromWarehouse: fromWarehouseId,
       toWarehouse: toWarehouseId,
@@ -3573,23 +3630,27 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const getAvailableStock = useCallback(
     (productId: string, warehouseId?: string): number => {
       if (!productId || productId.startsWith('custom-')) return 999999;
+      const compId = currentCompany?.id || 'comp-1';
+      const companyWarehouses = warehouses.filter((w) => w.companyId === compId);
+      const companyWhIds = new Set(companyWarehouses.map((w) => w.id));
+
       const targetWhId =
         warehouseId ||
         currentStore?.defaultWarehouseId ||
-        warehouses[0]?.id;
+        companyWarehouses[0]?.id;
 
       if (targetWhId) {
         const item = stock.find(
-          (s) => s.productId === productId && s.warehouseId === targetWhId
+          (s) => s.productId === productId && s.warehouseId === targetWhId && (s.companyId === compId || companyWhIds.has(s.warehouseId))
         );
         if (item) {
           return Math.max(0, (Number(item.quantity) || 0) - (Number(item.reserved) || 0));
         }
       }
 
-      // Fallback: check total available stock across all warehouses
+      // Fallback: check total available stock across warehouses of this company
       const totalQty = stock
-        .filter((s) => s.productId === productId)
+        .filter((s) => s.productId === productId && (s.companyId === compId || companyWhIds.has(s.warehouseId)))
         .reduce(
           (sum, s) =>
             sum + Math.max(0, (Number(s.quantity) || 0) - (Number(s.reserved) || 0)),
@@ -3598,7 +3659,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       return Math.max(0, totalQty);
     },
-    [stock, currentStore?.defaultWarehouseId, warehouses]
+    [stock, currentStore?.defaultWarehouseId, warehouses, currentCompany?.id]
   );
 
   const addToCart = (product: Product, quantity = 1) => {
@@ -5125,37 +5186,37 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Strictly filter state collections by current logged-in company and alphabetically sort products
   const scopedProducts = useMemo(() => {
     const compId = currentCompany?.id || 'comp-1';
-    const list = products.filter((p) => !p.companyId || p.companyId === compId);
+    const list = products.filter((p) => p.companyId === compId);
     return sortProductsAlphabetically(list);
   }, [products, currentCompany?.id]);
 
   const scopedStock = useMemo(() => {
     const compId = currentCompany?.id || 'comp-1';
     const currentProdIds = new Set(scopedProducts.map((p) => p.id));
-    const currentWhIds = new Set(warehouses.filter((w) => !w.companyId || w.companyId === compId).map((w) => w.id));
+    const currentWhIds = new Set(warehouses.filter((w) => w.companyId === compId).map((w) => w.id));
     return stock.filter((s) => {
       if ((s as any).companyId) {
         return (s as any).companyId === compId;
       }
-      return currentProdIds.has(s.productId) || currentWhIds.has(s.warehouseId);
+      return currentProdIds.has(s.productId) && currentWhIds.has(s.warehouseId);
     });
   }, [stock, scopedProducts, warehouses, currentCompany?.id]);
 
   const scopedCategories = useMemo(() => {
     const compId = currentCompany?.id || 'comp-1';
     return categories
-      .filter((c) => !c.companyId || c.companyId === compId || c.companyId === 'ALL')
+      .filter((c) => c.companyId === compId || c.companyId === 'ALL')
       .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'pt', { sensitivity: 'base', numeric: true }));
   }, [categories, currentCompany?.id]);
 
   const scopedWarehouses = useMemo(() => {
     const compId = currentCompany?.id || 'comp-1';
-    return warehouses.filter((w) => !w.companyId || w.companyId === compId);
+    return warehouses.filter((w) => w.companyId === compId);
   }, [warehouses, currentCompany?.id]);
 
   const scopedStores = useMemo(() => {
     const compId = currentCompany?.id || 'comp-1';
-    return stores.filter((s) => !s.companyId || s.companyId === compId);
+    return stores.filter((s) => s.companyId === compId);
   }, [stores, currentCompany?.id]);
 
   const scopedTerminals = useMemo(() => {
@@ -5171,48 +5232,48 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const scopedUsers = useMemo(() => {
     const compId = currentCompany?.id || 'comp-1';
-    return users.filter((u) => !u.companyId || u.companyId === compId || u.role === 'admin_master');
+    return users.filter((u) => u.companyId === compId || u.role === 'admin_master');
   }, [users, currentCompany?.id]);
 
   const scopedSalesHistory = useMemo(() => {
     const compId = currentCompany?.id || 'comp-1';
-    return salesHistory.filter((s) => !s.companyId || s.companyId === compId);
+    return salesHistory.filter((s) => s.companyId === compId);
   }, [salesHistory, currentCompany?.id]);
 
   const scopedStockMovements = useMemo(() => {
     const compId = currentCompany?.id || 'comp-1';
-    const currentProdIds = new Set(scopedProducts.map((p) => p.id));
     return stockMovements.filter((m) => {
       if (m.companyId) {
         return m.companyId === compId;
       }
+      const currentProdIds = new Set(scopedProducts.map((p) => p.id));
       return currentProdIds.has(m.productId);
     });
   }, [stockMovements, scopedProducts, currentCompany?.id]);
 
   const scopedCustomers = useMemo(() => {
     const compId = currentCompany?.id || 'comp-1';
-    return customers.filter((c) => !c.companyId || c.companyId === compId);
+    return customers.filter((c) => c.companyId === compId);
   }, [customers, currentCompany?.id]);
 
   const scopedSuppliers = useMemo(() => {
     const compId = currentCompany?.id || 'comp-1';
-    return suppliers.filter((s) => !s.companyId || s.companyId === compId);
+    return suppliers.filter((s) => s.companyId === compId);
   }, [suppliers, currentCompany?.id]);
 
   const scopedAccountsPayable = useMemo(() => {
     const compId = currentCompany?.id || 'comp-1';
-    return accountsPayable.filter((a) => !a.companyId || a.companyId === compId);
+    return accountsPayable.filter((a) => a.companyId === compId);
   }, [accountsPayable, currentCompany?.id]);
 
   const scopedAccountsReceivable = useMemo(() => {
     const compId = currentCompany?.id || 'comp-1';
-    return accountsReceivable.filter((a) => !a.companyId || a.companyId === compId);
+    return accountsReceivable.filter((a) => a.companyId === compId);
   }, [accountsReceivable, currentCompany?.id]);
 
   const scopedShiftsHistory = useMemo(() => {
     const compId = currentCompany?.id || 'comp-1';
-    return shiftsHistory.filter((s) => !s.companyId || s.companyId === compId);
+    return shiftsHistory.filter((s) => s.companyId === compId);
   }, [shiftsHistory, currentCompany?.id]);
 
   return (
