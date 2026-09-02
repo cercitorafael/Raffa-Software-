@@ -25,8 +25,15 @@ import {
   FolderPlus,
   ArrowRight,
   Filter,
+  Wand2,
+  DownloadCloud,
 } from 'lucide-react';
 import { formatCurrency } from '../../utils/crypto';
+import {
+  standardizeCategoryName,
+  getCategoryDisplayName,
+  RECOMMENDED_PRESETS_BY_INDUSTRY,
+} from '../../utils/categoryUtils';
 
 export const COLOR_PALETTE = [
   { id: 'emerald', label: 'Verde Esmeralda', bg: 'bg-emerald-500/15', text: 'text-emerald-400', border: 'border-emerald-500/30', hex: '#10b981' },
@@ -71,6 +78,7 @@ export const CategoryManagementTab: React.FC<CategoryManagementTabProps> = ({
     addCategory,
     updateCategory,
     deleteCategory,
+    standardizeAllCategories,
     currentUser,
     hasPermission,
     requestConfirm,
@@ -80,6 +88,7 @@ export const CategoryManagementTab: React.FC<CategoryManagementTabProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [editingCatId, setEditingCatId] = useState<string | null>(null);
   const [showCreateForm, setShowCreateForm] = useState(false);
+  const [showPresetsDrawer, setShowPresetsDrawer] = useState(false);
 
   const [formData, setFormData] = useState<{
     name: string;
@@ -210,8 +219,8 @@ export const CategoryManagementTab: React.FC<CategoryManagementTabProps> = ({
           </div>
         </div>
 
-        <div className="flex items-center space-x-3 w-full sm:w-auto justify-end">
-          <div className="relative w-full sm:w-64">
+        <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto justify-end">
+          <div className="relative w-full sm:w-56">
             <Search className="w-4 h-4 text-neutral-500 absolute left-3 top-1/2 -translate-y-1/2" />
             <input
               type="text"
@@ -223,6 +232,26 @@ export const CategoryManagementTab: React.FC<CategoryManagementTabProps> = ({
           </div>
 
           <button
+            type="button"
+            onClick={standardizeAllCategories}
+            title="Corrige automaticamente a ortografia, acentos e maiúsculas de todas as categorias e artigos"
+            className="px-3 py-1.5 bg-[#1c1c1c] hover:bg-[#252525] text-amber-300 border border-amber-500/30 hover:border-amber-400/50 font-medium text-xs rounded-lg transition-colors flex items-center space-x-1.5 cursor-pointer shadow-xs whitespace-nowrap"
+          >
+            <Wand2 className="w-3.5 h-3.5 text-amber-400" />
+            <span>Corrigir & Padronizar</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setShowPresetsDrawer(!showPresetsDrawer)}
+            className="px-3 py-1.5 bg-[#1c1c1c] hover:bg-[#252525] text-neutral-300 border border-[#333] hover:border-neutral-500 font-medium text-xs rounded-lg transition-colors flex items-center space-x-1.5 cursor-pointer shadow-xs whitespace-nowrap"
+          >
+            <DownloadCloud className="w-3.5 h-3.5 text-[#c5a47e]" />
+            <span>Pacotes de Setor</span>
+          </button>
+
+          <button
+            type="button"
             onClick={handleStartCreate}
             className="px-3.5 py-1.5 bg-[#c5a47e] hover:bg-[#b5946e] text-neutral-950 font-semibold text-xs rounded-lg transition-colors flex items-center space-x-1.5 cursor-pointer shadow-xs whitespace-nowrap"
           >
@@ -231,6 +260,101 @@ export const CategoryManagementTab: React.FC<CategoryManagementTabProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Presets Drawer / Quick Sector Categories */}
+      {showPresetsDrawer && (
+        <div className="bg-[#161616] border border-[#333] rounded-xl p-4 space-y-3 animate-in fade-in-50 duration-200">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-2">
+              <DownloadCloud className="w-4 h-4 text-[#c5a47e]" />
+              <h4 className="text-xs font-bold text-white uppercase tracking-wider">
+                Pacotes de Categorias Prontas por Ramo de Negócio
+              </h4>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowPresetsDrawer(false)}
+              className="text-xs text-neutral-400 hover:text-white"
+            >
+              Fechar
+            </button>
+          </div>
+          <p className="text-xs text-neutral-400">
+            Adicione facilmente conjuntos de categorias completas com ortografia correta para o seu setor de atividade:
+          </p>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 pt-2">
+            {RECOMMENDED_PRESETS_BY_INDUSTRY.map((preset) => {
+              const existingCount = preset.categories.filter((rc) =>
+                categories.some((c) => c.name.toLowerCase() === rc.name.toLowerCase())
+              ).length;
+              const allAdded = existingCount === preset.categories.length;
+
+              return (
+                <div
+                  key={preset.industry}
+                  className="bg-[#101010] border border-[#262626] rounded-lg p-3 flex flex-col justify-between space-y-2"
+                >
+                  <div>
+                    <h5 className="text-xs font-semibold text-white">{preset.industry}</h5>
+                    <div className="flex flex-wrap gap-1 mt-1.5">
+                      {preset.categories.map((c) => (
+                        <span
+                          key={c.name}
+                          className="text-[10px] px-1.5 py-0.5 rounded bg-neutral-900 border border-neutral-800 text-neutral-300"
+                        >
+                          {c.name}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    disabled={allAdded}
+                    onClick={() => {
+                      let added = 0;
+                      preset.categories.forEach((rc) => {
+                        const exists = categories.some(
+                          (c) => c.name.toLowerCase() === rc.name.toLowerCase()
+                        );
+                        if (!exists) {
+                          addCategory({
+                            name: rc.name,
+                            color: rc.color,
+                            icon: rc.icon,
+                          });
+                          added++;
+                        }
+                      });
+                      notify(
+                        added > 0
+                          ? `Foram adicionadas ${added} categorias de ${preset.industry} com sucesso!`
+                          : 'Todas as categorias deste pacote já existem no sistema.',
+                        'success'
+                      );
+                    }}
+                    className={`w-full py-1.5 px-2 rounded text-xs font-semibold flex items-center justify-center space-x-1 transition-colors cursor-pointer ${
+                      allAdded
+                        ? 'bg-neutral-800/40 text-neutral-500 cursor-not-allowed'
+                        : 'bg-[#c5a47e]/15 hover:bg-[#c5a47e]/25 text-[#c5a47e] border border-[#c5a47e]/30'
+                    }`}
+                  >
+                    {allAdded ? (
+                      <span>Todas Adicionadas</span>
+                    ) : (
+                      <>
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>Adicionar Pacote ({preset.categories.length})</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Form for Create / Edit */}
       {showCreateForm && (
@@ -265,9 +389,44 @@ export const CategoryManagementTab: React.FC<CategoryManagementTabProps> = ({
                 autoFocus
                 placeholder="Ex: Bebidas & Refrigerantes, Laticínios, Ferramentas..."
                 value={formData.name}
+                onBlur={(e) => {
+                  if (e.target.value.trim()) {
+                    setFormData({ ...formData, name: standardizeCategoryName(e.target.value) });
+                  }
+                }}
                 onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                 className="w-full px-3 py-2 bg-[#0d0d0d] border border-[#2e2e2e] rounded-lg text-xs text-white placeholder-neutral-500 focus:outline-hidden focus:border-[#c5a47e]"
               />
+
+              {/* Sugestões de nomes comuns com ortografia correta */}
+              <div className="pt-1">
+                <span className="text-[10px] text-neutral-500">Sugestões rápidas:</span>
+                <div className="flex flex-wrap gap-1 mt-1">
+                  {[
+                    'Bebidas & Refrigerantes',
+                    'Alimentação & Mercearia',
+                    'Laticínios & Frios',
+                    'Frescos & Hortícolas',
+                    'Padaria & Pastelaria',
+                    'Higiene & Limpeza',
+                    'Informática & Tecnologia',
+                    'Vestuário & Calçado',
+                    'Ferramentas & Ferragens',
+                    'Peças & Componentes',
+                    'Serviços & Atendimento',
+                    'Artigos Gerais',
+                  ].map((sug) => (
+                    <button
+                      key={sug}
+                      type="button"
+                      onClick={() => setFormData({ ...formData, name: sug })}
+                      className="text-[10px] px-1.5 py-0.5 rounded bg-[#202020] hover:bg-[#c5a47e]/20 hover:text-[#c5a47e] text-neutral-400 transition-colors border border-neutral-800"
+                    >
+                      + {sug}
+                    </button>
+                  ))}
+                </div>
+              </div>
             </div>
 
             <div className="space-y-1.5">

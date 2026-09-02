@@ -451,7 +451,64 @@ export const initialFiscalSeries: FiscalSeries[] = [
   },
 ];
 
-export const initialCategories: ProductCategory[] = [];
+export const initialCategories: ProductCategory[] = [
+  {
+    id: 'cat-bebidas',
+    companyId: 'comp-1',
+    name: 'Bebidas & Refrigerantes',
+    color: 'emerald',
+    icon: 'Coffee',
+  },
+  {
+    id: 'cat-alimentar',
+    companyId: 'comp-1',
+    name: 'Alimentação & Mercearia',
+    color: 'amber',
+    icon: 'Apple',
+  },
+  {
+    id: 'cat-padaria',
+    companyId: 'comp-1',
+    name: 'Padaria & Pastelaria',
+    color: 'orange',
+    icon: 'ShoppingBag',
+  },
+  {
+    id: 'cat-higiene',
+    companyId: 'comp-1',
+    name: 'Higiene & Limpeza',
+    color: 'cyan',
+    icon: 'Sparkles',
+  },
+  {
+    id: 'cat-frescos',
+    companyId: 'comp-1',
+    name: 'Frescos & Laticínios',
+    color: 'blue',
+    icon: 'Package',
+  },
+  {
+    id: 'cat-tecnologia',
+    companyId: 'comp-1',
+    name: 'Informática & Tecnologia',
+    color: 'violet',
+    icon: 'Laptop',
+  },
+  {
+    id: 'cat-servicos',
+    companyId: 'comp-1',
+    name: 'Serviços & Atendimento',
+    color: 'gold',
+    icon: 'Layers',
+  },
+  {
+    id: 'cat-diversos',
+    companyId: 'comp-1',
+    name: 'Artigos Diversos',
+    color: 'teal',
+    icon: 'Tag',
+  },
+];
 
 export const initialWarehouses: Warehouse[] = [
   {

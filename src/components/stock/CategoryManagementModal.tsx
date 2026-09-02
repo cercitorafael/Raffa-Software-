@@ -24,8 +24,10 @@ import {
   Wrench,
   AlertCircle,
   FolderPlus,
+  Wand2,
 } from 'lucide-react';
 import { formatCurrency } from '../../utils/crypto';
+import { standardizeCategoryName, getCategoryDisplayName } from '../../utils/categoryUtils';
 
 interface CategoryManagementModalProps {
   isOpen: boolean;
@@ -74,6 +76,7 @@ export const CategoryManagementModal: React.FC<CategoryManagementModalProps> = (
     addCategory,
     updateCategory,
     deleteCategory,
+    standardizeAllCategories,
     currentUser,
     hasPermission,
     requestConfirm,
@@ -242,9 +245,15 @@ export const CategoryManagementModal: React.FC<CategoryManagementModalProps> = (
           </div>
 
           <div className="flex items-center space-x-2 w-full sm:w-auto justify-end">
-            <div className="text-xs text-neutral-400 font-mono hidden md:block">
-              Total: <span className="text-white font-semibold">{categories.length}</span> categorias
-            </div>
+            <button
+              type="button"
+              onClick={standardizeAllCategories}
+              title="Corrige automaticamente a ortografia, acentos e maiúsculas de todas as categorias"
+              className="px-2.5 py-1.5 bg-[#1c1c1c] hover:bg-[#252525] text-amber-300 border border-amber-500/30 hover:border-amber-400/50 font-medium text-xs rounded-lg transition-colors flex items-center space-x-1.5 cursor-pointer shadow-xs whitespace-nowrap"
+            >
+              <Wand2 className="w-3.5 h-3.5 text-amber-400" />
+              <span>Corrigir Nomes</span>
+            </button>
 
             {canCreate && !showCreateForm && (
               <button
@@ -293,11 +302,43 @@ export const CategoryManagementModal: React.FC<CategoryManagementModalProps> = (
                     type="text"
                     required
                     autoFocus
-                    placeholder="Ex: Frutas & Vegetais, Bebidas, Ferragens..."
+                    placeholder="Ex: Bebidas & Refrigerantes, Laticínios, Ferramentas..."
                     value={formData.name}
+                    onBlur={(e) => {
+                      if (e.target.value.trim()) {
+                        setFormData({ ...formData, name: standardizeCategoryName(e.target.value) });
+                      }
+                    }}
                     onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                     className="w-full px-3 py-2 bg-[#0d0d0d] border border-[#2e2e2e] rounded-lg text-xs text-white placeholder-neutral-500 focus:outline-hidden focus:border-[#c5a47e]"
                   />
+
+                  {/* Sugestões rápidas */}
+                  <div className="pt-1">
+                    <span className="text-[10px] text-neutral-500">Sugestões rápidas:</span>
+                    <div className="flex flex-wrap gap-1 mt-1">
+                      {[
+                        'Bebidas & Refrigerantes',
+                        'Alimentação & Mercearia',
+                        'Laticínios & Frios',
+                        'Frescos & Hortícolas',
+                        'Padaria & Pastelaria',
+                        'Higiene & Limpeza',
+                        'Informática & Tecnologia',
+                        'Vestuário & Calçado',
+                        'Artigos Gerais',
+                      ].map((sug) => (
+                        <button
+                          key={sug}
+                          type="button"
+                          onClick={() => setFormData({ ...formData, name: sug })}
+                          className="text-[10px] px-1.5 py-0.5 rounded bg-[#202020] hover:bg-[#c5a47e]/20 hover:text-[#c5a47e] text-neutral-400 transition-colors border border-neutral-800"
+                        >
+                          + {sug}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                 </div>
 
                 {/* Color Palette Selector */}

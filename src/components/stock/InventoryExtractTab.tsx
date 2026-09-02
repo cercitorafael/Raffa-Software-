@@ -37,8 +37,10 @@ export const InventoryExtractTab: React.FC = () => {
   const {
     products,
     warehouses,
+    stores,
     stock,
     stockMovements,
+    salesHistory,
     currentCompany,
     currentStore,
     categories,
@@ -50,10 +52,42 @@ export const InventoryExtractTab: React.FC = () => {
     notify,
   } = useApp();
 
-  const now = new Date();
-  const currentYear = now.getFullYear();
-  const currentMonthStr = `${currentYear}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-  const todayStr = now.toISOString().split('T')[0];
+  // Helper date calculations in local timezone
+  const getTodayLocalStr = () => {
+    const d = new Date();
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  };
+
+  const getYesterdayLocalStr = () => {
+    const d = new Date();
+    d.setDate(d.getDate() - 1);
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  };
+
+  const getCurrentMonthLocalStr = () => {
+    const d = new Date();
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    return `${y}-${m}`;
+  };
+
+  const getPrevMonthLocalStr = () => {
+    const d = new Date();
+    d.setMonth(d.getMonth() - 1);
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    return `${y}-${m}`;
+  };
+
+  const todayStr = getTodayLocalStr();
+  const currentMonthStr = getCurrentMonthLocalStr();
+  const currentYear = new Date().getFullYear();
 
   // Primary Tab View Mode (Detailed Timeline vs Articles Summary)
   const [viewMode, setViewMode] = useState<'timeline' | 'articles_summary'>('timeline');
@@ -147,13 +181,17 @@ export const InventoryExtractTab: React.FC = () => {
     return map;
   }, [users]);
 
-  // Helper to safely extract date
+  // Helper to safely extract date in local calendar format
   const parseMovementDate = (m: StockMovement) => {
     const raw = m.timestamp || m.date || '';
     const d = raw ? new Date(raw) : new Date();
     const validDate = isNaN(d.getTime()) ? new Date() : d;
-    const dateStr = validDate.toISOString().split('T')[0];
-    return { dateStr, dateObj: validDate };
+    const y = validDate.getFullYear();
+    const mo = String(validDate.getMonth() + 1).padStart(2, '0');
+    const da = String(validDate.getDate()).padStart(2, '0');
+    const dateStr = `${y}-${mo}-${da}`;
+    const monthStr = `${y}-${mo}`;
+    return { dateStr, monthStr, year: y, dateObj: validDate };
   };
 
   // Helper to determine if movement is outflow (saída/redução)
@@ -231,18 +269,15 @@ export const InventoryExtractTab: React.FC = () => {
       runningBalances[m.productId] = currentBal;
 
       // 1. Period filter
-      const { dateStr, dateObj } = parseMovementDate(m);
+      const { dateStr, monthStr, year } = parseMovementDate(m);
 
       let inPeriod = true;
       if (periodType === 'day') {
         inPeriod = dateStr === selectedDate;
       } else if (periodType === 'month') {
-        const [y, mm] = selectedMonth.split('-');
-        inPeriod =
-          dateObj.getFullYear() === parseInt(y, 10) &&
-          dateObj.getMonth() + 1 === parseInt(mm, 10);
+        inPeriod = monthStr === selectedMonth;
       } else if (periodType === 'year') {
-        inPeriod = dateObj.getFullYear() === selectedYear;
+        inPeriod = year === selectedYear;
       } else if (periodType === 'custom') {
         inPeriod = dateStr >= startDate && dateStr <= endDate;
       }
@@ -450,16 +485,20 @@ export const InventoryExtractTab: React.FC = () => {
     });
   }, [products, selectedProduct, selectedCategory, searchQuery, filteredRows, stock, selectedWarehouse, categoryMap]);
 
-  // Synchronize stock movements for articles with existing stock but 0 movements
+  // Synchronize stock movements for articles with existing stock and reconcile sales history
   const handleSynchronizeOpeningStock = () => {
-    let synced = 0;
-    const existingProdIdsWithMovements = new Set(stockMovements.map((m) => m.productId));
+    let syncedStock = 0;
+    let syncedSales = 0;
+    const compId = currentCompany?.id || 'comp-1';
+    const opId = currentUser?.id || 'user-1';
 
+    // 1. Initial stock sync
+    const existingProdIdsWithMovements = new Set(stockMovements.map((m) => m.productId));
     stock.forEach((s) => {
       if (s.quantity > 0 && !existingProdIdsWithMovements.has(s.productId)) {
         const prod = productMap.get(s.productId);
         recordStockMovement({
-          companyId: currentCompany.id,
+          companyId: compId,
           type: 'entrada',
           productId: s.productId,
           targetWarehouseId: s.warehouseId,
@@ -467,16 +506,48 @@ export const InventoryExtractTab: React.FC = () => {
           unitCost: s.avgCost || prod?.costPrice || 0,
           referenceDoc: 'INVENTARIO-INICIAL',
           reason: 'Stock Inicial / Existências Iniciais Registadas',
-          operatorId: currentUser.id,
+          operatorId: opId,
         });
-        synced++;
+        syncedStock++;
       }
     });
 
-    if (synced > 0) {
-      notify(`Sincronizados ${synced} artigos com o balanço de stock inicial com sucesso!`, 'success');
+    // 2. Sync historical sales documents into stockMovements if not registered
+    const existingRefDocs = new Set(stockMovements.map((m) => (m.referenceDoc || '').trim().toUpperCase()));
+    salesHistory.forEach((sale) => {
+      const isOutDoc = ['FT', 'FR', 'FS', 'VD', 'GT', 'GR', 'POS'].includes((sale.invoiceType || '').toUpperCase()) || !sale.invoiceType;
+      const ref = (sale.invoiceNumber || '').trim().toUpperCase();
+      if (isOutDoc && ref && !existingRefDocs.has(ref) && sale.status !== 'anulado') {
+        const saleWh = sale.storeId
+          ? stores.find((st) => st.id === sale.storeId)?.defaultWarehouseId || currentStore.defaultWarehouseId || warehouses[0]?.id
+          : currentStore.defaultWarehouseId || warehouses[0]?.id;
+
+        (sale.items || []).forEach((item) => {
+          if (!item.productId || item.productId.startsWith('custom-')) return;
+          const prod = productMap.get(item.productId);
+          recordStockMovement({
+            companyId: compId,
+            type: 'saida',
+            productId: item.productId,
+            originWarehouseId: saleWh,
+            quantity: Number(item.quantity) || 1,
+            unitCost: item.unitPrice || prod?.costPrice || 0,
+            referenceDoc: sale.invoiceNumber,
+            reason: `Venda ${sale.invoiceNumber} (${sale.customerName || 'Consumidor Final'})`,
+            operatorId: sale.operatorId || opId,
+          });
+          syncedSales++;
+        });
+      }
+    });
+
+    if (syncedStock > 0 || syncedSales > 0) {
+      notify(
+        `Sincronização concluída: ${syncedStock} artigos com balanço inicial e ${syncedSales} saídas de vendas históricas reconciliadas!`,
+        'success'
+      );
     } else {
-      notify('Todos os artigos com stock já possuem movimentos de inventário sincronizados.', 'info');
+      notify('O extrato de inventário já está 100% atualizado e sincronizado em tempo real.', 'info');
     }
   };
 
@@ -707,43 +778,80 @@ export const InventoryExtractTab: React.FC = () => {
         </div>
 
         {/* Row 2: Period Selection Tabs & Date Controls */}
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 bg-[#0d0d0d] p-3 rounded-lg border border-[#262626]">
-          <div className="flex items-center space-x-2 flex-wrap gap-y-1">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 bg-[#0d0d0d] p-3 rounded-lg border border-[#262626]">
+          <div className="flex items-center space-x-1.5 flex-wrap gap-y-1.5">
             <span className="text-xs font-bold text-neutral-400 uppercase tracking-wider flex items-center space-x-1 mr-1">
               <Calendar className="w-3.5 h-3.5 text-[#c5a47e]" />
               <span>Período:</span>
             </span>
 
-            <div className="inline-flex p-1 bg-[#141414] border border-[#262626] rounded-lg">
+            <div className="inline-flex p-1 bg-[#141414] border border-[#262626] rounded-lg flex-wrap gap-1">
               <button
                 type="button"
-                onClick={() => setPeriodType('day')}
-                className={`px-3 py-1 text-xs font-semibold rounded-md transition-colors cursor-pointer ${
-                  periodType === 'day'
-                    ? 'bg-[#c5a47e] text-neutral-950 shadow-xs'
-                    : 'text-neutral-400 hover:text-neutral-200'
+                onClick={() => {
+                  setPeriodType('day');
+                  setSelectedDate(getTodayLocalStr());
+                }}
+                className={`px-2.5 py-1 text-xs font-semibold rounded-md transition-colors cursor-pointer ${
+                  periodType === 'day' && selectedDate === getTodayLocalStr()
+                    ? 'bg-[#c5a47e] text-neutral-950 font-bold shadow-xs'
+                    : 'text-neutral-400 hover:text-neutral-200 hover:bg-[#202020]'
                 }`}
               >
-                Dia
+                Hoje
               </button>
               <button
                 type="button"
-                onClick={() => setPeriodType('month')}
-                className={`px-3 py-1 text-xs font-semibold rounded-md transition-colors cursor-pointer ${
-                  periodType === 'month'
-                    ? 'bg-[#c5a47e] text-neutral-950 shadow-xs'
-                    : 'text-neutral-400 hover:text-neutral-200'
+                onClick={() => {
+                  setPeriodType('day');
+                  setSelectedDate(getYesterdayLocalStr());
+                }}
+                className={`px-2.5 py-1 text-xs font-semibold rounded-md transition-colors cursor-pointer ${
+                  periodType === 'day' && selectedDate === getYesterdayLocalStr()
+                    ? 'bg-[#c5a47e] text-neutral-950 font-bold shadow-xs'
+                    : 'text-neutral-400 hover:text-neutral-200 hover:bg-[#202020]'
                 }`}
               >
-                Mês
+                Ontem
               </button>
               <button
                 type="button"
-                onClick={() => setPeriodType('year')}
-                className={`px-3 py-1 text-xs font-semibold rounded-md transition-colors cursor-pointer ${
+                onClick={() => {
+                  setPeriodType('month');
+                  setSelectedMonth(getCurrentMonthLocalStr());
+                }}
+                className={`px-2.5 py-1 text-xs font-semibold rounded-md transition-colors cursor-pointer ${
+                  periodType === 'month' && selectedMonth === getCurrentMonthLocalStr()
+                    ? 'bg-[#c5a47e] text-neutral-950 font-bold shadow-xs'
+                    : 'text-neutral-400 hover:text-neutral-200 hover:bg-[#202020]'
+                }`}
+              >
+                Este Mês
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setPeriodType('month');
+                  setSelectedMonth(getPrevMonthLocalStr());
+                }}
+                className={`px-2.5 py-1 text-xs font-semibold rounded-md transition-colors cursor-pointer ${
+                  periodType === 'month' && selectedMonth === getPrevMonthLocalStr()
+                    ? 'bg-[#c5a47e] text-neutral-950 font-bold shadow-xs'
+                    : 'text-neutral-400 hover:text-neutral-200 hover:bg-[#202020]'
+                }`}
+              >
+                Mês Anterior
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setPeriodType('year');
+                  setSelectedYear(currentYear);
+                }}
+                className={`px-2.5 py-1 text-xs font-semibold rounded-md transition-colors cursor-pointer ${
                   periodType === 'year'
-                    ? 'bg-[#c5a47e] text-neutral-950 shadow-xs'
-                    : 'text-neutral-400 hover:text-neutral-200'
+                    ? 'bg-[#c5a47e] text-neutral-950 font-bold shadow-xs'
+                    : 'text-neutral-400 hover:text-neutral-200 hover:bg-[#202020]'
                 }`}
               >
                 Ano Fiscal
@@ -751,10 +859,10 @@ export const InventoryExtractTab: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setPeriodType('custom')}
-                className={`px-3 py-1 text-xs font-semibold rounded-md transition-colors cursor-pointer ${
+                className={`px-2.5 py-1 text-xs font-semibold rounded-md transition-colors cursor-pointer ${
                   periodType === 'custom'
-                    ? 'bg-[#c5a47e] text-neutral-950 shadow-xs'
-                    : 'text-neutral-400 hover:text-neutral-200'
+                    ? 'bg-[#c5a47e] text-neutral-950 font-bold shadow-xs'
+                    : 'text-neutral-400 hover:text-neutral-200 hover:bg-[#202020]'
                 }`}
               >
                 Personalizado
@@ -762,10 +870,10 @@ export const InventoryExtractTab: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setPeriodType('all')}
-                className={`px-3 py-1 text-xs font-semibold rounded-md transition-colors cursor-pointer ${
+                className={`px-2.5 py-1 text-xs font-semibold rounded-md transition-colors cursor-pointer ${
                   periodType === 'all'
-                    ? 'bg-[#c5a47e] text-neutral-950 shadow-xs'
-                    : 'text-neutral-400 hover:text-neutral-200'
+                    ? 'bg-[#c5a47e] text-neutral-950 font-bold shadow-xs'
+                    : 'text-neutral-400 hover:text-neutral-200 hover:bg-[#202020]'
                 }`}
               >
                 Todos
@@ -783,13 +891,6 @@ export const InventoryExtractTab: React.FC = () => {
                   onChange={(e) => setSelectedDate(e.target.value)}
                   className="bg-[#141414] border border-[#333] rounded-md px-3 py-1.5 text-xs text-neutral-200 focus:outline-hidden focus:border-[#c5a47e]"
                 />
-                <button
-                  type="button"
-                  onClick={() => setSelectedDate(todayStr)}
-                  className="px-2.5 py-1.5 bg-[#1a1a1a] hover:bg-[#242424] text-xs text-neutral-300 rounded border border-[#333] cursor-pointer"
-                >
-                  Hoje
-                </button>
               </div>
             )}
 
@@ -801,24 +902,6 @@ export const InventoryExtractTab: React.FC = () => {
                   onChange={(e) => setSelectedMonth(e.target.value)}
                   className="bg-[#141414] border border-[#333] rounded-md px-3 py-1.5 text-xs text-neutral-200 focus:outline-hidden focus:border-[#c5a47e]"
                 />
-                <button
-                  type="button"
-                  onClick={() => setSelectedMonth(currentMonthStr)}
-                  className="px-2.5 py-1.5 bg-[#1a1a1a] hover:bg-[#242424] text-xs text-neutral-300 rounded border border-[#333] cursor-pointer"
-                >
-                  Este Mês
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const d = new Date();
-                    d.setMonth(d.getMonth() - 1);
-                    setSelectedMonth(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
-                  }}
-                  className="px-2.5 py-1.5 bg-[#1a1a1a] hover:bg-[#242424] text-xs text-neutral-300 rounded border border-[#333] cursor-pointer"
-                >
-                  Mês Anterior
-                </button>
               </div>
             )}
 

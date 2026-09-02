@@ -47,6 +47,7 @@ import {
   CallLog,
 } from '../types';
 import { useI18n } from '../i18n';
+import { standardizeCategoryName } from '../utils/categoryUtils';
 import {
   initialCompanies,
   initialStores,
@@ -265,6 +266,7 @@ export interface AppContextType {
   addCategory: (cat: Omit<ProductCategory, 'id'>) => void;
   updateCategory: (id: string, cat: Partial<ProductCategory>) => void;
   deleteCategory: (id: string) => void;
+  standardizeAllCategories: () => void;
 
   products: Product[];
   addProduct: (product: Omit<Product, 'id'>) => void;
@@ -654,9 +656,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [supabaseSyncLogs, setSupabaseSyncLogs] = useState<SupabaseSyncLog[]>(() => getSyncLogs());
 
   // Products & Stock
-  const [categories, setCategories] = useState<ProductCategory[]>(() =>
-    loadFromStorage('categories', initialCategories)
-  );
+  const [categories, setCategories] = useState<ProductCategory[]>(() => {
+    const loaded = loadFromStorage('categories', initialCategories);
+    if (!loaded || !Array.isArray(loaded) || loaded.length === 0) {
+      return initialCategories;
+    }
+    // Auto-padronizar nomes de categorias existentes com correções ortográficas
+    return loaded.map((c: ProductCategory) => ({
+      ...c,
+      name: standardizeCategoryName(c.name || 'Artigos Gerais'),
+    }));
+  });
   const [products, setProducts] = useState<Product[]>(() =>
     sortProductsAlphabetically(loadFromStorage('products', initialProducts))
   );
@@ -2473,27 +2483,36 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
         const newCategories: ProductCategory[] = matchingPreset.defaultCategories.map((c, idx) => ({
           id: `cat-${companyId}-${idx + 1}`,
-          name: c.name,
+          companyId,
+          name: standardizeCategoryName(c.name),
           icon: c.icon,
           color: c.color,
         }));
 
-        const initialIndustryProducts: Product[] = matchingPreset.sampleProducts.map((sp, idx) => ({
-          id: `prod-${companyId}-${idx + 1}`,
-          companyId,
-          name: sp.name,
-          sku: `SKU-${idx + 101}`,
-          barcode: `560${idx + 1000000000}`,
-          price: sp.price,
-          costPrice: sp.costPrice,
-          taxRate: sp.taxRate,
-          category: sp.category,
-          unit: sp.unit,
-          minStock: 5,
-          maxStock: 500,
-          hasBatchControl: false,
-          imageUrl: 'https://images.unsplash.com/photo-1556740758-90de374c12ad?w=300',
-        }));
+        const initialIndustryProducts: Product[] = matchingPreset.sampleProducts.map((sp, idx) => {
+          const matchedCat = newCategories.find(
+            (nc) => nc.name.toLowerCase() === sp.category.toLowerCase() ||
+                    nc.name.toLowerCase() === standardizeCategoryName(sp.category).toLowerCase()
+          );
+          const catId = matchedCat ? matchedCat.id : newCategories[0]?.id || `cat-${companyId}-1`;
+
+          return {
+            id: `prod-${companyId}-${idx + 1}`,
+            companyId,
+            name: sp.name,
+            sku: `SKU-${idx + 101}`,
+            barcode: `560${idx + 1000000000}`,
+            price: sp.price,
+            costPrice: sp.costPrice,
+            taxRate: sp.taxRate,
+            category: catId,
+            unit: sp.unit,
+            minStock: 5,
+            maxStock: 500,
+            hasBatchControl: false,
+            imageUrl: 'https://images.unsplash.com/photo-1556740758-90de374c12ad?w=300',
+          };
+        });
 
         const initialStockItems: StockItem[] = initialIndustryProducts.map((p, idx) => ({
           id: `stk-${companyId}-${idx + 1}`,
@@ -2697,19 +2716,29 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // ==================== PRODUCTS, WAREHOUSES & STOCK CRUD ====================
   const addCategory = (cat: Omit<ProductCategory, 'id'>) => {
     const id = `cat-${Date.now()}`;
-    const newCat = { ...cat, id, companyId: cat.companyId || currentCompany.id };
+    const standardizedName = standardizeCategoryName(cat.name);
+    const newCat = {
+      ...cat,
+      name: standardizedName,
+      id,
+      companyId: cat.companyId || currentCompany.id,
+    };
     setCategories((prev) => [...prev, newCat]);
     pushRecordToSupabase('categorias', 'insert', newCat);
-    emitEvent('Stock', 'category.created', { categoryId: id, name: cat.name });
+    emitEvent('Stock', 'category.created', { categoryId: id, name: standardizedName });
     sound.playSuccessChime();
   };
 
   const updateCategory = (id: string, updates: Partial<ProductCategory>) => {
+    const formattedUpdates = { ...updates };
+    if (formattedUpdates.name) {
+      formattedUpdates.name = standardizeCategoryName(formattedUpdates.name);
+    }
     setCategories((prev) =>
-      prev.map((c) => (c.id === id ? { ...c, ...updates } : c))
+      prev.map((c) => (c.id === id ? { ...c, ...formattedUpdates } : c))
     );
-    pushRecordToSupabase('categorias', 'update', { id, ...updates });
-    emitEvent('Stock', 'category.updated', { categoryId: id, updates });
+    pushRecordToSupabase('categorias', 'update', { id, ...formattedUpdates });
+    emitEvent('Stock', 'category.updated', { categoryId: id, updates: formattedUpdates });
     sound.playSuccessChime();
   };
 
@@ -2719,6 +2748,61 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     emitEvent('Stock', 'category.deleted', { categoryId: id });
     sound.playSuccessChime();
     notify('Categoria eliminada com sucesso.', 'success');
+  };
+
+  const standardizeAllCategories = () => {
+    const compId = currentCompany?.id || 'comp-1';
+    let changed = 0;
+
+    if (categories.length === 0) {
+      setCategories(initialCategories);
+      notify('Categorias padrão em Português carregadas com sucesso!', 'success');
+      return;
+    }
+
+    const updatedCategories = categories.map((cat) => {
+      const fixedName = standardizeCategoryName(cat.name);
+      if (fixedName !== cat.name || !cat.companyId) {
+        changed++;
+        const fixedCat = {
+          ...cat,
+          name: fixedName,
+          companyId: cat.companyId || compId,
+        };
+        pushRecordToSupabase('categorias', 'update', fixedCat);
+        return fixedCat;
+      }
+      return cat;
+    });
+
+    // Reconcilia produtos cujo category seja um nome textual ou slug antigo
+    const updatedProducts = products.map((prod) => {
+      const exists = updatedCategories.some((c) => c.id === prod.category);
+      if (exists) return prod;
+
+      const matched = updatedCategories.find(
+        (c) =>
+          c.name.toLowerCase() === prod.category.toLowerCase() ||
+          standardizeCategoryName(prod.category).toLowerCase() === c.name.toLowerCase()
+      );
+      if (matched) {
+        changed++;
+        const fixedProd = { ...prod, category: matched.id };
+        pushRecordToSupabase('produtos', 'update', fixedProd);
+        return fixedProd;
+      }
+      return prod;
+    });
+
+    setCategories(updatedCategories);
+    setProducts(updatedProducts);
+    sound.playSuccessChime();
+    notify(
+      changed > 0
+        ? `Foram padronizadas e corrigidas ${changed} entrada(s) de categorias e artigos no sistema!`
+        : 'Todas as categorias já se encontram devidamente escritas e padronizadas.',
+      'success'
+    );
   };
 
   const addProduct = (prodData: Omit<Product, 'id'>) => {
@@ -3143,7 +3227,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       'wh-default';
 
     const affectedStockList: StockItem[] = [];
+    const newMovements: StockMovement[] = [];
+    const nowIso = new Date().toISOString();
+    const compId = currentCompany?.id || 'comp-1';
+    const opId = currentUser?.id || 'user-1';
 
+    // 1. Update stock levels
     setStock((prev) => {
       const updated = prev.map((s) => ({ ...s }));
 
@@ -3164,11 +3253,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             updated.find((s) => s.productId === item.productId);
         }
 
+        const prod = products.find((p) => p.id === item.productId);
+
         if (stk) {
           stk.quantity = Math.max(0, stk.quantity - qtyToDeduct);
           affectedStockList.push({ ...stk });
         } else {
-          const prod = products.find((p) => p.id === item.productId);
           const newStk: StockItem = {
             id: `stk-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
             productId: item.productId,
@@ -3181,30 +3271,44 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           affectedStockList.push(newStk);
         }
 
-        // Also decrement lots if applicable
-        setLots((lotPrev) =>
-          lotPrev.map((lot) =>
-            lot.productId === item.productId && lot.currentQuantity > 0
-              ? { ...lot, currentQuantity: Math.max(0, lot.currentQuantity - qtyToDeduct) }
-              : lot
-          )
-        );
-
-        // Record movement
-        recordStockMovement({
-          companyId: currentCompany.id,
+        // Prepare movement
+        newMovements.push({
+          id: `mov-${Date.now()}-${Math.floor(Math.random() * 100000)}`,
+          companyId: compId,
           type: 'saida',
           productId: item.productId,
           originWarehouseId: stk?.warehouseId || targetWhId,
           quantity: qtyToDeduct,
-          unitCost: item.unitPrice || 0,
+          unitCost: item.unitPrice || prod?.costPrice || 0,
           referenceDoc: referenceDoc || 'Venda',
           reason: reason || 'Venda / Saída de stock',
-          operatorId: currentUser.id,
+          operatorId: opId,
+          timestamp: nowIso,
         });
       });
 
       return updated;
+    });
+
+    // 2. Record stock movements directly and reliably
+    if (newMovements.length > 0) {
+      setStockMovements((prev) => [...newMovements, ...prev]);
+    }
+
+    // 3. Decrement lots if applicable
+    setLots((lotPrev) => {
+      let updatedLots = [...lotPrev];
+      items.forEach((item) => {
+        if (!item.productId || item.productId.startsWith('custom-')) return;
+        const qtyToDeduct = Number(item.quantity) || 0;
+        if (qtyToDeduct <= 0) return;
+        updatedLots = updatedLots.map((lot) =>
+          lot.productId === item.productId && lot.currentQuantity > 0
+            ? { ...lot, currentQuantity: Math.max(0, lot.currentQuantity - qtyToDeduct) }
+            : lot
+        );
+      });
+      return updatedLots;
     });
 
     if (affectedStockList.length > 0) {
@@ -3225,7 +3329,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       'wh-default';
 
     const affectedStockList: StockItem[] = [];
+    const newMovements: StockMovement[] = [];
+    const nowIso = new Date().toISOString();
+    const compId = currentCompany?.id || 'comp-1';
+    const opId = currentUser?.id || 'user-1';
 
+    // 1. Update stock levels
     setStock((prev) => {
       const updated = prev.map((s) => ({ ...s }));
 
@@ -3241,11 +3350,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           stk = updated.find((s) => s.productId === item.productId);
         }
 
+        const prod = products.find((p) => p.id === item.productId);
+
         if (stk) {
           stk.quantity = stk.quantity + qtyToAdd;
           affectedStockList.push({ ...stk });
         } else {
-          const prod = products.find((p) => p.id === item.productId);
           const newStk: StockItem = {
             id: `stk-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
             productId: item.productId,
@@ -3258,28 +3368,43 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           affectedStockList.push(newStk);
         }
 
-        setLots((lotPrev) =>
-          lotPrev.map((lot) =>
-            lot.productId === item.productId
-              ? { ...lot, currentQuantity: lot.currentQuantity + qtyToAdd }
-              : lot
-          )
-        );
-
-        recordStockMovement({
-          companyId: currentCompany.id,
+        newMovements.push({
+          id: `mov-${Date.now()}-${Math.floor(Math.random() * 100000)}`,
+          companyId: compId,
           type: 'devolucao',
           productId: item.productId,
           targetWarehouseId: stk?.warehouseId || targetWhId,
           quantity: qtyToAdd,
-          unitCost: item.unitPrice || 0,
+          unitCost: item.unitPrice || prod?.costPrice || 0,
           referenceDoc: referenceDoc || 'Devolução/Estorno',
           reason: reason || 'Devolução de stock por estorno',
-          operatorId: currentUser.id,
+          operatorId: opId,
+          timestamp: nowIso,
         });
       });
 
       return updated;
+    });
+
+    // 2. Record stock movements directly
+    if (newMovements.length > 0) {
+      setStockMovements((prev) => [...newMovements, ...prev]);
+    }
+
+    // 3. Increment lots if applicable
+    setLots((lotPrev) => {
+      let updatedLots = [...lotPrev];
+      items.forEach((item) => {
+        if (!item.productId || item.productId.startsWith('custom-')) return;
+        const qtyToAdd = Number(item.quantity) || 0;
+        if (qtyToAdd <= 0) return;
+        updatedLots = updatedLots.map((lot) =>
+          lot.productId === item.productId
+            ? { ...lot, currentQuantity: lot.currentQuantity + qtyToAdd }
+            : lot
+        );
+      });
+      return updatedLots;
     });
 
     if (affectedStockList.length > 0) {
@@ -5190,6 +5315,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         addCategory,
         updateCategory,
         deleteCategory,
+        standardizeAllCategories,
         products: scopedProducts,
         addProduct,
         updateProduct,
