@@ -28,6 +28,12 @@ import {
   FileUp,
   FileDown,
   Percent,
+  CheckSquare,
+  ArrowRight,
+  ArrowLeftRight,
+  ListPlus,
+  FileText,
+  Check,
 } from 'lucide-react';
 import { Product, Warehouse, LotBatch, ProductCategory, VatRate } from '../../types';
 import { defaultVatRates } from '../../mockData';
@@ -35,6 +41,7 @@ import { ProductImportExportModal } from './ProductImportExportModal';
 import { CategoryManagementModal } from './CategoryManagementModal';
 import { CategoryManagementTab } from './CategoryManagementTab';
 import { InventoryExtractTab } from './InventoryExtractTab';
+import { TransferArticlePickerModal } from './TransferArticlePickerModal';
 
 export const StockModule: React.FC = () => {
   const {
@@ -150,7 +157,10 @@ export const StockModule: React.FC = () => {
   const [transferProductId, setTransferProductId] = useState<string>(products[0]?.id || '');
   const [transferFromWh, setTransferFromWh] = useState<string>(warehouses[0]?.id || '');
   const [transferToWh, setTransferToWh] = useState<string>(warehouses[1]?.id || warehouses[0]?.id || '');
-  const [transferQty, setTransferQty] = useState<number>(10);
+  const [transferQty, setTransferQty] = useState<number>(1);
+  const [showTransferPicker, setShowTransferPicker] = useState<boolean>(false);
+  const [transferBatch, setTransferBatch] = useState<Array<{ productId: string; quantity: number }>>([]);
+  const [transferMode, setTransferMode] = useState<'single' | 'batch'>('single');
 
   // Physical count state
   const [countedQuantities, setCountedQuantities] = useState<Record<string, number>>({});
@@ -353,15 +363,75 @@ export const StockModule: React.FC = () => {
     }
   };
 
-  // Transfer Handler
+  // Transfer Handlers
+  const handleSwapTransferWarehouses = () => {
+    const temp = transferFromWh;
+    setTransferFromWh(transferToWh);
+    setTransferToWh(temp);
+  };
+
   const handleExecuteTransfer = (e: React.FormEvent) => {
     e.preventDefault();
     if (transferFromWh === transferToWh) {
       notify('O armazém de origem e de destino não podem ser iguais.', 'warning');
       return;
     }
+
+    if (transferMode === 'batch' && transferBatch.length > 0) {
+      // Execute batch transfer for all items in batch
+      let successCount = 0;
+      transferBatch.forEach((item) => {
+        if (item.quantity > 0) {
+          transferStock(item.productId, transferFromWh, transferToWh, item.quantity);
+          successCount++;
+        }
+      });
+      notify(`Transferência em lote concluída! ${successCount} artigos transferidos com sucesso.`, 'success');
+      setTransferBatch([]);
+      setTransferMode('single');
+      return;
+    }
+
+    if (!transferProductId) {
+      notify('Por favor selecione um artigo para transferir.', 'warning');
+      return;
+    }
+
+    if (transferQty <= 0) {
+      notify('A quantidade a transferir deve ser superior a zero.', 'warning');
+      return;
+    }
+
     transferStock(transferProductId, transferFromWh, transferToWh, Number(transferQty));
-    notify('Transferência entre armazéns registada com sucesso!', 'success');
+    const prod = products.find((p) => p.id === transferProductId);
+    notify(`Transferência de ${transferQty} un de "${prod?.name || 'Artigo'}" registada com sucesso!`, 'success');
+  };
+
+  const handleAddCurrentToBatch = () => {
+    if (!transferProductId) return;
+    const existingIdx = transferBatch.findIndex((i) => i.productId === transferProductId);
+    if (existingIdx >= 0) {
+      setTransferBatch((prev) => {
+        const next = [...prev];
+        next[existingIdx].quantity += transferQty;
+        return next;
+      });
+      notify(`Quantidade atualizada na lista de transferência em lote.`, 'info');
+    } else {
+      setTransferBatch((prev) => [...prev, { productId: transferProductId, quantity: transferQty }]);
+      notify(`Artigo adicionado à lista de transferência em lote!`, 'success');
+    }
+    setTransferMode('batch');
+  };
+
+  const handleRemoveFromBatch = (prodId: string) => {
+    setTransferBatch((prev) => prev.filter((i) => i.productId !== prodId));
+  };
+
+  const handleUpdateBatchQty = (prodId: string, newQty: number) => {
+    setTransferBatch((prev) =>
+      prev.map((i) => (i.productId === prodId ? { ...i, quantity: Math.max(1, newQty) } : i))
+    );
   };
 
   // 1-Click Requisition Generator
@@ -1030,78 +1100,543 @@ export const StockModule: React.FC = () => {
           <InventoryExtractTab />
         )}
 
-        {/* TAB 5: STOCK TRANSFER */}
+        {/* TAB 5: STOCK TRANSFER (Transferências Internas) */}
         {activeTab === 'transfer' && (
-          <div className="max-w-2xl mx-auto bg-[#141414] border border-[#262626] rounded-xl p-6 shadow-xs">
-            <h3 className="text-base font-serif text-[#e5e5e5] mb-1">Transferência Entre Armazéns</h3>
-            <p className="text-xs text-neutral-400 mb-6">
-              Transfira artigos entre o Armazém Central e as lojas físicas com registo automático na cadeia fiscal.
-            </p>
-
-            <form onSubmit={handleExecuteTransfer} className="space-y-4">
+          <div className="space-y-6 max-w-4xl mx-auto">
+            {/* Header & Quick Action Banner */}
+            <div className="bg-[#141414] border border-[#262626] rounded-xl p-5 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
               <div>
-                <label className="block text-xs font-medium text-neutral-300 mb-1">Artigo a Transferir</label>
-                <select
-                  value={transferProductId}
-                  onChange={(e) => setTransferProductId(e.target.value)}
-                  className="w-full bg-[#0d0d0d] border border-[#262626] rounded-md px-3 py-2 text-xs text-neutral-200 focus:outline-hidden focus:border-[#c5a47e]"
-                >
-                  {products.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name} ({p.sku})
-                    </option>
-                  ))}
-                </select>
+                <h3 className="text-base font-bold text-white flex items-center space-x-2">
+                  <RefreshCw className="w-4 h-4 text-[#c5a47e]" />
+                  <span>Transferências Internas de Stock</span>
+                </h3>
+                <p className="text-xs text-neutral-400 mt-1">
+                  Transfira artigos entre armazéns e lojas com registo e atualização automática de inventário.
+                </p>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-medium text-neutral-300 mb-1">Armazém de Origem</label>
+              {/* Prominent Selection Button 🔳 */}
+              <div className="flex items-center space-x-2.5">
+                <button
+                  type="button"
+                  onClick={() => setShowTransferPicker(true)}
+                  className="px-4 py-2.5 bg-[#c5a47e] hover:bg-[#b5946e] text-neutral-950 font-bold text-xs rounded-xl transition-all shadow-md flex items-center space-x-2 cursor-pointer"
+                  title="Abrir catálogo com pesquisa, filtros e caixas de seleção"
+                >
+                  <CheckSquare className="w-4 h-4" />
+                  <span>🔳 Selecionar Artigos (Catálogo)</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Warehouse Route Card (Origem -> Destino) */}
+            <div className="bg-[#141414] border border-[#262626] rounded-xl p-5 shadow-xs">
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-xs font-semibold uppercase tracking-wider text-neutral-400">
+                  Rota da Transferência
+                </span>
+                <button
+                  type="button"
+                  onClick={handleSwapTransferWarehouses}
+                  className="text-xs text-[#c5a47e] hover:text-white flex items-center space-x-1.5 px-2.5 py-1 rounded-lg bg-[#1f1f1f] border border-[#2e2e2e] hover:border-[#c5a47e] transition-colors cursor-pointer"
+                  title="Inverter armazém de origem e destino"
+                >
+                  <ArrowLeftRight className="w-3.5 h-3.5" />
+                  <span>Inverter Origem / Destino</span>
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="p-3 bg-[#0d0d0d] rounded-lg border border-[#262626]">
+                  <label className="block text-xs font-medium text-amber-400 mb-1 flex items-center space-x-1.5">
+                    <WarehouseIcon className="w-3.5 h-3.5" />
+                    <span>Armazém de Origem (Saída)</span>
+                  </label>
                   <select
                     value={transferFromWh}
                     onChange={(e) => setTransferFromWh(e.target.value)}
-                    className="w-full bg-[#0d0d0d] border border-[#262626] rounded-md px-3 py-2 text-xs text-neutral-200 focus:outline-hidden"
+                    className="w-full bg-[#171717] border border-[#2e2e2e] rounded-md px-3 py-2 text-xs text-white focus:outline-hidden focus:border-[#c5a47e]"
                   >
                     {warehouses.map((w) => (
-                      <option key={w.id} value={w.id}>{w.name}</option>
+                      <option key={w.id} value={w.id}>
+                        {w.name} {w.code ? `(${w.code})` : ''} {w.location ? `- ${w.location}` : ''}
+                      </option>
                     ))}
                   </select>
                 </div>
 
-                <div>
-                  <label className="block text-xs font-medium text-neutral-300 mb-1">Armazém de Destino</label>
+                <div className="p-3 bg-[#0d0d0d] rounded-lg border border-[#262626]">
+                  <label className="block text-xs font-medium text-emerald-400 mb-1 flex items-center space-x-1.5">
+                    <WarehouseIcon className="w-3.5 h-3.5" />
+                    <span>Armazém de Destino (Entrada)</span>
+                  </label>
                   <select
                     value={transferToWh}
                     onChange={(e) => setTransferToWh(e.target.value)}
-                    className="w-full bg-[#0d0d0d] border border-[#262626] rounded-md px-3 py-2 text-xs text-neutral-200 focus:outline-hidden"
+                    className="w-full bg-[#171717] border border-[#2e2e2e] rounded-md px-3 py-2 text-xs text-white focus:outline-hidden focus:border-[#c5a47e]"
                   >
                     {warehouses.map((w) => (
-                      <option key={w.id} value={w.id}>{w.name}</option>
+                      <option key={w.id} value={w.id}>
+                        {w.name} {w.code ? `(${w.code})` : ''} {w.location ? `- ${w.location}` : ''}
+                      </option>
                     ))}
                   </select>
                 </div>
               </div>
+            </div>
 
-              <div>
-                <label className="block text-xs font-medium text-neutral-300 mb-1">Quantidade a Transferir</label>
-                <input
-                  type="number"
-                  min="1"
-                  value={transferQty}
-                  onChange={(e) => setTransferQty(Math.max(1, Number(e.target.value)))}
-                  className="w-full bg-[#0d0d0d] border border-[#262626] rounded-md px-3 py-2 text-xs text-neutral-200 focus:outline-hidden font-mono"
-                />
+            {/* Mode Switcher (Individual vs Lote) */}
+            <div className="flex items-center space-x-2 border-b border-[#262626] pb-3">
+              <button
+                type="button"
+                onClick={() => setTransferMode('single')}
+                className={`px-4 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                  transferMode === 'single'
+                    ? 'bg-[#c5a47e] text-neutral-950 shadow-xs'
+                    : 'bg-[#171717] text-neutral-400 hover:text-white border border-[#262626]'
+                }`}
+              >
+                Transferência Individual (1 Artigo)
+              </button>
+              <button
+                type="button"
+                onClick={() => setTransferMode('batch')}
+                className={`px-4 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer flex items-center space-x-1.5 ${
+                  transferMode === 'batch'
+                    ? 'bg-[#c5a47e] text-neutral-950 shadow-xs'
+                    : 'bg-[#171717] text-neutral-400 hover:text-white border border-[#262626]'
+                }`}
+              >
+                <Layers className="w-3.5 h-3.5" />
+                <span>Transferência em Lote</span>
+                {transferBatch.length > 0 && (
+                  <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-neutral-900 text-white font-mono font-bold">
+                    {transferBatch.length}
+                  </span>
+                )}
+              </button>
+            </div>
+
+            {/* Transfer Card: SINGLE MODE */}
+            {transferMode === 'single' && (
+              <div className="bg-[#141414] border border-[#262626] rounded-xl p-6 shadow-xs space-y-5">
+                <form onSubmit={handleExecuteTransfer} className="space-y-5">
+                  {/* Article Field + 🔳 Button */}
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label className="text-xs font-medium text-neutral-300">
+                        Artigo a Transferir
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => setShowTransferPicker(true)}
+                        className="text-xs text-[#c5a47e] hover:text-[#dfc3a1] font-semibold flex items-center space-x-1 cursor-pointer transition-colors"
+                      >
+                        <CheckSquare className="w-3.5 h-3.5" />
+                        <span>🔳 Abrir Catálogo de Selecção</span>
+                      </button>
+                    </div>
+
+                    <div className="flex items-center space-x-2">
+                      <select
+                        value={transferProductId}
+                        onChange={(e) => setTransferProductId(e.target.value)}
+                        className="flex-1 bg-[#0d0d0d] border border-[#262626] rounded-lg px-3 py-2.5 text-xs text-white focus:outline-hidden focus:border-[#c5a47e]"
+                      >
+                        {products.map((p) => {
+                          const originQty = stock
+                            .filter((s) => s.productId === p.id && s.warehouseId === transferFromWh)
+                            .reduce((acc, s) => acc + s.quantity, 0);
+                          return (
+                            <option key={p.id} value={p.id}>
+                              {p.name} ({p.sku}) &bull; Stock Origem: {originQty} un
+                            </option>
+                          );
+                        })}
+                      </select>
+
+                      <button
+                        type="button"
+                        onClick={() => setShowTransferPicker(true)}
+                        className="px-3.5 py-2.5 bg-[#1f1f1f] hover:bg-[#282828] text-[#c5a47e] hover:text-[#e0c3a2] border border-[#333] hover:border-[#c5a47e] rounded-lg text-xs font-bold transition-colors flex items-center space-x-1.5 cursor-pointer shrink-0"
+                        title="Procurar e selecionar artigo com caixa de seleção"
+                      >
+                        <CheckSquare className="w-4 h-4" />
+                        <span>🔳 Selecionar</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Selected Product Quick Overview Card */}
+                  {(() => {
+                    const selProd = products.find((p) => p.id === transferProductId);
+                    if (!selProd) return null;
+                    const originStock = stock
+                      .filter((s) => s.productId === selProd.id && s.warehouseId === transferFromWh)
+                      .reduce((acc, s) => acc + s.quantity, 0);
+                    const destStock = stock
+                      .filter((s) => s.productId === selProd.id && s.warehouseId === transferToWh)
+                      .reduce((acc, s) => acc + s.quantity, 0);
+                    const catName = categories.find((c) => c.id === selProd.categoryId)?.name || 'Geral';
+
+                    return (
+                      <div className="p-4 bg-[#0d0d0d] border border-[#262626] rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                        <div className="space-y-1">
+                          <div className="flex items-center space-x-2">
+                            <Package className="w-4 h-4 text-[#c5a47e]" />
+                            <span className="text-xs font-bold text-white">{selProd.name}</span>
+                            <span className="px-2 py-0.5 rounded text-[10px] bg-[#1a1a1a] text-neutral-400 border border-[#2e2e2e]">
+                              {catName}
+                            </span>
+                          </div>
+                          <div className="text-[11px] text-neutral-400 font-mono flex items-center space-x-3">
+                            <span>SKU: {selProd.sku}</span>
+                            {selProd.barcode && <span>EAN: {selProd.barcode}</span>}
+                            <span>PVP: {formatCurrency(selProd.price)}</span>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center space-x-3 text-xs shrink-0">
+                          <div className="px-3 py-1.5 bg-[#171717] rounded-lg border border-[#262626] text-right">
+                            <span className="text-[10px] text-neutral-400 block">Stock na Origem</span>
+                            <span
+                              className={`font-mono font-bold ${
+                                originStock <= 0
+                                  ? 'text-rose-400'
+                                  : originStock <= 5
+                                  ? 'text-amber-400'
+                                  : 'text-emerald-400'
+                              }`}
+                            >
+                              {originStock} un
+                            </span>
+                          </div>
+                          <div className="px-3 py-1.5 bg-[#171717] rounded-lg border border-[#262626] text-right">
+                            <span className="text-[10px] text-neutral-400 block">Stock no Destino</span>
+                            <span className="font-mono font-bold text-neutral-200">
+                              {destStock} un
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                  {/* Quantity Field with Quick Selector Chips */}
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-xs font-medium text-neutral-300">
+                        Quantidade a Transferir
+                      </label>
+                      {(() => {
+                        const selProd = products.find((p) => p.id === transferProductId);
+                        if (!selProd) return null;
+                        const originStock = stock
+                          .filter((s) => s.productId === selProd.id && s.warehouseId === transferFromWh)
+                          .reduce((acc, s) => acc + s.quantity, 0);
+                        return (
+                          <div className="flex items-center space-x-1.5">
+                            {[1, 5, 10, 25].map((q) => (
+                              <button
+                                key={q}
+                                type="button"
+                                onClick={() => setTransferQty(q)}
+                                className="px-2 py-0.5 rounded text-[10px] font-mono bg-[#1c1c1c] text-neutral-300 hover:text-white hover:bg-[#282828] border border-[#2e2e2e] cursor-pointer"
+                              >
+                                +{q}
+                              </button>
+                            ))}
+                            {originStock > 0 && (
+                              <button
+                                type="button"
+                                onClick={() => setTransferQty(originStock)}
+                                className="px-2 py-0.5 rounded text-[10px] font-bold bg-[#c5a47e]/15 text-[#c5a47e] hover:bg-[#c5a47e]/25 border border-[#c5a47e]/30 cursor-pointer"
+                              >
+                                Max ({originStock})
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })()}
+                    </div>
+
+                    <input
+                      type="number"
+                      min="1"
+                      value={transferQty}
+                      onChange={(e) => setTransferQty(Math.max(1, Number(e.target.value)))}
+                      className="w-full bg-[#0d0d0d] border border-[#262626] rounded-lg px-3 py-2 text-xs text-white focus:outline-hidden font-mono text-base font-bold"
+                    />
+                  </div>
+
+                  {/* Action Buttons */}
+                  <div className="pt-2 flex flex-col sm:flex-row items-center gap-3">
+                    <button
+                      type="submit"
+                      className="flex-1 w-full py-2.5 bg-[#c5a47e] hover:bg-[#b5946e] text-neutral-950 font-bold text-xs rounded-xl transition-all shadow-md flex items-center justify-center space-x-2 cursor-pointer"
+                    >
+                      <ArrowRight className="w-4 h-4" />
+                      <span>Confirmar Transferência Direta</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={handleAddCurrentToBatch}
+                      className="w-full sm:w-auto px-4 py-2.5 bg-[#1f1f1f] hover:bg-[#2a2a2a] text-neutral-200 border border-[#2e2e2e] font-semibold text-xs rounded-xl transition-colors flex items-center justify-center space-x-1.5 cursor-pointer"
+                    >
+                      <ListPlus className="w-4 h-4 text-[#c5a47e]" />
+                      <span>+ Adicionar à Lista em Lote</span>
+                    </button>
+                  </div>
+                </form>
+              </div>
+            )}
+
+            {/* Transfer Card: BATCH MODE */}
+            {transferMode === 'batch' && (
+              <div className="bg-[#141414] border border-[#262626] rounded-xl p-6 shadow-xs space-y-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h4 className="text-sm font-bold text-white flex items-center space-x-2">
+                      <Layers className="w-4 h-4 text-[#c5a47e]" />
+                      <span>Lista de Artigos para Transferência em Lote</span>
+                    </h4>
+                    <p className="text-xs text-neutral-400 mt-0.5">
+                      Transfira múltiplos artigos numa única operação
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => setShowTransferPicker(true)}
+                    className="px-3 py-1.5 bg-[#c5a47e] hover:bg-[#b5946e] text-neutral-950 font-bold text-xs rounded-lg transition-colors flex items-center space-x-1.5 cursor-pointer shadow-xs"
+                  >
+                    <CheckSquare className="w-4 h-4" />
+                    <span>🔳 Adicionar Artigos do Catálogo</span>
+                  </button>
+                </div>
+
+                {transferBatch.length === 0 ? (
+                  <div className="py-12 border border-dashed border-[#262626] rounded-xl text-center flex flex-col items-center justify-center space-y-3 bg-[#0d0d0d]">
+                    <Package className="w-10 h-10 text-neutral-600" />
+                    <div>
+                      <p className="text-xs font-semibold text-neutral-300">
+                        Nenhum artigo adicionado à lista de lote
+                      </p>
+                      <p className="text-[11px] text-neutral-500 mt-0.5">
+                        Utilize o botão de selecção com caixas de verificação 🔳 para adicionar múltiplos artigos.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowTransferPicker(true)}
+                      className="px-4 py-2 bg-[#c5a47e] hover:bg-[#b5946e] text-neutral-950 font-bold text-xs rounded-lg transition-colors flex items-center space-x-1.5 cursor-pointer"
+                    >
+                      <CheckSquare className="w-4 h-4" />
+                      <span>🔳 Abrir Selecção de Artigos</span>
+                    </button>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    <div className="border border-[#262626] rounded-lg overflow-hidden bg-[#0d0d0d]">
+                      <table className="w-full text-left text-xs border-collapse">
+                        <thead className="bg-[#171717] text-neutral-400 font-medium border-b border-[#262626] text-[10px] uppercase tracking-wider">
+                          <tr>
+                            <th className="px-4 py-2.5">Artigo</th>
+                            <th className="px-4 py-2.5">SKU</th>
+                            <th className="px-4 py-2.5 text-right">Stock Origem</th>
+                            <th className="px-4 py-2.5 text-center w-36">Qtd. a Transferir</th>
+                            <th className="px-4 py-2.5 text-right w-16">Remover</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-[#202020]">
+                          {transferBatch.map((item) => {
+                            const prod = products.find((p) => p.id === item.productId);
+                            if (!prod) return null;
+                            const originStock = stock
+                              .filter((s) => s.productId === prod.id && s.warehouseId === transferFromWh)
+                              .reduce((acc, s) => acc + s.quantity, 0);
+
+                            return (
+                              <tr key={item.productId} className="hover:bg-[#141414]">
+                                <td className="px-4 py-2.5 font-medium text-white">
+                                  {prod.name}
+                                </td>
+                                <td className="px-4 py-2.5 font-mono text-neutral-400">
+                                  {prod.sku}
+                                </td>
+                                <td className="px-4 py-2.5 text-right font-mono">
+                                  <span
+                                    className={
+                                      originStock <= 0
+                                        ? 'text-rose-400 font-bold'
+                                        : 'text-emerald-400 font-bold'
+                                    }
+                                  >
+                                    {originStock} un
+                                  </span>
+                                </td>
+                                <td className="px-4 py-2.5 text-center">
+                                  <div className="inline-flex items-center space-x-1.5 bg-[#171717] border border-[#2e2e2e] rounded-md p-1">
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        handleUpdateBatchQty(item.productId, item.quantity - 1)
+                                      }
+                                      className="w-5 h-5 rounded bg-[#202020] text-neutral-300 hover:text-white text-xs font-bold flex items-center justify-center cursor-pointer"
+                                    >
+                                      -
+                                    </button>
+                                    <input
+                                      type="number"
+                                      min="1"
+                                      value={item.quantity}
+                                      onChange={(e) =>
+                                        handleUpdateBatchQty(
+                                          item.productId,
+                                          Math.max(1, Number(e.target.value))
+                                        )
+                                      }
+                                      className="w-12 text-center bg-transparent text-xs font-mono font-bold text-white focus:outline-hidden"
+                                    />
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        handleUpdateBatchQty(item.productId, item.quantity + 1)
+                                      }
+                                      className="w-5 h-5 rounded bg-[#202020] text-neutral-300 hover:text-white text-xs font-bold flex items-center justify-center cursor-pointer"
+                                    >
+                                      +
+                                    </button>
+                                  </div>
+                                </td>
+                                <td className="px-4 py-2.5 text-right">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRemoveFromBatch(item.productId)}
+                                    className="p-1 text-neutral-500 hover:text-rose-400 rounded transition-colors cursor-pointer"
+                                    title="Remover da lista"
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                  </button>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {/* Batch Summary & Confirm */}
+                    <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-2 bg-[#0d0d0d] p-4 rounded-xl border border-[#262626]">
+                      <div className="text-xs text-neutral-300 space-x-4">
+                        <span>
+                          Total de Artigos: <strong>{transferBatch.length}</strong>
+                        </span>
+                        <span>
+                          Total de Unidades:{' '}
+                          <strong>
+                            {transferBatch.reduce((acc, i) => acc + i.quantity, 0)} un
+                          </strong>
+                        </span>
+                      </div>
+
+                      <div className="flex items-center space-x-3 w-full sm:w-auto">
+                        <button
+                          type="button"
+                          onClick={() => setTransferBatch([])}
+                          className="px-3 py-2 bg-[#1f1f1f] hover:bg-[#282828] text-neutral-400 hover:text-rose-300 rounded-lg text-xs font-medium cursor-pointer"
+                        >
+                          Limpar Lista
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleExecuteTransfer}
+                          className="flex-1 sm:flex-initial px-5 py-2 bg-[#c5a47e] hover:bg-[#b5946e] text-neutral-950 font-bold text-xs rounded-lg transition-all shadow-md flex items-center justify-center space-x-2 cursor-pointer"
+                        >
+                          <Check className="w-4 h-4" />
+                          <span>Executar Guia de Transferência ({transferBatch.length} Artigos)</span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Recent Stock Transfer Movements Table */}
+            <div className="bg-[#141414] border border-[#262626] rounded-xl p-5 shadow-xs">
+              <div className="flex items-center justify-between mb-3">
+                <h4 className="text-xs font-bold uppercase tracking-wider text-neutral-300 flex items-center space-x-2">
+                  <Clock className="w-3.5 h-3.5 text-[#c5a47e]" />
+                  <span>Histórico Recente de Transferências Internas</span>
+                </h4>
+                <span className="text-[10px] text-neutral-400 font-mono">
+                  {stockMovements.filter((m) => m.type === 'transferencia').length} transferências registadas
+                </span>
               </div>
 
-              <div className="pt-4">
-                <button
-                  type="submit"
-                  className="w-full py-2.5 bg-[#c5a47e] hover:bg-[#b5946e] text-neutral-950 font-medium text-xs rounded-lg transition-colors cursor-pointer"
-                >
-                  Confirmar Transferência de Stock
-                </button>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs border-collapse">
+                  <thead className="bg-[#1a1a1a] text-neutral-400 font-medium border-b border-[#262626] text-[10px] uppercase">
+                    <tr>
+                      <th className="px-3 py-2">Data / Hora</th>
+                      <th className="px-3 py-2">Artigo</th>
+                      <th className="px-3 py-2 text-right">Quantidade</th>
+                      <th className="px-3 py-2">Origem</th>
+                      <th className="px-3 py-2">Destino</th>
+                      <th className="px-3 py-2 text-right">Estado</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[#222222]">
+                    {stockMovements
+                      .filter((m) => m.type === 'transferencia')
+                      .slice(0, 10)
+                      .map((mov) => {
+                        const prod = products.find((p) => p.id === mov.productId);
+                        const fromWh = warehouses.find(
+                          (w) => w.id === mov.originWarehouseId || w.id === mov.sourceWarehouseId
+                        );
+                        const toWh = warehouses.find(
+                          (w) => w.id === mov.targetWarehouseId || w.id === mov.warehouseId
+                        );
+
+                        return (
+                          <tr key={mov.id} className="hover:bg-[#181818]">
+                            <td className="px-3 py-2 text-neutral-400 font-mono text-[11px]">
+                              {formatDate(mov.date || mov.createdAt || new Date().toISOString())}
+                            </td>
+                            <td className="px-3 py-2 font-medium text-white">
+                              {prod?.name || 'Artigo'} <span className="text-neutral-500 font-mono text-[10px]">({prod?.sku || '---'})</span>
+                            </td>
+                            <td className="px-3 py-2 text-right font-mono font-bold text-cyan-400">
+                              {mov.quantity} un
+                            </td>
+                            <td className="px-3 py-2 text-neutral-300">
+                              {fromWh?.name || 'Armazém Origem'}
+                            </td>
+                            <td className="px-3 py-2 text-neutral-300">
+                              {toWh?.name || 'Armazém Destino'}
+                            </td>
+                            <td className="px-3 py-2 text-right">
+                              <span className="px-2 py-0.5 rounded text-[10px] font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                                Transferido
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    {stockMovements.filter((m) => m.type === 'transferencia').length === 0 && (
+                      <tr>
+                        <td colSpan={6} className="text-center py-6 text-neutral-500 text-xs">
+                          Nenhuma transferência interna registada recentemente.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
               </div>
-            </form>
+            </div>
           </div>
         )}
 
@@ -1742,6 +2277,27 @@ export const StockModule: React.FC = () => {
         onSelectCategory={(catId) => {
           setSelectedCategoryFilter(catId);
           setActiveTab('overview');
+        }}
+      />
+
+      {/* Transfer Article Picker Modal 🔳 */}
+      <TransferArticlePickerModal
+        isOpen={showTransferPicker}
+        onClose={() => setShowTransferPicker(false)}
+        products={products}
+        stock={stock}
+        originWarehouseId={transferFromWh}
+        destinationWarehouseId={transferToWh}
+        warehouses={warehouses}
+        categories={categories}
+        onSelectSingle={(productId, quantity) => {
+          setTransferProductId(productId);
+          if (quantity) setTransferQty(quantity);
+          setTransferMode('single');
+        }}
+        onSelectBatch={(items) => {
+          setTransferBatch(items);
+          setTransferMode('batch');
         }}
       />
     </div>
