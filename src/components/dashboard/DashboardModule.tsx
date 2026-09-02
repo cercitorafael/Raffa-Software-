@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useApp } from '../../context/AppContext';
 import { formatCurrency } from '../../utils/crypto';
 import {
@@ -7,6 +7,27 @@ import {
   calculateNetSubtotal,
   calculateNetTax,
 } from '../../utils/documentUtils';
+import {
+  getTodayDateStr,
+  getYesterdayDateStr,
+  getCurrentWeekBounds,
+  getPrevWeekBounds,
+  getCurrentMonthStr,
+  getPrevMonthStr,
+  getMonthBounds,
+  getCurrentYearBounds,
+  getPrevYearBounds,
+  getMonthNamePT,
+} from '../../utils/dateUtils';
+import {
+  ResponsiveContainer,
+  AreaChart,
+  Area,
+  XAxis,
+  YAxis,
+  Tooltip,
+  CartesianGrid,
+} from 'recharts';
 import {
   TrendingUp,
   Receipt,
@@ -29,6 +50,8 @@ import {
   Store as StoreIcon,
   ShieldAlert,
   Wallet,
+  Calendar,
+  BarChart3,
 } from 'lucide-react';
 
 export const DashboardModule: React.FC = () => {
@@ -80,19 +103,107 @@ export const DashboardModule: React.FC = () => {
     );
   }
 
-  // Key Calculated Metrics - STRICTLY Commercial Sales (FT, FS, FR, VD, ND minus NC).
-  // Proformas (PF), Transport Guides (GT/GR) are NEVER counted as sales.
-  const commercialSales = salesHistory.filter((s) => isEffectiveSale(s));
-  const totalSalesRevenue = calculateNetSalesRevenue(salesHistory);
-  const totalSubtotal = calculateNetSubtotal(salesHistory);
-  const totalTaxCollected = calculateNetTax(salesHistory);
+  // Active Date Range boundaries & metadata
+  const rangeInfo = useMemo(() => {
+    const todayStr = getTodayDateStr();
+    if (timeRange === 'hoje') {
+      const yesterdayStr = getYesterdayDateStr();
+      const [y, m, d] = todayStr.split('-');
+      return {
+        startDate: todayStr,
+        endDate: todayStr,
+        prevStartDate: yesterdayStr,
+        prevEndDate: yesterdayStr,
+        label: `Hoje (${d}/${m}/${y})`,
+        shortLabel: 'Hoje',
+        comparisonLabel: 'vs. ontem',
+      };
+    } else if (timeRange === 'semana') {
+      const curr = getCurrentWeekBounds();
+      const prev = getPrevWeekBounds();
+      const [sY, sM, sD] = curr.start.split('-');
+      const [eY, eM, eD] = curr.end.split('-');
+      return {
+        startDate: curr.start,
+        endDate: curr.end,
+        prevStartDate: prev.start,
+        prevEndDate: prev.end,
+        label: `Esta Semana (${sD}/${sM} a ${eD}/${eM})`,
+        shortLabel: 'Esta Semana',
+        comparisonLabel: 'vs. semana anterior',
+      };
+    } else if (timeRange === 'mes') {
+      const currMonth = getCurrentMonthStr();
+      const curr = getMonthBounds(currMonth);
+      const prevMonth = getPrevMonthStr();
+      const prev = getMonthBounds(prevMonth);
+      return {
+        startDate: curr.start,
+        endDate: curr.end,
+        prevStartDate: prev.start,
+        prevEndDate: prev.end,
+        label: `Este Mês (${getMonthNamePT(currMonth)})`,
+        shortLabel: 'Este Mês',
+        comparisonLabel: 'vs. mês anterior',
+      };
+    } else {
+      const curr = getCurrentYearBounds();
+      const prev = getPrevYearBounds();
+      const y = new Date().getFullYear();
+      return {
+        startDate: curr.start,
+        endDate: curr.end,
+        prevStartDate: prev.start,
+        prevEndDate: prev.end,
+        label: `Ano Fiscal ${y}`,
+        shortLabel: `Ano ${y}`,
+        comparisonLabel: 'vs. ano anterior',
+      };
+    }
+  }, [timeRange]);
+
+  const isDateInRange = (dateStr: string | undefined, start: string, end: string) => {
+    if (!dateStr) return false;
+    const d = dateStr.substring(0, 10);
+    return d >= start && d <= end;
+  };
+
+  // Filtered sales for active time range
+  const periodSalesHistory = useMemo(() => {
+    return salesHistory.filter((s) => isDateInRange(s.date, rangeInfo.startDate, rangeInfo.endDate));
+  }, [salesHistory, rangeInfo]);
+
+  // Previous period sales for comparison percentage
+  const prevPeriodSalesHistory = useMemo(() => {
+    return salesHistory.filter((s) => isDateInRange(s.date, rangeInfo.prevStartDate, rangeInfo.prevEndDate));
+  }, [salesHistory, rangeInfo]);
+
+  // Filtered Commercial Sales (FT, FS, FR, VD, ND minus NC)
+  const commercialSales = useMemo(() => {
+    return periodSalesHistory.filter((s) => isEffectiveSale(s));
+  }, [periodSalesHistory]);
+
+  const totalSalesRevenue = useMemo(() => calculateNetSalesRevenue(periodSalesHistory), [periodSalesHistory]);
+  const prevSalesRevenue = useMemo(() => calculateNetSalesRevenue(prevPeriodSalesHistory), [prevPeriodSalesHistory]);
+
+  const revenueGrowthPercent = useMemo(() => {
+    if (prevSalesRevenue > 0) {
+      return ((totalSalesRevenue - prevSalesRevenue) / prevSalesRevenue) * 100;
+    }
+    return totalSalesRevenue > 0 ? 100 : 0;
+  }, [totalSalesRevenue, prevSalesRevenue]);
+
+  const totalSubtotal = useMemo(() => calculateNetSubtotal(periodSalesHistory), [periodSalesHistory]);
+  const totalTaxCollected = useMemo(() => calculateNetTax(periodSalesHistory), [periodSalesHistory]);
   const totalInvoicesCount = commercialSales.length;
   const avgTicket = totalInvoicesCount > 0 ? totalSalesRevenue / totalInvoicesCount : 0;
 
-  // Active Proformas summary
-  const quoteDocs = salesHistory.filter(
-    (s) => ['PF', 'ORC'].includes((s.invoiceType || '').toUpperCase()) && s.status !== 'anulado' && s.status !== 'convertido'
-  );
+  // Active Proformas summary for this period
+  const quoteDocs = useMemo(() => {
+    return periodSalesHistory.filter(
+      (s) => ['PF', 'ORC'].includes((s.invoiceType || '').toUpperCase()) && s.status !== 'anulado' && s.status !== 'convertido'
+    );
+  }, [periodSalesHistory]);
   const totalQuotesValue = quoteDocs.reduce((acc, q) => acc + (q.total || 0), 0);
 
   // Stock Metrics
@@ -114,20 +225,22 @@ export const DashboardModule: React.FC = () => {
     .filter((a) => a.status === 'pendente')
     .reduce((acc, a) => acc + a.amount, 0);
 
-  // Payment Breakdown - from commercial sales only
-  const paymentBreakdown = commercialSales.reduce(
-    (acc, s) => {
-      s.payments.forEach((p) => {
-        if (p.method === 'multibanco') acc.multibanco += p.amount;
-        else if (p.method === 'mbway') acc.mbway += p.amount;
-        else if (p.method === 'cartao') acc.cartao += p.amount;
-        else if (p.method === 'dinheiro') acc.dinheiro += p.amount;
-        else acc.outros += p.amount;
-      });
-      return acc;
-    },
-    { multibanco: 0, mbway: 0, cartao: 0, dinheiro: 0, outros: 0 }
-  );
+  // Payment Breakdown - from commercial sales of selected period
+  const paymentBreakdown = useMemo(() => {
+    return commercialSales.reduce(
+      (acc, s) => {
+        s.payments?.forEach((p) => {
+          if (p.method === 'multibanco') acc.multibanco += p.amount;
+          else if (p.method === 'mbway') acc.mbway += p.amount;
+          else if (p.method === 'cartao') acc.cartao += p.amount;
+          else if (p.method === 'dinheiro') acc.dinheiro += p.amount;
+          else acc.outros += p.amount;
+        });
+        return acc;
+      },
+      { multibanco: 0, mbway: 0, cartao: 0, dinheiro: 0, outros: 0 }
+    );
+  }, [commercialSales]);
 
   const totalPaymentSum =
     paymentBreakdown.multibanco +
@@ -136,39 +249,128 @@ export const DashboardModule: React.FC = () => {
     paymentBreakdown.dinheiro +
     paymentBreakdown.outros || 1;
 
-  // VAT Breakdown (Normal 23%, Intermedia 13%, Reduzida 6%) - from commercial sales only
-  const vatBreakdown = commercialSales.reduce(
-    (acc, s) => {
-      s.items.forEach((item) => {
-        if (item.taxRate >= 23) acc.tax23 += item.taxAmount;
-        else if (item.taxRate >= 13) acc.tax13 += item.taxAmount;
-        else if (item.taxRate >= 6) acc.tax6 += item.taxAmount;
-        else acc.tax0 += item.taxAmount;
+  // VAT Breakdown (Normal 23%, Intermedia 13%, Reduzida 6%) - from commercial sales of selected period
+  const vatBreakdown = useMemo(() => {
+    return commercialSales.reduce(
+      (acc, s) => {
+        s.items?.forEach((item) => {
+          if (item.taxRate >= 23) acc.tax23 += item.taxAmount;
+          else if (item.taxRate >= 13) acc.tax13 += item.taxAmount;
+          else if (item.taxRate >= 6) acc.tax6 += item.taxAmount;
+          else acc.tax0 += item.taxAmount;
+        });
+        return acc;
+      },
+      { tax23: 0, tax13: 0, tax6: 0, tax0: 0 }
+    );
+  }, [commercialSales]);
+
+  // Top Selling Products - from commercial sales of selected period
+  const topProducts = useMemo(() => {
+    const productSalesMap: Record<string, { name: string; qty: number; revenue: number }> = {};
+    commercialSales.forEach((s) => {
+      s.items?.forEach((item) => {
+        if (!productSalesMap[item.productId]) {
+          productSalesMap[item.productId] = {
+            name: item.productName,
+            qty: 0,
+            revenue: 0,
+          };
+        }
+        productSalesMap[item.productId].qty += item.quantity;
+        productSalesMap[item.productId].revenue += item.total;
       });
-      return acc;
-    },
-    { tax23: 0, tax13: 0, tax6: 0, tax0: 0 }
-  );
-
-  // Top Selling Products - from commercial sales only
-  const productSalesMap: Record<string, { name: string; qty: number; revenue: number }> = {};
-  commercialSales.forEach((s) => {
-    s.items.forEach((item) => {
-      if (!productSalesMap[item.productId]) {
-        productSalesMap[item.productId] = {
-          name: item.productName,
-          qty: 0,
-          revenue: 0,
-        };
-      }
-      productSalesMap[item.productId].qty += item.quantity;
-      productSalesMap[item.productId].revenue += item.total;
     });
-  });
 
-  const topProducts = Object.values(productSalesMap)
-    .sort((a, b) => b.revenue - a.revenue)
-    .slice(0, 5);
+    return Object.values(productSalesMap)
+      .sort((a, b) => b.revenue - a.revenue)
+      .slice(0, 5);
+  }, [commercialSales]);
+
+  // Timeline / Evolution Chart Data dynamically generated for the active period
+  const chartData = useMemo(() => {
+    if (timeRange === 'hoje') {
+      const hours = ['08:00', '10:00', '12:00', '14:00', '16:00', '18:00', '20:00', '22:00'];
+      return hours.map((h) => {
+        const startH = parseInt(h.split(':')[0], 10);
+        const endH = startH + 2;
+        const bucketSales = commercialSales.filter((s) => {
+          if (!s.date) return false;
+          const timePart = s.date.includes('T') ? s.date.split('T')[1] : '';
+          const saleHour = parseInt(timePart.substring(0, 2) || '0', 10);
+          return saleHour >= startH && saleHour < endH;
+        });
+        const revenue = bucketSales.reduce((acc, s) => acc + (s.total || 0), 0);
+        return {
+          name: h,
+          vendas: revenue,
+          faturas: bucketSales.length,
+        };
+      });
+    } else if (timeRange === 'semana') {
+      const days = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom'];
+      const weekBounds = getCurrentWeekBounds();
+      const monday = new Date(weekBounds.start);
+      return days.map((dayName, idx) => {
+        const d = new Date(monday);
+        d.setDate(monday.getDate() + idx);
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const dayStr = String(d.getDate()).padStart(2, '0');
+        const targetDate = `${y}-${m}-${dayStr}`;
+
+        const daySales = commercialSales.filter((s) => s.date && s.date.substring(0, 10) === targetDate);
+        const revenue = daySales.reduce((acc, s) => acc + (s.total || 0), 0);
+        return {
+          name: `${dayName} (${dayStr}/${m})`,
+          vendas: revenue,
+          faturas: daySales.length,
+        };
+      });
+    } else if (timeRange === 'mes') {
+      const currMonth = getCurrentMonthStr();
+      const [yStr, mStr] = currMonth.split('-');
+      const year = parseInt(yStr, 10);
+      const month = parseInt(mStr, 10);
+      const totalDays = new Date(year, month, 0).getDate();
+
+      const buckets = [
+        { name: '1-6', start: 1, end: 6 },
+        { name: '7-12', start: 7, end: 12 },
+        { name: '13-18', start: 13, end: 18 },
+        { name: '19-24', start: 19, end: 24 },
+        { name: `25-${totalDays}`, start: 25, end: totalDays },
+      ];
+
+      return buckets.map((b) => {
+        const bucketSales = commercialSales.filter((s) => {
+          if (!s.date || !s.date.startsWith(currMonth)) return false;
+          const day = parseInt(s.date.substring(8, 10), 10);
+          return day >= b.start && day <= b.end;
+        });
+        const revenue = bucketSales.reduce((acc, s) => acc + (s.total || 0), 0);
+        return {
+          name: `Dias ${b.name}`,
+          vendas: revenue,
+          faturas: bucketSales.length,
+        };
+      });
+    } else {
+      const months = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
+      const currentYearStr = String(new Date().getFullYear());
+      return months.map((mName, mIdx) => {
+        const monthNumStr = String(mIdx + 1).padStart(2, '0');
+        const targetPrefix = `${currentYearStr}-${monthNumStr}`;
+        const mSales = commercialSales.filter((s) => s.date && s.date.startsWith(targetPrefix));
+        const revenue = mSales.reduce((acc, s) => acc + (s.total || 0), 0);
+        return {
+          name: mName,
+          vendas: revenue,
+          faturas: mSales.length,
+        };
+      });
+    }
+  }, [timeRange, commercialSales]);
 
   return (
     <div className="flex-1 flex flex-col h-full bg-[#0a0a0a] text-[#e5e5e5] overflow-y-auto">
@@ -193,6 +395,10 @@ export const DashboardModule: React.FC = () => {
               <Wallet className="w-3 h-3 shrink-0" />
               <span>{activeShift ? `Caixa Aberto (${activeShift.operatorName.split(' ')[0]})` : 'Caixa Fechado'}</span>
             </span>
+            <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-[#1a1a1a] text-neutral-300 border border-[#2e2e2e] flex items-center space-x-1">
+              <Calendar className="w-3 h-3 text-[#c5a47e]" />
+              <span>{rangeInfo.label}</span>
+            </span>
           </div>
           <p className="text-xs text-neutral-400 mt-0.5">
             Visão consolidada de faturação fiscal, tesouraria, inventário e performance das lojas
@@ -200,21 +406,30 @@ export const DashboardModule: React.FC = () => {
         </div>
 
         {/* Time Filter & Quick Shortcuts */}
-        <div className="flex items-center space-x-2">
-          <div className="flex items-center bg-[#141414] border border-[#262626] rounded-lg p-0.5 text-xs font-medium">
-            {(['hoje', 'semana', 'mes', 'ano'] as const).map((r) => (
-              <button
-                key={r}
-                onClick={() => setTimeRange(r)}
-                className={`px-3 py-1 rounded-md transition-all capitalize cursor-pointer ${
-                  timeRange === r
-                    ? 'bg-[#c5a47e] text-black font-semibold shadow-xs'
-                    : 'text-neutral-400 hover:text-white'
-                }`}
-              >
-                {r}
-              </button>
-            ))}
+        <div className="flex items-center space-x-2 flex-wrap gap-y-2">
+          <div className="flex items-center bg-[#141414] border border-[#262626] rounded-lg p-0.5 text-xs font-medium shadow-inner">
+            {(['hoje', 'semana', 'mes', 'ano'] as const).map((r) => {
+              const labels: Record<string, string> = {
+                hoje: 'Hoje',
+                semana: 'Semana',
+                mes: 'Mês',
+                ano: 'Ano',
+              };
+              return (
+                <button
+                  key={r}
+                  onClick={() => setTimeRange(r)}
+                  className={`px-3 py-1 rounded-md transition-all font-semibold cursor-pointer ${
+                    timeRange === r
+                      ? 'bg-[#c5a47e] text-neutral-950 font-bold shadow-md'
+                      : 'text-neutral-400 hover:text-white hover:bg-[#202020]'
+                  }`}
+                  title={`Filtrar dados por ${labels[r]}`}
+                >
+                  {labels[r]}
+                </button>
+              );
+            })}
           </div>
 
           <button
@@ -239,10 +454,12 @@ export const DashboardModule: React.FC = () => {
       <div className="p-6 space-y-6 max-w-7xl w-full mx-auto">
         {/* KPI Cards Grid */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          {/* Card 1: Gross Sales */}
+          {/* Card 1: Gross Sales for Selected Period */}
           <div className="bg-[#121212] border border-[#262626] rounded-xl p-4.5 flex flex-col justify-between hover:border-[#383838] transition-all">
             <div className="flex items-center justify-between">
-              <span className="text-xs text-neutral-400 font-medium">Faturação Total (Bruto)</span>
+              <span className="text-xs text-neutral-400 font-medium">
+                Faturação ({rangeInfo.shortLabel})
+              </span>
               <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
                 <TrendingUp className="w-4 h-4" />
               </div>
@@ -251,17 +468,27 @@ export const DashboardModule: React.FC = () => {
               <div className="text-2xl font-bold font-mono text-white tracking-tight">
                 {formatCurrency(totalSalesRevenue)}
               </div>
-              <div className="flex items-center space-x-1.5 text-xs text-emerald-400 mt-1">
-                <ArrowUpRight className="w-3.5 h-3.5" />
-                <span>+12.8% vs. período anterior</span>
+              <div className="flex items-center space-x-1.5 text-xs mt-1">
+                {revenueGrowthPercent >= 0 ? (
+                  <span className="text-emerald-400 flex items-center space-x-1 font-semibold">
+                    <ArrowUpRight className="w-3.5 h-3.5" />
+                    <span>+{revenueGrowthPercent.toFixed(1)}%</span>
+                  </span>
+                ) : (
+                  <span className="text-rose-400 flex items-center space-x-1 font-semibold">
+                    <ArrowDownRight className="w-3.5 h-3.5" />
+                    <span>{revenueGrowthPercent.toFixed(1)}%</span>
+                  </span>
+                )}
+                <span className="text-neutral-500">{rangeInfo.comparisonLabel}</span>
               </div>
             </div>
           </div>
 
-          {/* Card 2: Average Ticket */}
+          {/* Card 2: Average Ticket & Invoices Count */}
           <div className="bg-[#121212] border border-[#262626] rounded-xl p-4.5 flex flex-col justify-between hover:border-[#383838] transition-all">
             <div className="flex items-center justify-between">
-              <span className="text-xs text-neutral-400 font-medium">Ticket Médio por Venda</span>
+              <span className="text-xs text-neutral-400 font-medium">Ticket Médio ({rangeInfo.shortLabel})</span>
               <div className="p-2 rounded-lg bg-[#c5a47e]/10 text-[#c5a47e] border border-[#c5a47e]/20">
                 <Receipt className="w-4 h-4" />
               </div>
@@ -271,8 +498,8 @@ export const DashboardModule: React.FC = () => {
                 {formatCurrency(avgTicket)}
               </div>
               <div className="flex items-center justify-between text-xs text-neutral-400 mt-1">
-                <span>{totalInvoicesCount} faturas emitidas</span>
-                <span className="text-neutral-400 font-mono">100% Cert. AT</span>
+                <span className="font-semibold text-neutral-300">{totalInvoicesCount} faturas emitidas</span>
+                <span className="text-neutral-500 font-mono">100% Cert. AT</span>
               </div>
             </div>
           </div>
@@ -324,6 +551,94 @@ export const DashboardModule: React.FC = () => {
                 <span className="text-rose-400">Pag: {formatCurrency(totalPayables)}</span>
               </div>
             </div>
+          </div>
+        </div>
+
+        {/* Dynamic Sales Trend Chart for Selected Time Range */}
+        <div className="bg-[#121212] border border-[#262626] rounded-xl p-5">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4">
+            <div>
+              <h3 className="text-sm font-bold text-white flex items-center space-x-2">
+                <BarChart3 className="w-4 h-4 text-[#c5a47e]" />
+                <span>Evolução de Vendas & Faturação ({rangeInfo.label})</span>
+              </h3>
+              <p className="text-xs text-neutral-400 mt-0.5">
+                Valores consolidados em tempo real para o intervalo selecionado
+              </p>
+            </div>
+            <div className="flex items-center space-x-3 text-xs">
+              <span className="flex items-center space-x-1.5 text-neutral-300">
+                <span className="w-2.5 h-2.5 rounded-full bg-[#c5a47e]"></span>
+                <span>Faturação Total: <strong>{formatCurrency(totalSalesRevenue)}</strong></span>
+              </span>
+              <span className="flex items-center space-x-1.5 text-neutral-400">
+                <span className="w-2.5 h-2.5 rounded-full bg-blue-500"></span>
+                <span>{totalInvoicesCount} Documentos</span>
+              </span>
+            </div>
+          </div>
+
+          <div className="h-56 w-full pt-2">
+            {commercialSales.length === 0 ? (
+              <div className="h-full flex flex-col items-center justify-center text-center p-6 border border-dashed border-[#262626] rounded-lg bg-[#0e0e0e]">
+                <ShoppingBag className="w-8 h-8 text-neutral-600 mb-2" />
+                <p className="text-xs font-medium text-neutral-300">
+                  Nenhuma fatura emitida no período selecionado ({rangeInfo.label})
+                </p>
+                <p className="text-[11px] text-neutral-500 max-w-sm mt-1">
+                  Abra o Ponto de Venda (POS) para registar a primeira venda deste período ou consulte os outros intervalos.
+                </p>
+                <button
+                  onClick={() => setActiveNavTab('pos')}
+                  className="mt-3 px-3 py-1.5 bg-[#c5a47e] hover:bg-[#b5946e] text-neutral-950 font-bold text-xs rounded-lg cursor-pointer transition-colors shadow-xs"
+                >
+                  Abrir Caixa POS & Faturar
+                </button>
+              </div>
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="colorSales" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#c5a47e" stopOpacity={0.4} />
+                      <stop offset="95%" stopColor="#c5a47e" stopOpacity={0.0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#262626" vertical={false} />
+                  <XAxis
+                    dataKey="name"
+                    stroke="#525252"
+                    tick={{ fill: '#737373', fontSize: 11 }}
+                    axisLine={{ stroke: '#262626' }}
+                  />
+                  <YAxis
+                    stroke="#525252"
+                    tick={{ fill: '#737373', fontSize: 11 }}
+                    axisLine={{ stroke: '#262626' }}
+                    tickFormatter={(val) => `${val}€`}
+                  />
+                  <Tooltip
+                    contentStyle={{
+                      backgroundColor: '#141414',
+                      borderColor: '#2e2e2e',
+                      borderRadius: '8px',
+                      color: '#fff',
+                      fontSize: '12px',
+                    }}
+                    formatter={(value: any) => [formatCurrency(Number(value) || 0), 'Faturação']}
+                    labelStyle={{ color: '#c5a47e', fontWeight: 'bold' }}
+                  />
+                  <Area
+                    type="monotone"
+                    dataKey="vendas"
+                    stroke="#c5a47e"
+                    strokeWidth={2}
+                    fillOpacity={1}
+                    fill="url(#colorSales)"
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
+            )}
           </div>
         </div>
 
@@ -404,7 +719,7 @@ export const DashboardModule: React.FC = () => {
                 <div>
                   <h3 className="text-sm font-bold text-white flex items-center space-x-2">
                     <CreditCard className="w-4 h-4 text-[#c5a47e]" />
-                    <span>Meios de Pagamento Recebidos</span>
+                    <span>Meios de Pagamento Recebidos ({rangeInfo.shortLabel})</span>
                   </h3>
                   <p className="text-xs text-neutral-400">Distribuição por Multibanco, MB Way, Numerário e Cartões</p>
                 </div>
@@ -417,22 +732,22 @@ export const DashboardModule: React.FC = () => {
               <div className="w-full h-3 bg-[#1a1a1a] rounded-full overflow-hidden flex mb-4 border border-[#262626]">
                 <div
                   style={{ width: `${(paymentBreakdown.multibanco / totalPaymentSum) * 100}%` }}
-                  className="bg-blue-500 h-full"
+                  className="bg-blue-500 h-full transition-all"
                   title={`Multibanco: ${formatCurrency(paymentBreakdown.multibanco)}`}
                 />
                 <div
                   style={{ width: `${(paymentBreakdown.mbway / totalPaymentSum) * 100}%` }}
-                  className="bg-emerald-500 h-full"
+                  className="bg-emerald-500 h-full transition-all"
                   title={`MB Way: ${formatCurrency(paymentBreakdown.mbway)}`}
                 />
                 <div
                   style={{ width: `${(paymentBreakdown.dinheiro / totalPaymentSum) * 100}%` }}
-                  className="bg-amber-500 h-full"
+                  className="bg-amber-500 h-full transition-all"
                   title={`Numerário: ${formatCurrency(paymentBreakdown.dinheiro)}`}
                 />
                 <div
                   style={{ width: `${(paymentBreakdown.cartao / totalPaymentSum) * 100}%` }}
-                  className="bg-purple-500 h-full"
+                  className="bg-purple-500 h-full transition-all"
                   title={`Cartão Crédito: ${formatCurrency(paymentBreakdown.cartao)}`}
                 />
               </div>
@@ -499,7 +814,7 @@ export const DashboardModule: React.FC = () => {
                 <div>
                   <h3 className="text-sm font-bold text-white flex items-center space-x-2">
                     <Percent className="w-4 h-4 text-emerald-400" />
-                    <span>Apuramento de IVA (Artigo 41.º CIVA)</span>
+                    <span>Apuramento de IVA (Artigo 41.º CIVA) - {rangeInfo.shortLabel}</span>
                   </h3>
                   <p className="text-xs text-neutral-400">Incidência fiscal e imposto liquidado por escalão</p>
                 </div>
@@ -571,14 +886,14 @@ export const DashboardModule: React.FC = () => {
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-sm font-bold text-white flex items-center space-x-2">
                   <TrendingUp className="w-4 h-4 text-[#c5a47e]" />
-                  <span>Artigos Mais Vendidos</span>
+                  <span>Artigos Mais Vendidos ({rangeInfo.shortLabel})</span>
                 </h3>
                 <span className="text-[10px] text-neutral-400">Volume & Receita</span>
               </div>
 
               <div className="space-y-3">
                 {topProducts.length === 0 ? (
-                  <p className="text-xs text-neutral-500 text-center py-4">Nenhuma venda registada ainda.</p>
+                  <p className="text-xs text-neutral-500 text-center py-4">Nenhuma venda registada neste período.</p>
                 ) : (
                   topProducts.map((p, idx) => (
                     <div key={idx} className="flex items-center justify-between p-2.5 rounded-lg bg-[#171717] border border-[#262626]">
@@ -608,7 +923,7 @@ export const DashboardModule: React.FC = () => {
                   className="text-sm font-bold text-white flex items-center space-x-2 hover:text-[#c5a47e] transition-colors cursor-pointer"
                 >
                   <Building2 className="w-4 h-4 text-blue-400" />
-                  <span>Desempenho por Loja</span>
+                  <span>Desempenho por Loja ({rangeInfo.shortLabel})</span>
                 </button>
                 <button
                   onClick={() => setActiveNavTab('stores')}
@@ -620,7 +935,7 @@ export const DashboardModule: React.FC = () => {
 
               <div className="space-y-3">
                 {stores.map((store) => {
-                  const storeSales = salesHistory.filter((s) => s.storeId === store.id);
+                  const storeSales = periodSalesHistory.filter((s) => s.storeId === store.id && isEffectiveSale(s));
                   const storeTotal = storeSales.reduce((acc, s) => acc + s.total, 0);
 
                   return (

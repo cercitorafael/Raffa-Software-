@@ -2,6 +2,14 @@ import React, { useState, useMemo } from 'react';
 import { useApp } from '../../context/AppContext';
 import { formatCurrency, formatDate } from '../../utils/crypto';
 import {
+  getTodayDateStr,
+  getYesterdayDateStr,
+  getCurrentMonthStr,
+  getPrevMonthStr,
+  getMonthBounds,
+  getMonthNamePT,
+} from '../../utils/dateUtils';
+import {
   FileSpreadsheet,
   Calendar,
   Filter,
@@ -52,42 +60,10 @@ export const InventoryExtractTab: React.FC = () => {
     notify,
   } = useApp();
 
-  // Helper date calculations in local timezone
-  const getTodayLocalStr = () => {
-    const d = new Date();
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
-    return `${y}-${m}-${day}`;
-  };
-
-  const getYesterdayLocalStr = () => {
-    const d = new Date();
-    d.setDate(d.getDate() - 1);
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
-    return `${y}-${m}-${day}`;
-  };
-
-  const getCurrentMonthLocalStr = () => {
-    const d = new Date();
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, '0');
-    return `${y}-${m}`;
-  };
-
-  const getPrevMonthLocalStr = () => {
-    const d = new Date();
-    d.setMonth(d.getMonth() - 1);
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, '0');
-    return `${y}-${m}`;
-  };
-
-  const todayStr = getTodayLocalStr();
-  const currentMonthStr = getCurrentMonthLocalStr();
+  const todayStr = getTodayDateStr();
+  const currentMonthStr = getCurrentMonthStr();
   const currentYear = new Date().getFullYear();
+  const initialBounds = getMonthBounds(currentMonthStr);
 
   // Primary Tab View Mode (Detailed Timeline vs Articles Summary)
   const [viewMode, setViewMode] = useState<'timeline' | 'articles_summary'>('timeline');
@@ -97,7 +73,7 @@ export const InventoryExtractTab: React.FC = () => {
   const [selectedDate, setSelectedDate] = useState<string>(todayStr);
   const [selectedMonth, setSelectedMonth] = useState<string>(currentMonthStr);
   const [selectedYear, setSelectedYear] = useState<number>(currentYear);
-  const [startDate, setStartDate] = useState<string>(`${currentMonthStr}-01`);
+  const [startDate, setStartDate] = useState<string>(initialBounds.start);
   const [endDate, setEndDate] = useState<string>(todayStr);
 
   const [selectedProduct, setSelectedProduct] = useState<string>('all');
@@ -789,11 +765,16 @@ export const InventoryExtractTab: React.FC = () => {
               <button
                 type="button"
                 onClick={() => {
+                  const today = getTodayDateStr();
+                  const currM = getCurrentMonthStr();
                   setPeriodType('day');
-                  setSelectedDate(getTodayLocalStr());
+                  setSelectedDate(today);
+                  setSelectedMonth(currM);
+                  setStartDate(today);
+                  setEndDate(today);
                 }}
                 className={`px-2.5 py-1 text-xs font-semibold rounded-md transition-colors cursor-pointer ${
-                  periodType === 'day' && selectedDate === getTodayLocalStr()
+                  periodType === 'day' && selectedDate === getTodayDateStr()
                     ? 'bg-[#c5a47e] text-neutral-950 font-bold shadow-xs'
                     : 'text-neutral-400 hover:text-neutral-200 hover:bg-[#202020]'
                 }`}
@@ -803,11 +784,15 @@ export const InventoryExtractTab: React.FC = () => {
               <button
                 type="button"
                 onClick={() => {
+                  const yest = getYesterdayDateStr();
                   setPeriodType('day');
-                  setSelectedDate(getYesterdayLocalStr());
+                  setSelectedDate(yest);
+                  setSelectedMonth(yest.substring(0, 7));
+                  setStartDate(yest);
+                  setEndDate(yest);
                 }}
                 className={`px-2.5 py-1 text-xs font-semibold rounded-md transition-colors cursor-pointer ${
-                  periodType === 'day' && selectedDate === getYesterdayLocalStr()
+                  periodType === 'day' && selectedDate === getYesterdayDateStr()
                     ? 'bg-[#c5a47e] text-neutral-950 font-bold shadow-xs'
                     : 'text-neutral-400 hover:text-neutral-200 hover:bg-[#202020]'
                 }`}
@@ -817,11 +802,15 @@ export const InventoryExtractTab: React.FC = () => {
               <button
                 type="button"
                 onClick={() => {
+                  const currM = getCurrentMonthStr();
+                  const bounds = getMonthBounds(currM);
                   setPeriodType('month');
-                  setSelectedMonth(getCurrentMonthLocalStr());
+                  setSelectedMonth(currM);
+                  setStartDate(bounds.start);
+                  setEndDate(bounds.end);
                 }}
                 className={`px-2.5 py-1 text-xs font-semibold rounded-md transition-colors cursor-pointer ${
-                  periodType === 'month' && selectedMonth === getCurrentMonthLocalStr()
+                  periodType === 'month' && selectedMonth === getCurrentMonthStr()
                     ? 'bg-[#c5a47e] text-neutral-950 font-bold shadow-xs'
                     : 'text-neutral-400 hover:text-neutral-200 hover:bg-[#202020]'
                 }`}
@@ -831,11 +820,15 @@ export const InventoryExtractTab: React.FC = () => {
               <button
                 type="button"
                 onClick={() => {
+                  const prevM = getPrevMonthStr();
+                  const bounds = getMonthBounds(prevM);
                   setPeriodType('month');
-                  setSelectedMonth(getPrevMonthLocalStr());
+                  setSelectedMonth(prevM);
+                  setStartDate(bounds.start);
+                  setEndDate(bounds.end);
                 }}
                 className={`px-2.5 py-1 text-xs font-semibold rounded-md transition-colors cursor-pointer ${
-                  periodType === 'month' && selectedMonth === getPrevMonthLocalStr()
+                  periodType === 'month' && selectedMonth === getPrevMonthStr()
                     ? 'bg-[#c5a47e] text-neutral-950 font-bold shadow-xs'
                     : 'text-neutral-400 hover:text-neutral-200 hover:bg-[#202020]'
                 }`}

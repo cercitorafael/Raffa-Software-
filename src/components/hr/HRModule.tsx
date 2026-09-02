@@ -105,12 +105,19 @@ export const HRModule: React.FC = () => {
     status: 'agendado' as EmployeeShift['status'],
   });
 
+  const currentMonthStr = (() => {
+    const d = new Date();
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    return `${y}-${m}`;
+  })();
+
   // Payroll Modals
   const [showNewPayrollModal, setShowNewPayrollModal] = useState(false);
   const [editingPayroll, setEditingPayroll] = useState<Payroll | null>(null);
   const [payrollForm, setPayrollForm] = useState({
     employeeId: employees[0]?.id || '',
-    month: '2026-08',
+    month: currentMonthStr,
     baseSalary: 1200,
     mealAllowance: 211.20,
     bonus: 0,
@@ -754,7 +761,7 @@ export const HRModule: React.FC = () => {
               </div>
               <div className="flex items-center space-x-2">
                 <button
-                  onClick={() => processMonthlyPayroll('2026-08')}
+                  onClick={() => processMonthlyPayroll(currentMonthStr)}
                   className="px-3 py-1.5 bg-[#1f1f1f] text-neutral-200 border border-[#333] rounded-md text-xs font-medium cursor-pointer"
                 >
                   Processamento Automático Global

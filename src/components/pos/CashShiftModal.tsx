@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useApp } from '../../context/AppContext';
 import { formatCurrency, formatDate } from '../../utils/crypto';
 import {
@@ -17,6 +17,14 @@ import {
   FileDown,
   Receipt,
   FileText,
+  Search,
+  ChevronRight,
+  TrendingUp,
+  CreditCard,
+  Banknote,
+  Smartphone,
+  Calendar,
+  User,
 } from 'lucide-react';
 import { printZReportA4, printZReportThermal, downloadZReportPdf } from '../../utils/print';
 
@@ -61,6 +69,34 @@ export const CashShiftModal: React.FC<CashShiftModalProps> = ({ onClose, initial
   const [countedCashInput, setCountedCashInput] = useState<number>(0);
   const [closedZReport, setClosedZReport] = useState<any | null>(null);
   const [selectedHistoricalShift, setSelectedHistoricalShift] = useState<any | null>(null);
+  const [historySearchTerm, setHistorySearchTerm] = useState<string>('');
+
+  // Filtered and sorted historical shifts
+  const filteredHistoricalShifts = useMemo(() => {
+    let list = Array.isArray(shiftsHistory) ? [...shiftsHistory] : [];
+    // Sort descending by closedAt or openedAt
+    list.sort((a, b) => {
+      const timeA = new Date(a.closedAt || a.openedAt).getTime() || 0;
+      const timeB = new Date(b.closedAt || b.openedAt).getTime() || 0;
+      return timeB - timeA;
+    });
+
+    if (!historySearchTerm.trim()) return list;
+
+    const term = historySearchTerm.toLowerCase();
+    return list.filter((sh) => {
+      const op = (sh.operatorName || '').toLowerCase();
+      const termId = (sh.terminalId || '').toLowerCase();
+      const id = (sh.id || '').toLowerCase();
+      const zNum = (sh.zReportNumber || '').toLowerCase();
+      const dateStr = formatDate(sh.closedAt || sh.openedAt).toLowerCase();
+      return op.includes(term) || termId.includes(term) || id.includes(term) || zNum.includes(term) || dateStr.includes(term);
+    });
+  }, [shiftsHistory, historySearchTerm]);
+
+  const totalHistoricalSales = useMemo(() => {
+    return (shiftsHistory || []).reduce((acc, sh) => acc + (sh.totalSales || 0), 0);
+  }, [shiftsHistory]);
 
   const expectedCashInDrawer = activeShift
     ? activeShift.initialCash + activeShift.totalCash + activeShift.suprimentoTotal - activeShift.sangriaTotal
@@ -98,15 +134,17 @@ export const CashShiftModal: React.FC<CashShiftModalProps> = ({ onClose, initial
 
   return (
     <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4">
-      <div className="bg-[#141414] border border-[#262626] rounded-xl shadow-2xl max-w-lg w-full overflow-hidden flex flex-col max-h-[90vh] text-[#e5e5e5] animate-in zoom-in-95 duration-150">
+      <div className="bg-[#141414] border border-[#262626] rounded-xl shadow-2xl max-w-2xl w-full overflow-hidden flex flex-col max-h-[90vh] text-[#e5e5e5] animate-in zoom-in-95 duration-150">
         {/* Header */}
         <div className="p-4 bg-[#0d0d0d] border-b border-[#262626] flex items-center justify-between">
-          <div className="flex items-center space-x-2">
-            <Wallet className="w-5 h-5 text-[#c5a47e]" />
+          <div className="flex items-center space-x-2.5">
+            <div className="w-8 h-8 rounded-lg bg-[#c5a47e]/15 border border-[#c5a47e]/30 flex items-center justify-center text-[#c5a47e]">
+              <Wallet className="w-4 h-4" />
+            </div>
             <div>
-              <h3 className="text-sm font-serif font-bold text-[#c5a47e]">Gestão de Caixa & Turnos</h3>
+              <h3 className="text-sm font-serif font-bold text-[#c5a47e]">Gestão de Caixa & Relatórios Z</h3>
               <p className="text-[11px] text-neutral-400 font-mono">
-                {currentStore.code} / {currentTerminal.code}
+                {currentStore.name || currentStore.code} &bull; Terminal: {currentTerminal.name || currentTerminal.code}
               </p>
             </div>
           </div>
@@ -114,6 +152,49 @@ export const CashShiftModal: React.FC<CashShiftModalProps> = ({ onClose, initial
             <X className="w-5 h-5" />
           </button>
         </div>
+
+        {/* Modal Navigation Tabs (when not viewing a closed summary or specific sub-screen) */}
+        {!closedZReport && !selectedHistoricalShift && mode !== 'close' && mode !== 'sangria' && mode !== 'suprimento' && (
+          <div className="flex border-b border-[#262626] bg-[#111111] px-4 pt-2 gap-2 text-xs">
+            <button
+              type="button"
+              onClick={() => setMode(activeShift ? 'info' : 'open')}
+              className={`pb-2 px-3 font-semibold flex items-center space-x-1.5 border-b-2 transition-colors cursor-pointer ${
+                mode !== 'history'
+                  ? 'border-[#c5a47e] text-[#c5a47e]'
+                  : 'border-transparent text-neutral-400 hover:text-neutral-200'
+              }`}
+            >
+              {activeShift ? (
+                <>
+                  <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                  <span>Turno Ativo (Caixa Aberta)</span>
+                </>
+              ) : (
+                <>
+                  <Lock className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Abertura de Caixa</span>
+                </>
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setMode('history')}
+              className={`pb-2 px-3 font-semibold flex items-center space-x-1.5 border-b-2 transition-colors cursor-pointer ${
+                mode === 'history'
+                  ? 'border-[#c5a47e] text-[#c5a47e]'
+                  : 'border-transparent text-neutral-400 hover:text-neutral-200'
+              }`}
+            >
+              <FileText className="w-3.5 h-3.5 text-[#c5a47e]" />
+              <span>Relatórios Z Anteriores</span>
+              <span className="px-1.5 py-0.2 bg-[#202020] text-neutral-300 rounded-full text-[10px] font-mono border border-[#333]">
+                {shiftsHistory?.length || 0}
+              </span>
+            </button>
+          </div>
+        )}
 
         {/* Content */}
         <div className="p-6 overflow-y-auto space-y-4">
@@ -215,12 +296,24 @@ export const CashShiftModal: React.FC<CashShiftModalProps> = ({ onClose, initial
                 </div>
               </div>
 
-              <button
-                onClick={onClose}
-                className="w-full py-2.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 rounded-lg text-xs font-bold uppercase tracking-wider transition-colors cursor-pointer mt-2"
-              >
-                Concluir & Fechar
-              </button>
+              <div className="flex gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setClosedZReport(null);
+                    setMode('history');
+                  }}
+                  className="flex-1 py-2.5 bg-[#1a1a1a] hover:bg-[#262626] text-neutral-300 border border-[#333] rounded-lg text-xs font-semibold transition-colors cursor-pointer"
+                >
+                  Ver Histórico de Relatórios
+                </button>
+                <button
+                  onClick={onClose}
+                  className="flex-1 py-2.5 bg-[#c5a47e] hover:bg-[#b5946e] text-black rounded-lg text-xs font-bold uppercase tracking-wider transition-colors cursor-pointer"
+                >
+                  Concluir & Fechar
+                </button>
+              </div>
             </div>
           ) : selectedHistoricalShift ? (
             /* Historical Shift Detail / Z-Report View */
@@ -228,79 +321,96 @@ export const CashShiftModal: React.FC<CashShiftModalProps> = ({ onClose, initial
               <div className="flex items-center justify-between pb-2 border-b border-[#262626]">
                 <div className="flex items-center space-x-2">
                   <FileSpreadsheet className="w-5 h-5 text-[#c5a47e]" />
-                  <h4 className="font-serif font-bold text-sm text-[#c5a47e]">
-                    Turno Anterior Fechado &bull; {selectedHistoricalShift.id}
-                  </h4>
+                  <div>
+                    <h4 className="font-serif font-bold text-sm text-[#c5a47e]">
+                      Relatório Z de Fecho &bull; {selectedHistoricalShift.zReportNumber || selectedHistoricalShift.id}
+                    </h4>
+                    <p className="text-[11px] text-neutral-400">
+                      Operador: <strong className="text-neutral-200">{selectedHistoricalShift.operatorName}</strong>
+                    </p>
+                  </div>
                 </div>
                 <button
                   onClick={() => setSelectedHistoricalShift(null)}
-                  className="text-xs text-neutral-400 hover:text-white px-2 py-1 bg-[#1a1a1a] rounded-md border border-[#262626] cursor-pointer"
+                  className="text-xs text-neutral-300 hover:text-white px-3 py-1.5 bg-[#1a1a1a] hover:bg-[#262626] rounded-lg border border-[#333333] font-medium cursor-pointer transition-colors"
                 >
-                  Voltar
+                  &larr; Voltar à Lista
                 </button>
               </div>
 
-              <div className="p-4 bg-[#0d0d0d] border border-[#262626] rounded-lg text-xs space-y-2 font-mono">
-                <div className="flex justify-between text-neutral-400">
-                  <span>Operador:</span>
-                  <span className="text-[#e5e5e5] font-bold">{selectedHistoricalShift.operatorName}</span>
+              <div className="p-4 bg-[#0d0d0d] border border-[#262626] rounded-xl text-xs space-y-2.5 font-mono">
+                <div className="grid grid-cols-2 gap-2 pb-2 border-b border-[#262626]">
+                  <div>
+                    <span className="text-[10px] uppercase text-neutral-500 block">Abertura de Turno</span>
+                    <span className="text-neutral-200 font-semibold">{formatDate(selectedHistoricalShift.openedAt)}</span>
+                  </div>
+                  <div>
+                    <span className="text-[10px] uppercase text-neutral-500 block">Fecho / Emissão Z</span>
+                    <span className="text-neutral-200 font-semibold">{formatDate(selectedHistoricalShift.closedAt || selectedHistoricalShift.openedAt)}</span>
+                  </div>
                 </div>
-                <div className="flex justify-between text-neutral-400">
-                  <span>Abertura:</span>
-                  <span className="text-neutral-300">{formatDate(selectedHistoricalShift.openedAt)}</span>
-                </div>
-                <div className="flex justify-between text-neutral-400">
-                  <span>Fecho:</span>
-                  <span className="text-neutral-300">{formatDate(selectedHistoricalShift.closedAt || selectedHistoricalShift.openedAt)}</span>
-                </div>
-                <div className="flex justify-between text-neutral-400 pt-2 border-t border-[#262626]">
-                  <span>Fundo Inicial:</span>
+
+                <div className="flex justify-between text-neutral-400 pt-1">
+                  <span>Fundo de Maneio Inicial:</span>
                   <span className="text-[#e5e5e5]">{formatCurrency(selectedHistoricalShift.initialCash)}</span>
                 </div>
-                <div className="flex justify-between text-neutral-400">
-                  <span>Total Vendas:</span>
-                  <span className="text-emerald-400 font-bold">{formatCurrency(selectedHistoricalShift.totalSales)}</span>
+                <div className="flex justify-between text-neutral-200 font-bold bg-[#141414] p-2 rounded-lg border border-[#262626]">
+                  <span className="text-[#c5a47e]">Total Vendas Faturadas:</span>
+                  <span className="text-emerald-400 text-sm font-bold">{formatCurrency(selectedHistoricalShift.totalSales)}</span>
                 </div>
                 <div className="flex justify-between text-neutral-400">
-                  <span>Vendas Numerário:</span>
+                  <span>- Vendas Numerário:</span>
                   <span className="text-neutral-300">{formatCurrency(selectedHistoricalShift.totalCash)}</span>
                 </div>
                 <div className="flex justify-between text-neutral-400">
-                  <span>Vendas TPA / Cartões:</span>
+                  <span>- Vendas TPA / Cartões:</span>
                   <span className="text-neutral-300">{formatCurrency(selectedHistoricalShift.totalCards)}</span>
                 </div>
                 <div className="flex justify-between text-neutral-400">
-                  <span>Vendas MB WAY:</span>
+                  <span>- Vendas MB WAY / Carteira:</span>
                   <span className="text-neutral-300">{formatCurrency(selectedHistoricalShift.totalMbway)}</span>
                 </div>
+                {selectedHistoricalShift.totalVouchers > 0 && (
+                  <div className="flex justify-between text-neutral-400">
+                    <span>- Vales / Presente:</span>
+                    <span className="text-neutral-300">{formatCurrency(selectedHistoricalShift.totalVouchers)}</span>
+                  </div>
+                )}
                 <div className="flex justify-between text-neutral-400">
-                  <span>Total Suprimentos:</span>
+                  <span>+ Total Suprimentos:</span>
                   <span className="text-emerald-400 font-bold">+{formatCurrency(selectedHistoricalShift.suprimentoTotal || 0)}</span>
                 </div>
                 <div className="flex justify-between text-neutral-400">
-                  <span>Total Sangrias:</span>
+                  <span>- Total Sangrias:</span>
                   <span className="text-rose-400 font-bold">-{formatCurrency(selectedHistoricalShift.sangriaTotal || 0)}</span>
                 </div>
+                
                 <div className="flex justify-between font-bold text-[#e5e5e5] pt-2 border-t border-[#262626]">
-                  <span>Saldo Teórico:</span>
+                  <span>Saldo Teórico do Sistema:</span>
                   <span className="text-[#c5a47e]">
                     {formatCurrency(
-                      (selectedHistoricalShift.initialCash || 0) +
-                      (selectedHistoricalShift.totalCash || 0) +
-                      (selectedHistoricalShift.suprimentoTotal || 0) -
-                      (selectedHistoricalShift.sangriaTotal || 0)
+                      selectedHistoricalShift.finalCashSystem !== undefined
+                        ? selectedHistoricalShift.finalCashSystem
+                        : (selectedHistoricalShift.initialCash || 0) +
+                          (selectedHistoricalShift.totalCash || 0) +
+                          (selectedHistoricalShift.suprimentoTotal || 0) -
+                          (selectedHistoricalShift.sangriaTotal || 0)
                     )}
                   </span>
                 </div>
                 {selectedHistoricalShift.finalCashReported !== undefined && (
                   <div className="flex justify-between font-bold text-[#e5e5e5]">
-                    <span>Saldo Contado / Declarado:</span>
+                    <span>Saldo Contado / Declarado pelo Operador:</span>
                     <span className="text-[#c5a47e]">{formatCurrency(selectedHistoricalShift.finalCashReported)}</span>
                   </div>
                 )}
                 {selectedHistoricalShift.cashDifference !== undefined && (
-                  <div className={`flex justify-between font-bold ${selectedHistoricalShift.cashDifference === 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                    <span>Diferença:</span>
+                  <div className={`flex justify-between font-bold p-1.5 rounded-md ${
+                    selectedHistoricalShift.cashDifference === 0
+                      ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                      : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
+                  }`}>
+                    <span>Diferença de Caixa:</span>
                     <span>{formatCurrency(selectedHistoricalShift.cashDifference)}</span>
                   </div>
                 )}
@@ -316,7 +426,7 @@ export const CashShiftModal: React.FC<CashShiftModalProps> = ({ onClose, initial
               <div className="space-y-2">
                 <div className="text-[11px] font-bold text-neutral-400 uppercase tracking-wider flex items-center space-x-1.5">
                   <Printer className="w-3.5 h-3.5 text-[#c5a47e]" />
-                  <span>Opções de Impressão do Relatório Z</span>
+                  <span>Reimprimir Relatório Z</span>
                 </div>
                 
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
@@ -354,105 +464,188 @@ export const CashShiftModal: React.FC<CashShiftModalProps> = ({ onClose, initial
 
               <button
                 onClick={() => setSelectedHistoricalShift(null)}
-                className="w-full py-2 bg-[#1a1a1a] hover:bg-[#262626] text-neutral-200 border border-[#262626] rounded-lg text-xs font-bold transition-colors cursor-pointer"
+                className="w-full py-2.5 bg-[#1a1a1a] hover:bg-[#262626] text-neutral-200 border border-[#262626] rounded-lg text-xs font-bold transition-colors cursor-pointer"
               >
-                Voltar à Gestão de Caixa
+                Voltar à Lista de Relatórios
               </button>
             </div>
-          ) : !activeShift ? (
-            /* Shift Closed -> Open shift screen */
-            <div className="space-y-4 text-center">
-              <div className="w-12 h-12 bg-rose-500/15 text-rose-400 border border-rose-500/30 rounded-full flex items-center justify-center mx-auto">
-                <Lock className="w-6 h-6" />
-              </div>
-              <div>
-                <div className="inline-flex items-center space-x-1.5 px-2.5 py-0.5 rounded-full bg-rose-500/10 border border-rose-500/30 text-rose-400 text-[10px] font-bold uppercase tracking-widest mb-1.5">
-                  <span>Caixa Fechado</span>
+          ) : mode === 'history' ? (
+            /* DEDICATED HISTORY OF Z-REPORTS & CLOSED SHIFTS */
+            <div className="space-y-4">
+              {/* Header & Metrics */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div>
+                  <h4 className="font-serif font-bold text-sm text-[#c5a47e] flex items-center space-x-1.5">
+                    <FileText className="w-4 h-4 text-[#c5a47e]" />
+                    <span>Histórico de Relatórios Z e Fechos</span>
+                  </h4>
+                  <p className="text-xs text-neutral-400">
+                    Consulte, analise e reimprima os fechos de caixa efetuados.
+                  </p>
                 </div>
-                <h4 className="text-base font-serif font-bold text-[#c5a47e]">Abertura de Turno de Caixa</h4>
-                <p className="text-xs text-neutral-400">
-                  O caixa não se abre automaticamente. Introduza o Fundo de Maneio inicial para começar a registar artigos e processar pagamentos.
-                </p>
-              </div>
-
-              <div className="text-left bg-[#0d0d0d] p-4 rounded-xl border border-[#262626] space-y-2">
-                <label className="text-[10px] font-bold text-neutral-400 uppercase tracking-widest block">
-                  Fundo de Maneio Inicial ({currencySymbol})
-                </label>
-                <div className="relative">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-500 font-bold text-sm">{currencySymbol}</span>
-                  <input
-                    type="number"
-                    step="5"
-                    min="0"
-                    value={initialCashInput}
-                    onChange={(e) => setInitialCashInput(parseFloat(e.target.value) || 0)}
-                    className="w-full pl-10 pr-3 py-2 bg-[#141414] border border-[#262626] rounded-lg text-base font-mono font-bold text-[#e5e5e5] focus:outline-hidden focus:border-[#c5a47e]"
-                  />
-                </div>
-                <div className="flex gap-2 pt-1 flex-wrap">
-                  {quickShiftAmounts.map((val) => (
-                    <button
-                      key={val}
-                      type="button"
-                      onClick={() => setInitialCashInput(val)}
-                      className="px-2.5 py-1 bg-[#141414] border border-[#262626] text-xs font-semibold text-neutral-300 rounded-md hover:bg-[#1a1a1a] transition-colors cursor-pointer"
-                    >
-                      {val} {currencySymbol}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="flex justify-between items-center text-xs text-neutral-400 px-1">
-                <span>Operador: <strong className="text-[#e5e5e5]">{currentUser.name}</strong></span>
-                <span>Data: <strong className="text-[#e5e5e5]">{formatDate(new Date().toISOString())}</strong></span>
-              </div>
-
-              <button
-                onClick={handleOpen}
-                className="w-full py-3 bg-[#c5a47e] hover:bg-[#d4b896] text-black rounded-lg text-xs font-bold uppercase tracking-wider transition-all shadow-md cursor-pointer flex items-center justify-center space-x-2"
-              >
-                <Unlock className="w-4 h-4" />
-                <span>Abrir Caixa & Iniciar Vendas</span>
-              </button>
-
-              {/* History of previously closed shifts */}
-              {shiftsHistory && shiftsHistory.length > 0 && (
-                <div className="pt-3 border-t border-[#262626] text-left">
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-[10px] font-bold uppercase tracking-widest text-neutral-400 flex items-center space-x-1">
-                      <History className="w-3 h-3 text-[#c5a47e]" />
-                      <span>Turnos Anteriores Fechados ({shiftsHistory.length})</span>
-                    </span>
+                <div className="flex items-center space-x-3 bg-[#0d0d0d] px-3 py-1.5 rounded-lg border border-[#262626] text-xs font-mono shrink-0">
+                  <div>
+                    <span className="text-neutral-500 text-[10px] block">Fechos</span>
+                    <strong className="text-neutral-200">{shiftsHistory?.length || 0}</strong>
                   </div>
-                  <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
-                    {shiftsHistory.slice(0, 5).map((sh) => (
+                  <div className="h-6 w-px bg-[#262626]" />
+                  <div>
+                    <span className="text-neutral-500 text-[10px] block">Faturação Total</span>
+                    <strong className="text-[#c5a47e]">{formatCurrency(totalHistoricalSales)}</strong>
+                  </div>
+                </div>
+              </div>
+
+              {/* Search Bar */}
+              <div className="relative">
+                <Search className="w-4 h-4 text-neutral-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  placeholder="Pesquisar por operador, data, terminal ou nº do fecho..."
+                  value={historySearchTerm}
+                  onChange={(e) => setHistorySearchTerm(e.target.value)}
+                  className="w-full pl-9 pr-8 py-2 bg-[#0d0d0d] border border-[#262626] rounded-lg text-xs text-[#e5e5e5] placeholder:text-neutral-600 focus:outline-hidden focus:border-[#c5a47e]"
+                />
+                {historySearchTerm && (
+                  <button
+                    onClick={() => setHistorySearchTerm('')}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-neutral-500 hover:text-neutral-300 text-xs"
+                  >
+                    &times;
+                  </button>
+                )}
+              </div>
+
+              {/* Shifts List */}
+              <div className="space-y-2.5 max-h-[50vh] overflow-y-auto pr-1">
+                {filteredHistoricalShifts.length > 0 ? (
+                  filteredHistoricalShifts.map((sh) => {
+                    const expected =
+                      sh.finalCashSystem !== undefined
+                        ? sh.finalCashSystem
+                        : (sh.initialCash || 0) + (sh.totalCash || 0) + (sh.suprimentoTotal || 0) - (sh.sangriaTotal || 0);
+                    const diff = sh.cashDifference !== undefined ? sh.cashDifference : (sh.finalCashReported !== undefined ? sh.finalCashReported - expected : 0);
+
+                    return (
                       <div
                         key={sh.id}
-                        onClick={() => setSelectedHistoricalShift(sh)}
-                        className="p-2 bg-[#0d0d0d] hover:bg-[#181818] border border-[#262626] rounded-lg text-xs flex items-center justify-between cursor-pointer transition-colors"
+                        className="p-3.5 bg-[#0d0d0d] hover:bg-[#161616] border border-[#262626] hover:border-[#383838] rounded-xl transition-all space-y-2.5"
                       >
-                        <div>
-                          <div className="flex items-center space-x-1.5">
-                            <span className="font-semibold text-neutral-200">{formatDate(sh.openedAt)}</span>
-                            <span className="text-[9px] px-1.5 py-0.2 bg-neutral-800 text-neutral-400 rounded-xs border border-neutral-700">
-                              Fechado
+                        {/* Top row: Z ID, Date, Operator */}
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 pb-2 border-b border-[#1f1f1f]">
+                          <div className="flex items-center space-x-2">
+                            <span className="px-2 py-0.5 bg-[#c5a47e]/15 text-[#c5a47e] border border-[#c5a47e]/30 rounded-md text-[11px] font-mono font-bold">
+                              {sh.zReportNumber || `FECHO-${sh.id.substring(0, 8)}`}
+                            </span>
+                            <span className="text-xs font-semibold text-neutral-200">
+                              {formatDate(sh.closedAt || sh.openedAt)}
                             </span>
                           </div>
-                          <p className="text-[11px] text-neutral-500 font-mono">
-                            Op: {sh.operatorName} &bull; Fundo: {formatCurrency(sh.initialCash)}
-                          </p>
+                          <div className="flex items-center space-x-2 text-[11px] text-neutral-400">
+                            <span className="flex items-center space-x-1">
+                              <User className="w-3 h-3 text-neutral-500" />
+                              <strong className="text-neutral-300">{sh.operatorName || 'Operador'}</strong>
+                            </span>
+                            {sh.terminalId && (
+                              <span className="px-1.5 py-0.2 bg-[#1a1a1a] rounded-xs text-[10px] font-mono text-neutral-400">
+                                Term: {sh.terminalId}
+                              </span>
+                            )}
+                          </div>
                         </div>
-                        <div className="text-right font-mono">
-                          <span className="text-emerald-400 font-bold block">{formatCurrency(sh.totalSales)}</span>
-                          <span className="text-[10px] text-neutral-500 underline">Ver Z</span>
+
+                        {/* Financial figures row */}
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs font-mono">
+                          <div className="bg-[#121212] p-2 rounded-lg border border-[#202020]">
+                            <span className="text-[10px] text-neutral-500 block uppercase font-sans">Fundo Inicial</span>
+                            <span className="text-neutral-300 font-semibold">{formatCurrency(sh.initialCash)}</span>
+                          </div>
+                          <div className="bg-[#121212] p-2 rounded-lg border border-[#202020]">
+                            <span className="text-[10px] text-neutral-500 block uppercase font-sans">Total Vendas</span>
+                            <span className="text-emerald-400 font-bold">{formatCurrency(sh.totalSales)}</span>
+                          </div>
+                          <div className="bg-[#121212] p-2 rounded-lg border border-[#202020]">
+                            <span className="text-[10px] text-neutral-500 block uppercase font-sans">Numerário</span>
+                            <span className="text-neutral-300 font-semibold">{formatCurrency(sh.totalCash)}</span>
+                          </div>
+                          <div className="bg-[#121212] p-2 rounded-lg border border-[#202020]">
+                            <span className="text-[10px] text-neutral-500 block uppercase font-sans">Diferença</span>
+                            <span className={`font-bold ${diff === 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                              {formatCurrency(diff)}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Action buttons on card */}
+                        <div className="flex flex-wrap items-center justify-between pt-1 gap-2 border-t border-[#1a1a1a]">
+                          <button
+                            type="button"
+                            onClick={() => setSelectedHistoricalShift(sh)}
+                            className="px-3 py-1.5 bg-[#1f1f1f] hover:bg-[#282828] text-[#e5e5e5] border border-[#333] rounded-lg text-xs font-medium flex items-center space-x-1.5 transition-colors cursor-pointer"
+                          >
+                            <FileText className="w-3.5 h-3.5 text-[#c5a47e]" />
+                            <span>Ver Detalhes do Fecho</span>
+                            <ChevronRight className="w-3.5 h-3.5 text-neutral-500" />
+                          </button>
+
+                          <div className="flex items-center space-x-1.5">
+                            <button
+                              type="button"
+                              onClick={() => printZReportA4(sh, currentCompany, currentStore, currentTerminal)}
+                              className="px-2.5 py-1 bg-[#1a1a1a] hover:bg-[#252525] text-neutral-300 hover:text-white border border-[#333] rounded-md text-[11px] font-medium flex items-center space-x-1 transition-colors cursor-pointer"
+                              title="Imprimir Relatório Z A4"
+                            >
+                              <Printer className="w-3 h-3 text-[#c5a47e]" />
+                              <span>A4</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => downloadZReportPdf(sh, currentCompany, currentStore, currentTerminal)}
+                              className="px-2.5 py-1 bg-[#1a1a1a] hover:bg-[#252525] text-neutral-300 hover:text-white border border-[#333] rounded-md text-[11px] font-medium flex items-center space-x-1 transition-colors cursor-pointer"
+                              title="Descarregar PDF A4"
+                            >
+                              <FileDown className="w-3 h-3 text-[#c5a47e]" />
+                              <span>PDF</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => printZReportThermal(sh, currentCompany, currentStore, currentTerminal)}
+                              className="px-2.5 py-1 bg-[#1a1a1a] hover:bg-[#252525] text-neutral-300 hover:text-white border border-[#333] rounded-md text-[11px] font-medium flex items-center space-x-1 transition-colors cursor-pointer"
+                              title="Imprimir Talão 80mm"
+                            >
+                              <Receipt className="w-3 h-3 text-neutral-400" />
+                              <span>80mm</span>
+                            </button>
+                          </div>
                         </div>
                       </div>
-                    ))}
+                    );
+                  })
+                ) : (
+                  <div className="p-8 text-center bg-[#0d0d0d] border border-dashed border-[#262626] rounded-xl space-y-3">
+                    <FileSpreadsheet className="w-10 h-10 text-neutral-600 mx-auto" />
+                    <div>
+                      <h5 className="text-sm font-semibold text-neutral-300">Nenhum Relatório Z Arquivado</h5>
+                      <p className="text-xs text-neutral-500 max-w-sm mx-auto mt-1">
+                        {historySearchTerm
+                          ? 'Nenhum fecho corresponde aos termos da pesquisa.'
+                          : 'Quando realizar o Fecho Z de um turno, o relatório fiscal consolidado e todos os totais ficarão registados e arquivados aqui.'}
+                      </p>
+                    </div>
+                    {activeShift && (
+                      <button
+                        type="button"
+                        onClick={() => setMode('info')}
+                        className="px-3 py-1.5 bg-[#1a1a1a] hover:bg-[#262626] text-[#c5a47e] border border-[#333] rounded-lg text-xs font-semibold cursor-pointer"
+                      >
+                        Ver Turno Atual em Aberto
+                      </button>
+                    )}
                   </div>
-                </div>
-              )}
+                )}
+              </div>
             </div>
           ) : mode === 'sangria' || mode === 'suprimento' ? (
             /* Sangria or Suprimento screen */
@@ -496,13 +689,13 @@ export const CashShiftModal: React.FC<CashShiftModalProps> = ({ onClose, initial
               <div className="flex space-x-2 pt-2">
                 <button
                   onClick={() => setMode('info')}
-                  className="flex-1 py-2.5 bg-[#0d0d0d] hover:bg-[#1a1a1a] text-neutral-300 border border-[#262626] rounded-lg text-xs font-bold transition-colors"
+                  className="flex-1 py-2.5 bg-[#0d0d0d] hover:bg-[#1a1a1a] text-neutral-300 border border-[#262626] rounded-lg text-xs font-bold transition-colors cursor-pointer"
                 >
                   Voltar
                 </button>
                 <button
                   onClick={() => handleMovement(mode)}
-                  className={`flex-1 py-2.5 text-black rounded-lg text-xs font-bold uppercase tracking-wider transition-colors ${
+                  className={`flex-1 py-2.5 text-black rounded-lg text-xs font-bold uppercase tracking-wider transition-colors cursor-pointer ${
                     mode === 'sangria' ? 'bg-rose-500 hover:bg-rose-600 text-white' : 'bg-[#c5a47e] hover:bg-[#d4b896]'
                   }`}
                 >
@@ -510,7 +703,7 @@ export const CashShiftModal: React.FC<CashShiftModalProps> = ({ onClose, initial
                 </button>
               </div>
             </div>
-          ) : mode === 'close' ? (
+          ) : mode === 'close' && activeShift ? (
             /* Close Shift Confirmation Screen */
             <div className="space-y-4">
               <div className="flex items-center space-x-2 pb-2 border-b border-[#262626]">
@@ -572,17 +765,119 @@ export const CashShiftModal: React.FC<CashShiftModalProps> = ({ onClose, initial
               <div className="flex space-x-2 pt-2">
                 <button
                   onClick={() => setMode('info')}
-                  className="flex-1 py-2.5 bg-[#0d0d0d] hover:bg-[#1a1a1a] text-neutral-300 border border-[#262626] rounded-lg text-xs font-bold transition-colors"
+                  className="flex-1 py-2.5 bg-[#0d0d0d] hover:bg-[#1a1a1a] text-neutral-300 border border-[#262626] rounded-lg text-xs font-bold transition-colors cursor-pointer"
                 >
                   Cancelar
                 </button>
                 <button
                   onClick={handleCloseShift}
-                  className="flex-1 py-2.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-bold uppercase tracking-wider transition-colors shadow-md"
+                  className="flex-1 py-2.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-bold uppercase tracking-wider transition-colors shadow-md cursor-pointer"
                 >
                   Confirmar Fecho Z
                 </button>
               </div>
+            </div>
+          ) : !activeShift ? (
+            /* Shift Closed -> Open shift screen */
+            <div className="space-y-4 text-center">
+              <div className="w-12 h-12 bg-rose-500/15 text-rose-400 border border-rose-500/30 rounded-full flex items-center justify-center mx-auto">
+                <Lock className="w-6 h-6" />
+              </div>
+              <div>
+                <div className="inline-flex items-center space-x-1.5 px-2.5 py-0.5 rounded-full bg-rose-500/10 border border-rose-500/30 text-rose-400 text-[10px] font-bold uppercase tracking-widest mb-1.5">
+                  <span>Caixa Fechado</span>
+                </div>
+                <h4 className="text-base font-serif font-bold text-[#c5a47e]">Abertura de Turno de Caixa</h4>
+                <p className="text-xs text-neutral-400">
+                  O caixa não se abre automaticamente. Introduza o Fundo de Maneio inicial para começar a registar artigos e processar pagamentos.
+                </p>
+              </div>
+
+              <div className="text-left bg-[#0d0d0d] p-4 rounded-xl border border-[#262626] space-y-2">
+                <label className="text-[10px] font-bold text-neutral-400 uppercase tracking-widest block">
+                  Fundo de Maneio Inicial ({currencySymbol})
+                </label>
+                <div className="relative">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-500 font-bold text-sm">{currencySymbol}</span>
+                  <input
+                    type="number"
+                    step="5"
+                    min="0"
+                    value={initialCashInput}
+                    onChange={(e) => setInitialCashInput(parseFloat(e.target.value) || 0)}
+                    className="w-full pl-10 pr-3 py-2 bg-[#141414] border border-[#262626] rounded-lg text-base font-mono font-bold text-[#e5e5e5] focus:outline-hidden focus:border-[#c5a47e]"
+                  />
+                </div>
+                <div className="flex gap-2 pt-1 flex-wrap">
+                  {quickShiftAmounts.map((val) => (
+                    <button
+                      key={val}
+                      type="button"
+                      onClick={() => setInitialCashInput(val)}
+                      className="px-2.5 py-1 bg-[#141414] border border-[#262626] text-xs font-semibold text-neutral-300 rounded-md hover:bg-[#1a1a1a] transition-colors cursor-pointer"
+                    >
+                      {val} {currencySymbol}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex justify-between items-center text-xs text-neutral-400 px-1">
+                <span>Operador: <strong className="text-[#e5e5e5]">{currentUser.name}</strong></span>
+                <span>Data: <strong className="text-[#e5e5e5]">{formatDate(new Date().toISOString())}</strong></span>
+              </div>
+
+              <button
+                onClick={handleOpen}
+                className="w-full py-3 bg-[#c5a47e] hover:bg-[#d4b896] text-black rounded-lg text-xs font-bold uppercase tracking-wider transition-all shadow-md cursor-pointer flex items-center justify-center space-x-2"
+              >
+                <Unlock className="w-4 h-4" />
+                <span>Abrir Caixa & Iniciar Vendas</span>
+              </button>
+
+              {/* Quick shortcut to history of previously closed shifts */}
+              {shiftsHistory && shiftsHistory.length > 0 && (
+                <div className="pt-3 border-t border-[#262626] text-left">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-[10px] font-bold uppercase tracking-widest text-neutral-400 flex items-center space-x-1">
+                      <History className="w-3 h-3 text-[#c5a47e]" />
+                      <span>Turnos Anteriores Fechados ({shiftsHistory.length})</span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setMode('history')}
+                      className="text-xs text-[#c5a47e] hover:underline cursor-pointer"
+                    >
+                      Ver Todos &rarr;
+                    </button>
+                  </div>
+                  <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
+                    {shiftsHistory.slice(0, 3).map((sh) => (
+                      <div
+                        key={sh.id}
+                        onClick={() => setSelectedHistoricalShift(sh)}
+                        className="p-2 bg-[#0d0d0d] hover:bg-[#181818] border border-[#262626] rounded-lg text-xs flex items-center justify-between cursor-pointer transition-colors"
+                      >
+                        <div>
+                          <div className="flex items-center space-x-1.5">
+                            <span className="font-semibold text-neutral-200">{formatDate(sh.openedAt)}</span>
+                            <span className="text-[9px] px-1.5 py-0.2 bg-neutral-800 text-neutral-400 rounded-xs border border-neutral-700">
+                              Fechado
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-neutral-500 font-mono">
+                            Op: {sh.operatorName} &bull; Fundo: {formatCurrency(sh.initialCash)}
+                          </p>
+                        </div>
+                        <div className="text-right font-mono">
+                          <span className="text-emerald-400 font-bold block">{formatCurrency(sh.totalSales)}</span>
+                          <span className="text-[10px] text-neutral-500 underline">Ver Z</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           ) : (
             /* Active Shift Overview (Info) */
@@ -708,3 +1003,4 @@ export const CashShiftModal: React.FC<CashShiftModalProps> = ({ onClose, initial
     </div>
   );
 };
+

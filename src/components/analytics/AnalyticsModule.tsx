@@ -2,6 +2,14 @@ import React, { useState, useMemo } from 'react';
 import { useApp } from '../../context/AppContext';
 import { isEffectiveSale } from '../../utils/documentUtils';
 import {
+  getTodayDateStr,
+  getCurrentMonthStr,
+  getPrevMonthStr,
+  getMonthBounds,
+  getDaysAgoStr,
+  getMonthNamePT,
+} from '../../utils/dateUtils';
+import {
   TrendingUp,
   BarChart3,
   Calendar,
@@ -109,11 +117,16 @@ export const AnalyticsModule: React.FC = () => {
     );
   }
 
+  // Local date computations
+  const initialTodayStr = getTodayDateStr();
+  const initialCurrentMonth = getCurrentMonthStr();
+  const initialMonthBounds = getMonthBounds(initialCurrentMonth);
+
   // Filter States
   const [datePreset, setDatePreset] = useState<DatePreset>('this_month');
-  const [selectedMonth, setSelectedMonth] = useState<string>('2026-08');
-  const [customStartDate, setCustomStartDate] = useState<string>('2026-08-01');
-  const [customEndDate, setCustomEndDate] = useState<string>('2026-08-31');
+  const [selectedMonth, setSelectedMonth] = useState<string>(initialCurrentMonth);
+  const [customStartDate, setCustomStartDate] = useState<string>(initialMonthBounds.start);
+  const [customEndDate, setCustomEndDate] = useState<string>(initialMonthBounds.end);
   const [selectedStoreId, setSelectedStoreId] = useState<string>('all');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<string>('all');
@@ -127,17 +140,19 @@ export const AnalyticsModule: React.FC = () => {
   // Extract distinct available months from sales history
   const availableMonths = useMemo(() => {
     const monthsSet = new Set<string>();
+    const currM = getCurrentMonthStr();
+    const prevM = getPrevMonthStr();
+    monthsSet.add(currM);
+    monthsSet.add(prevM);
+
     salesHistory.forEach((sale) => {
       if (sale.date) {
         const monthKey = sale.date.substring(0, 7); // "YYYY-MM"
-        monthsSet.add(monthKey);
+        if (monthKey && monthKey.length === 7) {
+          monthsSet.add(monthKey);
+        }
       }
     });
-
-    // Ensure at least default 2026 months exist
-    monthsSet.add('2026-08');
-    monthsSet.add('2026-07');
-    monthsSet.add('2026-06');
 
     return Array.from(monthsSet).sort().reverse();
   }, [salesHistory]);
@@ -145,32 +160,39 @@ export const AnalyticsModule: React.FC = () => {
   // Handle Preset Change
   const handlePresetChange = (preset: DatePreset) => {
     setDatePreset(preset);
-    const now = new Date('2026-08-24T12:00:00Z');
-    const todayStr = '2026-08-24';
+    const today = getTodayDateStr();
+    const currMonth = getCurrentMonthStr();
 
     if (preset === 'today') {
-      setCustomStartDate(todayStr);
-      setCustomEndDate(todayStr);
+      setSelectedMonth(currMonth);
+      setCustomStartDate(today);
+      setCustomEndDate(today);
     } else if (preset === 'last7days') {
-      const d = new Date(now);
-      d.setDate(d.getDate() - 6);
-      setCustomStartDate(d.toISOString().substring(0, 10));
-      setCustomEndDate(todayStr);
+      setSelectedMonth(currMonth);
+      setCustomStartDate(getDaysAgoStr(6));
+      setCustomEndDate(today);
     } else if (preset === 'this_month') {
-      setSelectedMonth('2026-08');
-      setCustomStartDate('2026-08-01');
-      setCustomEndDate('2026-08-31');
+      const bounds = getMonthBounds(currMonth);
+      setSelectedMonth(currMonth);
+      setCustomStartDate(bounds.start);
+      setCustomEndDate(bounds.end);
     } else if (preset === 'last_month') {
-      setSelectedMonth('2026-07');
-      setCustomStartDate('2026-07-01');
-      setCustomEndDate('2026-07-31');
+      const prevMonth = getPrevMonthStr();
+      const bounds = getMonthBounds(prevMonth);
+      setSelectedMonth(prevMonth);
+      setCustomStartDate(bounds.start);
+      setCustomEndDate(bounds.end);
     } else if (preset === 'last90days') {
-      setCustomStartDate('2026-06-01');
-      setCustomEndDate('2026-08-31');
+      setSelectedMonth(currMonth);
+      setCustomStartDate(getDaysAgoStr(90));
+      setCustomEndDate(today);
     } else if (preset === 'year_2026') {
-      setCustomStartDate('2026-01-01');
-      setCustomEndDate('2026-12-31');
+      const currentYear = new Date().getFullYear();
+      setSelectedMonth(currMonth);
+      setCustomStartDate(`${currentYear}-01-01`);
+      setCustomEndDate(`${currentYear}-12-31`);
     } else if (preset === 'all') {
+      setSelectedMonth('all');
       setCustomStartDate('2020-01-01');
       setCustomEndDate('2030-12-31');
     }
@@ -185,10 +207,9 @@ export const AnalyticsModule: React.FC = () => {
       setCustomEndDate('2030-12-31');
     } else {
       setDatePreset('custom');
-      const [year, month] = monthKey.split('-').map(Number);
-      const lastDay = new Date(year, month, 0).getDate();
-      setCustomStartDate(`${monthKey}-01`);
-      setCustomEndDate(`${monthKey}-${lastDay.toString().padStart(2, '0')}`);
+      const bounds = getMonthBounds(monthKey);
+      setCustomStartDate(bounds.start);
+      setCustomEndDate(bounds.end);
     }
   };
 
@@ -265,21 +286,24 @@ export const AnalyticsModule: React.FC = () => {
     >();
 
     // Determine bounds for dates
-    let startDateObj = new Date(customStartDate || '2026-08-01');
-    let endDateObj = new Date(customEndDate || '2026-08-31');
+    const safeStartStr = customStartDate || initialTodayStr;
+    const safeEndStr = customEndDate || initialTodayStr;
+    const [sy, sm, sd] = safeStartStr.split('-').map(Number);
+    const [ey, em, ed] = safeEndStr.split('-').map(Number);
+    const startDateObj = new Date(sy, (sm || 1) - 1, sd || 1, 12, 0, 0);
+    const endDateObj = new Date(ey, (em || 1) - 1, ed || 1, 12, 0, 0);
 
-    if (isNaN(startDateObj.getTime())) startDateObj = new Date('2026-08-01');
-    if (isNaN(endDateObj.getTime())) endDateObj = new Date('2026-08-31');
-
-    // Limit day slots creation if range is too large (> 60 days) to avoid chart congestion
+    // Limit day slots creation if range is too large (> 62 days) to avoid chart congestion
     const diffDays = Math.round((endDateObj.getTime() - startDateObj.getTime()) / (1000 * 3600 * 24));
 
     if (diffDays <= 62) {
       const curr = new Date(startDateObj);
       while (curr <= endDateObj) {
-        const isoDate = curr.toISOString().substring(0, 10);
-        const [y, m, d] = isoDate.split('-');
-        const displayDate = `${d}/${m}`;
+        const cy = curr.getFullYear();
+        const cm = String(curr.getMonth() + 1).padStart(2, '0');
+        const cd = String(curr.getDate()).padStart(2, '0');
+        const isoDate = `${cy}-${cm}-${cd}`;
+        const displayDate = `${cd}/${cm}`;
         dayMap.set(isoDate, {
           date: isoDate,
           displayDate,
@@ -576,23 +600,7 @@ export const AnalyticsModule: React.FC = () => {
 
   // Helper month label formatter
   const formatMonthLabel = (monthKey: string) => {
-    const [year, month] = monthKey.split('-');
-    const monthsNames = [
-      'Janeiro',
-      'Fevereiro',
-      'Março',
-      'Abril',
-      'Maio',
-      'Junho',
-      'Julho',
-      'Agosto',
-      'Setembro',
-      'Outubro',
-      'Novembro',
-      'Dezembro',
-    ];
-    const monthName = monthsNames[parseInt(month, 10) - 1] || month;
-    return `${monthName} de ${year}`;
+    return getMonthNamePT(monthKey);
   };
 
   return (
