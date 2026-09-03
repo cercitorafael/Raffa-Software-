@@ -53,11 +53,12 @@ import { CompanyBrandingSection } from './CompanyBrandingSection';
 import { InvoiceTemplatesSection } from './InvoiceTemplatesSection';
 import { UserPermissionsMatrix } from './UserPermissionsMatrix';
 import { VatSettingsSection } from './VatSettingsSection';
+import { ShiftManagementSection } from './ShiftManagementSection';
 import { RegisterCompanyModal } from '../auth/RegisterCompanyModal';
 import { calculateSubscription, WHATSAPP_CONTACTS, getWhatsAppRenewalUrl } from '../../utils/subscription';
 
 interface SettingsModuleProps {
-  initialTab?: 'company' | 'vat' | 'branding' | 'templates' | 'saft' | 'users' | 'roles' | 'stores' | 'sync' | 'theme' | 'language';
+  initialTab?: 'company' | 'vat' | 'branding' | 'templates' | 'saft' | 'users' | 'roles' | 'stores' | 'sync' | 'theme' | 'language' | 'shifts';
 }
 
 export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'company' }) => {
@@ -113,7 +114,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
     subscriptionInfo,
   } = useApp();
 
-  const [activeTab, setActiveTab] = useState<'company' | 'vat' | 'branding' | 'templates' | 'saft' | 'users' | 'roles' | 'stores' | 'sync' | 'theme' | 'language'>(initialTab);
+  const [activeTab, setActiveTab] = useState<'company' | 'vat' | 'branding' | 'templates' | 'saft' | 'users' | 'roles' | 'stores' | 'sync' | 'theme' | 'language' | 'shifts'>(initialTab);
 
   React.useEffect(() => {
     if (initialTab) {
@@ -621,6 +622,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
       <div className="px-6 bg-[#0d0d0d] border-b border-[#262626] flex space-x-1 overflow-x-auto">
         {[
           { id: 'company', label: t('settings.tabs.company') },
+          { id: 'shifts', label: 'Gestão de Turnos', badge: '8h' },
           { id: 'vat', label: 'Impostos & IVA', badge: '%' },
           { id: 'branding', label: t('settings.tabs.branding') },
           { id: 'templates', label: t('settings.tabs.templates') },
@@ -1851,6 +1853,9 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
             </button>
           </div>
         )}
+
+        {/* Gestão de Turnos */}
+        {activeTab === 'shifts' && <ShiftManagementSection />}
       </div>
 
       {/* ================= MODAL: USER ================= */}

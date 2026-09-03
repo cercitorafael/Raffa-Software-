@@ -425,6 +425,23 @@ export interface Sale {
   convertedAt?: string;
 }
 
+export interface ShiftType {
+  id: string;
+  name: string; // Ex: "Turno Normal (8 Horas de Trabalho)"
+  code: string; // Ex: "T-8H"
+  durationHours: number; // Ex: 8
+  description?: string; // Ex: "Jornada de trabalho normal de 8 horas com descanso"
+  defaultStartTime?: string; // "08:00"
+  defaultEndTime?: string; // "17:00"
+  breakMinutes?: number; // 60
+  alertOnOvertime?: boolean; // true
+  overtimeToleranceMinutes?: number; // 30
+  color?: string; // Ex: "#c5a47e"
+  isDefault?: boolean;
+  appliesTo?: 'all' | 'pos' | 'rh';
+  createdAt?: string;
+}
+
 export interface CashShift {
   id: string;
   companyId: string;
@@ -457,6 +474,10 @@ export interface CashShift {
   }[];
   zReportNumber?: string;
   notes?: string;
+  shiftTypeId?: string;
+  shiftTypeName?: string;
+  plannedDurationHours?: number; // Ex: 8
+  expectedCloseAt?: string; // ISO timestamp
 }
 
 export interface Customer {

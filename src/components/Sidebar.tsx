@@ -376,7 +376,7 @@ export const Sidebar: React.FC = () => {
                   />
                 </div>
                 <p className="text-[10px] text-neutral-400 truncate mt-0.5 font-mono">
-                  {activeShift ? `${activeShift.operatorName.split(' ')[0]} • ${formatCurrency(activeShift.initialCash)}` : 'Sem turno ativo'}
+                  {activeShift ? `${activeShift.operatorName.split(' ')[0]} • Vendas: ${formatCurrency(activeShift.totalSales || 0)}` : 'Sem turno ativo'}
                 </p>
               </div>
             </div>

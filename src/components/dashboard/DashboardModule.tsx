@@ -52,6 +52,11 @@ import {
   Wallet,
   Calendar,
   BarChart3,
+  Scale,
+  FileText,
+  RefreshCw,
+  X,
+  Info,
 } from 'lucide-react';
 
 export const DashboardModule: React.FC = () => {
@@ -68,6 +73,7 @@ export const DashboardModule: React.FC = () => {
     stores,
     currentTerminal,
     activeShift,
+    syncActiveShiftWithTodaySales,
     setActiveNavTab,
     setShowPriceCheckerModal,
     setShowFiscalAuditModal,
@@ -75,6 +81,8 @@ export const DashboardModule: React.FC = () => {
   } = useApp();
 
   const [timeRange, setTimeRange] = useState<'hoje' | 'semana' | 'mes' | 'ano'>('hoje');
+  const [dashboardScope, setDashboardScope] = useState<'all' | 'active_shift'>('all');
+  const [showReconciliationModal, setShowReconciliationModal] = useState(false);
 
   // RBAC Permission check for Dashboard/Overview
   if (!hasPermission('analytics', 'read') && currentUser?.role !== 'admin') {
@@ -168,10 +176,56 @@ export const DashboardModule: React.FC = () => {
     return d >= start && d <= end;
   };
 
-  // Filtered sales for active time range
+  // Today's total sales and active cash shift reconciliation
+  const todayDateStr = getTodayDateStr();
+  const allTodaySales = useMemo(() => {
+    return salesHistory.filter((s) => isDateInRange(s.date, todayDateStr, todayDateStr));
+  }, [salesHistory, todayDateStr]);
+
+  const allTodayCommercialSales = useMemo(() => {
+    return allTodaySales.filter((s) => isEffectiveSale(s));
+  }, [allTodaySales]);
+
+  const todayGlobalRevenue = useMemo(() => {
+    return calculateNetSalesRevenue(allTodaySales);
+  }, [allTodaySales]);
+
+  // Discriminate today's sales: in current active shift vs outside
+  const { shiftSalesToday, outsideShiftSalesToday } = useMemo(() => {
+    if (!activeShift) {
+      return { shiftSalesToday: [], outsideShiftSalesToday: allTodaySales };
+    }
+    const inShift: typeof salesHistory = [];
+    const outShift: typeof salesHistory = [];
+    allTodaySales.forEach((s) => {
+      const matchesShiftId = s.shiftId && s.shiftId === activeShift.id;
+      const matchesTimeWindow = activeShift.openedAt && s.date && s.date >= activeShift.openedAt;
+      if (matchesShiftId || matchesTimeWindow) {
+        inShift.push(s);
+      } else {
+        outShift.push(s);
+      }
+    });
+    return { shiftSalesToday: inShift, outsideShiftSalesToday: outShift };
+  }, [allTodaySales, activeShift]);
+
+  const shiftSalesRevenue = useMemo(() => {
+    if (!activeShift) return 0;
+    if (activeShift.totalSales > 0) return activeShift.totalSales;
+    return calculateNetSalesRevenue(shiftSalesToday);
+  }, [activeShift, shiftSalesToday]);
+
+  const outsideShiftSalesRevenue = Math.max(0, todayGlobalRevenue - shiftSalesRevenue);
+  const hasReconciliationDiff = timeRange === 'hoje' && activeShift && outsideShiftSalesRevenue > 0;
+
+  // Filtered sales for active time range & dashboard scope
   const periodSalesHistory = useMemo(() => {
-    return salesHistory.filter((s) => isDateInRange(s.date, rangeInfo.startDate, rangeInfo.endDate));
-  }, [salesHistory, rangeInfo]);
+    const raw = salesHistory.filter((s) => isDateInRange(s.date, rangeInfo.startDate, rangeInfo.endDate));
+    if (timeRange === 'hoje' && dashboardScope === 'active_shift' && activeShift) {
+      return shiftSalesToday;
+    }
+    return raw;
+  }, [salesHistory, rangeInfo, timeRange, dashboardScope, activeShift, shiftSalesToday]);
 
   // Previous period sales for comparison percentage
   const prevPeriodSalesHistory = useMemo(() => {
@@ -452,13 +506,92 @@ export const DashboardModule: React.FC = () => {
       </div>
 
       <div className="p-6 space-y-6 max-w-7xl w-full mx-auto">
+        {/* Cash Shift vs Daily Sales Reconciliation Banner */}
+        {timeRange === 'hoje' && activeShift && (
+          <div className="bg-[#141414] border border-[#2a2a2a] rounded-xl p-4 sm:p-5 shadow-lg relative overflow-hidden">
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+              <div className="flex items-start space-x-3.5 min-w-0">
+                <div className="w-10 h-10 rounded-xl bg-[#c5a47e]/15 border border-[#c5a47e]/30 flex items-center justify-center shrink-0 text-[#c5a47e] mt-0.5 sm:mt-0">
+                  <Scale className="w-5 h-5" />
+                </div>
+                <div className="min-w-0">
+                  <div className="flex items-center space-x-2 flex-wrap gap-y-1">
+                    <h3 className="text-sm font-bold text-white">
+                      Reconciliação: Vendas de Hoje vs. Caixa em Aberto
+                    </h3>
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                      Operador: {activeShift.operatorName}
+                    </span>
+                  </div>
+                  <p className="text-xs text-neutral-400 mt-1 leading-relaxed">
+                    O menu <strong>Visão Geral</strong> reflete a faturação fiscal global de todo o dia civil (<strong className="text-white font-mono">{formatCurrency(todayGlobalRevenue)}</strong> em {allTodayCommercialSales.length} faturas). A <strong>Caixa em Aberto</strong> reflete as vendas processadas estritamente neste turno (<strong className="text-emerald-400 font-mono">{formatCurrency(shiftSalesRevenue)}</strong>).
+                    {outsideShiftSalesRevenue > 0 && (
+                      <span className="text-amber-400 font-medium"> A diferença de {formatCurrency(outsideShiftSalesRevenue)} corresponde a faturas emitidas fora deste turno ou em turnos anteriores fechados.</span>
+                    )}
+                  </p>
+                </div>
+              </div>
+
+              {/* Scope Switcher & Audit Button */}
+              <div className="flex items-center flex-wrap sm:flex-nowrap gap-2 shrink-0 self-end lg:self-center">
+                <div className="flex bg-[#0e0e0e] border border-[#2b2b2b] rounded-lg p-0.5 text-xs font-medium shadow-inner">
+                  <button
+                    onClick={() => setDashboardScope('all')}
+                    className={`px-3 py-1.5 rounded-md transition-all cursor-pointer ${
+                      dashboardScope === 'all'
+                        ? 'bg-[#c5a47e] text-neutral-950 font-bold shadow-xs'
+                        : 'text-neutral-400 hover:text-white'
+                    }`}
+                    title="Exibir todos os documentos emitidos hoje no sistema"
+                  >
+                    Dia Completo ({formatCurrency(todayGlobalRevenue)})
+                  </button>
+                  <button
+                    onClick={() => setDashboardScope('active_shift')}
+                    className={`px-3 py-1.5 rounded-md transition-all cursor-pointer ${
+                      dashboardScope === 'active_shift'
+                        ? 'bg-emerald-500 text-neutral-950 font-bold shadow-xs'
+                        : 'text-neutral-400 hover:text-white'
+                    }`}
+                    title="Exibir apenas as vendas da caixa aberta em funcionamento"
+                  >
+                    Caixa Aberto ({formatCurrency(shiftSalesRevenue)})
+                  </button>
+                </div>
+
+                <button
+                  onClick={() => setShowReconciliationModal(true)}
+                  className="flex items-center space-x-1.5 px-3 py-1.5 bg-[#202020] hover:bg-[#2a2a2a] text-neutral-200 hover:text-white border border-[#383838] rounded-lg text-xs font-semibold cursor-pointer transition-colors shadow-xs whitespace-nowrap"
+                  title="Abrir auditoria detalhada de faturas de hoje"
+                >
+                  <FileText className="w-3.5 h-3.5 text-[#c5a47e]" />
+                  <span>Auditar Faturas</span>
+                </button>
+
+                {outsideShiftSalesRevenue > 0 && (
+                  <button
+                    onClick={() => syncActiveShiftWithTodaySales()}
+                    className="flex items-center space-x-1.5 px-3 py-1.5 bg-[#c5a47e]/15 hover:bg-[#c5a47e]/25 text-[#c5a47e] border border-[#c5a47e]/30 rounded-lg text-xs font-semibold cursor-pointer transition-colors shadow-xs whitespace-nowrap"
+                    title="Vincular e sincronizar todas as faturas de hoje com a caixa em aberto"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    <span>Sincronizar Caixa Aberto</span>
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* KPI Cards Grid */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           {/* Card 1: Gross Sales for Selected Period */}
           <div className="bg-[#121212] border border-[#262626] rounded-xl p-4.5 flex flex-col justify-between hover:border-[#383838] transition-all">
             <div className="flex items-center justify-between">
               <span className="text-xs text-neutral-400 font-medium">
-                Faturação ({rangeInfo.shortLabel})
+                {timeRange === 'hoje' && activeShift && dashboardScope === 'active_shift'
+                  ? `Faturação (Turno ${activeShift.operatorName.split(' ')[0]})`
+                  : `Faturação (${rangeInfo.shortLabel})`}
               </span>
               <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
                 <TrendingUp className="w-4 h-4" />
@@ -958,6 +1091,196 @@ export const DashboardModule: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* Daily Sales vs Cash Drawer Reconciliation Modal */}
+      {showReconciliationModal && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-[#141414] border border-[#2a2a2a] rounded-2xl max-w-3xl w-full max-h-[90vh] flex flex-col shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+            {/* Header */}
+            <div className="p-5 border-b border-[#262626] flex items-center justify-between bg-[#171717]">
+              <div className="flex items-center space-x-3">
+                <div className="w-10 h-10 rounded-xl bg-[#c5a47e]/15 border border-[#c5a47e]/30 flex items-center justify-center text-[#c5a47e]">
+                  <Scale className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-white">
+                    Auditoria & Reconciliação: Vendas de Hoje vs Caixa Aberto
+                  </h3>
+                  <p className="text-xs text-neutral-400">
+                    Discriminação contábil entre a faturação fiscal do dia e a gaveta do turno atual
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowReconciliationModal(false)}
+                className="w-8 h-8 rounded-lg bg-[#222] hover:bg-[#2e2e2e] text-neutral-400 hover:text-white flex items-center justify-center transition-colors cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-6 space-y-5 overflow-y-auto flex-1">
+              {/* Informational Explanation Box */}
+              <div className="p-4 bg-blue-500/10 border border-blue-500/20 rounded-xl text-xs space-y-2">
+                <div className="flex items-center space-x-2 text-blue-400 font-bold">
+                  <Info className="w-4 h-4 shrink-0" />
+                  <span>Por que razão os dois valores podem ser diferentes?</span>
+                </div>
+                <p className="text-neutral-300 leading-relaxed">
+                  O menu <strong>Visão Geral</strong> apresenta o total de toda a faturação fiscal certificada emitida ao longo de todo o dia civil de hoje. Já a <strong>Caixa em Aberto</strong> calcula o dinheiro e vendas faturadas estritamente durante a sessão física do <strong>turno atual</strong> (aberto por <strong>{activeShift?.operatorName || 'Operador'}</strong>{activeShift?.openedAt ? ` às ${activeShift.openedAt.substring(11, 16)}` : ''}).
+                </p>
+                <p className="text-neutral-400">
+                  Caso tenham sido emitidas faturas em turnos anteriores já fechados (ex: turno da manhã) ou através do balcão de emissão manual de documentos, esse valor soma na faturação diária mas não entra na gaveta física do operador deste turno.
+                </p>
+              </div>
+
+              {/* 3 Metric Cards */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="p-3.5 bg-[#1a1a1a] border border-[#2d2d2d] rounded-xl">
+                  <span className="text-[10px] uppercase tracking-wider font-bold text-neutral-400 block mb-1">
+                    Faturação Fiscal de Hoje
+                  </span>
+                  <p className="text-xl font-mono font-bold text-white">{formatCurrency(todayGlobalRevenue)}</p>
+                  <p className="text-[11px] text-neutral-500 mt-0.5">{allTodayCommercialSales.length} faturas emitidas</p>
+                </div>
+
+                <div className="p-3.5 bg-[#1a1a1a] border border-emerald-500/30 rounded-xl">
+                  <span className="text-[10px] uppercase tracking-wider font-bold text-emerald-400 block mb-1">
+                    Neste Turno (Caixa Aberto)
+                  </span>
+                  <p className="text-xl font-mono font-bold text-emerald-400">{formatCurrency(shiftSalesRevenue)}</p>
+                  <p className="text-[11px] text-neutral-500 mt-0.5">{shiftSalesToday.length} faturas neste turno</p>
+                </div>
+
+                <div className="p-3.5 bg-[#1a1a1a] border border-amber-500/30 rounded-xl">
+                  <span className="text-[10px] uppercase tracking-wider font-bold text-amber-400 block mb-1">
+                    Turnos Anteriores / Fora do Turno
+                  </span>
+                  <p className="text-xl font-mono font-bold text-amber-400">{formatCurrency(outsideShiftSalesRevenue)}</p>
+                  <p className="text-[11px] text-neutral-500 mt-0.5">{outsideShiftSalesToday.length} faturas fora do turno</p>
+                </div>
+              </div>
+
+              {/* Invoices List for Today */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-xs font-bold text-white uppercase tracking-wider">
+                    Extrato Discriminado de Faturas de Hoje ({allTodaySales.length})
+                  </h4>
+                  <span className="text-[11px] text-neutral-400">Ordenadas por emissão</span>
+                </div>
+
+                {allTodaySales.length === 0 ? (
+                  <div className="p-6 text-center text-xs text-neutral-500 border border-dashed border-[#262626] rounded-xl">
+                    Nenhuma fatura emitida hoje no sistema.
+                  </div>
+                ) : (
+                  <div className="border border-[#262626] rounded-xl overflow-hidden bg-[#101010]">
+                    <div className="overflow-x-auto max-h-64">
+                      <table className="w-full text-left text-xs border-collapse">
+                        <thead>
+                          <tr className="bg-[#181818] border-b border-[#262626] text-[10px] font-bold text-neutral-400 uppercase tracking-wider">
+                            <th className="p-2.5">Documento</th>
+                            <th className="p-2.5">Hora</th>
+                            <th className="p-2.5">Operador</th>
+                            <th className="p-2.5">Cliente</th>
+                            <th className="p-2.5">Pagamento</th>
+                            <th className="p-2.5 text-right">Total</th>
+                            <th className="p-2.5 text-center">Vínculo de Caixa</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-[#222]">
+                          {allTodaySales.map((sale) => {
+                            const isShiftSale =
+                              activeShift &&
+                              (sale.shiftId === activeShift.id ||
+                                (activeShift.openedAt && sale.date && sale.date >= activeShift.openedAt));
+                            const timeStr = sale.date?.includes('T')
+                              ? sale.date.split('T')[1].substring(0, 5)
+                              : sale.date?.substring(11, 16) || '--:--';
+                            const primaryPay = sale.payments?.[0]?.method || 'dinheiro';
+
+                            return (
+                              <tr key={sale.id} className="hover:bg-[#151515] transition-colors">
+                                <td className="p-2.5 font-mono font-bold text-white">
+                                  {sale.invoiceNumber || sale.id}
+                                </td>
+                                <td className="p-2.5 font-mono text-neutral-400">
+                                  {timeStr}
+                                </td>
+                                <td className="p-2.5 text-neutral-300 truncate max-w-[100px]">
+                                  {sale.operatorName || 'Operador'}
+                                </td>
+                                <td className="p-2.5 text-neutral-300 truncate max-w-[120px]">
+                                  {sale.customerName || 'Consumidor Final'}
+                                </td>
+                                <td className="p-2.5 uppercase text-[10px] font-mono text-neutral-400">
+                                  {primaryPay}
+                                </td>
+                                <td className="p-2.5 font-mono font-bold text-right text-[#c5a47e]">
+                                  {formatCurrency(sale.total)}
+                                </td>
+                                <td className="p-2.5 text-center">
+                                  {isShiftSale ? (
+                                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                                      Caixa Aberto
+                                    </span>
+                                  ) : (
+                                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-amber-500/15 text-amber-400 border border-amber-500/30">
+                                      Turno Fechado / Externo
+                                    </span>
+                                  )}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="p-4 border-t border-[#262626] bg-[#171717] flex items-center justify-between">
+              <div className="text-xs text-neutral-400">
+                Total Faturado Hoje: <strong className="text-white font-mono">{formatCurrency(todayGlobalRevenue)}</strong>
+              </div>
+              <div className="flex items-center space-x-2">
+                {activeShift && outsideShiftSalesRevenue > 0 && (
+                  <button
+                    onClick={() => {
+                      syncActiveShiftWithTodaySales();
+                      setShowReconciliationModal(false);
+                    }}
+                    className="flex items-center space-x-1.5 px-3 py-2 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-400 border border-emerald-500/30 rounded-lg text-xs font-semibold cursor-pointer transition-colors"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    <span>Sincronizar Vendas com Caixa</span>
+                  </button>
+                )}
+                <button
+                  onClick={() => {
+                    setShowReconciliationModal(false);
+                    setActiveNavTab('pos');
+                  }}
+                  className="px-4 py-2 bg-[#202020] hover:bg-[#282828] text-white rounded-lg text-xs font-semibold cursor-pointer transition-colors"
+                >
+                  Ir para o POS
+                </button>
+                <button
+                  onClick={() => setShowReconciliationModal(false)}
+                  className="px-4 py-2 bg-[#c5a47e] hover:bg-[#b5946e] text-neutral-950 font-bold rounded-lg text-xs cursor-pointer transition-colors shadow-xs"
+                >
+                  Fechar Reconciliação
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

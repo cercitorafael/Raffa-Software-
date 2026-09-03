@@ -97,6 +97,8 @@ export const DocumentsModule: React.FC = () => {
     hasPermission,
     setActiveNavTab,
     updateCompany,
+    activeShift,
+    registerDocSaleInShift,
   } = useApp();
 
   const currencySymbol = currentCompany?.currencySymbol || currencyDefinition?.symbol || 'Mt';
@@ -740,7 +742,7 @@ export const DocumentsModule: React.FC = () => {
       ],
       operatorId: currentUser.id,
       operatorName: currentUser.name,
-      shiftId: 'shift-doc',
+      shiftId: activeShift ? activeShift.id : 'shift-doc',
       fiscalHash,
       previousHash: prevHash,
       atcud: `ATCUD-${currentCompany.taxNumber}-${invNumber}`,
@@ -770,7 +772,12 @@ export const DocumentsModule: React.FC = () => {
       );
     }
 
-    // 2. Append to salesHistory in App context
+    // 2. If immediate payment and cash drawer is open, record in active shift
+    if (activeShift && registerDocSaleInShift && ['FR', 'FS', 'VD'].includes(docType) && initialStatus === 'pago') {
+      registerDocSaleInShift(total, selectedPaymentMethod);
+    }
+
+    // 3. Append to salesHistory in App context
     setSalesHistory((prev) => [newDoc, ...prev]);
     sound.playCashRegisterSound();
     const docDisplayTitle = getDocumentTitle(docType);

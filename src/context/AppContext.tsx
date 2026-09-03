@@ -45,6 +45,7 @@ import {
   Language,
   LanguageOption,
   CallLog,
+  ShiftType,
 } from '../types';
 import { useI18n } from '../i18n';
 import { standardizeCategoryName } from '../utils/categoryUtils';
@@ -80,6 +81,7 @@ import {
   initialOmnichannelOrders,
   initialSales,
   initialCallLogs,
+  initialShiftTypes,
 } from '../mockData';
 import {
   generateFiscalHash,
@@ -117,6 +119,8 @@ import {
 } from '../lib/supabase';
 import { INDUSTRY_PRESETS, IndustryPreset } from '../data/industryPresets';
 import { calculateSubscription, SubscriptionInfo } from '../utils/subscription';
+import { getTodayDateStr } from '../utils/dateUtils';
+import { isEffectiveSale } from '../utils/documentUtils';
 
 export interface CartItem extends SaleItem {
   image?: string;
@@ -324,12 +328,19 @@ export interface AppContextType {
     reason?: string
   ) => void;
 
-  // POS
+  // POS & Turnos
+  shiftTypes: ShiftType[];
+  defaultShiftType: ShiftType;
+  addShiftType: (type: Omit<ShiftType, 'id'>) => void;
+  updateShiftType: (id: string, updates: Partial<ShiftType>) => void;
+  deleteShiftType: (id: string) => void;
+  setDefaultShiftType: (id: string) => void;
   activeShift: CashShift | null;
   shiftsHistory: CashShift[];
-  openShift: (initialCash: number) => void;
+  openShift: (initialCash: number, shiftTypeId?: string) => void;
   closeShift: (notesOrCounted?: string | number, notes?: string) => CashShift | null;
   registerCashMovement: (type: 'sangria' | 'suprimento', amount: number, reason: string) => void;
+  syncActiveShiftWithTodaySales: () => void;
   cart: CartItem[];
   addToCart: (product: Product, quantity?: number) => void;
   removeFromCart: (productId: string) => void;
@@ -346,6 +357,7 @@ export interface AppContextType {
     customerTaxNumber?: string,
     customerName?: string
   ) => Promise<Sale>;
+  registerDocSaleInShift: (amount: number, paymentMethod?: string) => void;
   salesHistory: Sale[];
   setSalesHistory: React.Dispatch<React.SetStateAction<Sale[]>>;
   cancelInvoice: (invoiceId: string, reason: string, restockStock?: boolean) => void;
@@ -709,7 +721,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }));
   });
 
-  // POS
+  // POS & Turnos
+  const [shiftTypes, setShiftTypes] = useState<ShiftType[]>(() => {
+    const stored = loadFromStorage<ShiftType[]>('shiftTypes', initialShiftTypes);
+    return Array.isArray(stored) && stored.length > 0 ? stored : initialShiftTypes;
+  });
+
+  const defaultShiftType = useMemo(() => {
+    return shiftTypes.find((st) => st.isDefault) || shiftTypes[0] || initialShiftTypes[0];
+  }, [shiftTypes]);
+
   const [activeShift, setActiveShift] = useState<CashShift | null>(() => {
     const stored = loadFromStorage<CashShift | null>('activeShift', null);
     // Explicit rule: Upon first session or if closed in previous day, register must be CLOSED (null).
@@ -3528,9 +3549,83 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
-  // ==================== POS & SALES ====================
-  const openShift = (initialCash: number) => {
+  // ==================== POS & GESTÃO DE TURNOS ====================
+  const addShiftType = useCallback((typeData: Omit<ShiftType, 'id'>) => {
+    const newId = `shift-type-${Date.now()}`;
+    const newType: ShiftType = {
+      ...typeData,
+      id: newId,
+      createdAt: new Date().toISOString(),
+    };
+    setShiftTypes((prev) => {
+      let updated = [...prev];
+      if (newType.isDefault) {
+        updated = updated.map((t) => ({ ...t, isDefault: false }));
+      }
+      updated.push(newType);
+      saveToStorage('shiftTypes', updated);
+      return updated;
+    });
+    notify(`Tipo de turno "${newType.name}" criado com sucesso!`, 'success');
+  }, [notify]);
+
+  const updateShiftType = useCallback((id: string, updates: Partial<ShiftType>) => {
+    setShiftTypes((prev) => {
+      const updated = prev.map((t) => {
+        if (t.id === id) {
+          return { ...t, ...updates };
+        }
+        if (updates.isDefault && t.id !== id) {
+          return { ...t, isDefault: false };
+        }
+        return t;
+      });
+      saveToStorage('shiftTypes', updated);
+      return updated;
+    });
+    notify('Definições do tipo de turno atualizadas com sucesso!', 'success');
+  }, [notify]);
+
+  const deleteShiftType = useCallback((id: string) => {
+    setShiftTypes((prev) => {
+      const target = prev.find((t) => t.id === id);
+      if (!target) return prev;
+      if (target.isDefault && prev.length > 1) {
+        notify('Não é possível excluir o turno padrão ativo. Defina outro turno como padrão antes.', 'warning');
+        return prev;
+      }
+      const updated = prev.filter((t) => t.id !== id);
+      if (updated.length > 0 && !updated.some((t) => t.isDefault)) {
+        updated[0].isDefault = true;
+      }
+      saveToStorage('shiftTypes', updated);
+      notify(`Tipo de turno "${target.name}" removido com sucesso.`, 'info');
+      return updated;
+    });
+  }, [notify]);
+
+  const setDefaultShiftType = useCallback((id: string) => {
+    setShiftTypes((prev) => {
+      const updated = prev.map((t) => ({
+        ...t,
+        isDefault: t.id === id,
+      }));
+      saveToStorage('shiftTypes', updated);
+      const chosen = updated.find((t) => t.id === id);
+      notify(`Turno padrão alterado para "${chosen?.name || 'Turno Selecionado'}".`, 'success');
+      return updated;
+    });
+  }, [notify]);
+
+  const openShift = (initialCash: number, shiftTypeId?: string) => {
     const safeInitialCash = Math.max(0, Number(initialCash) || 0);
+    const chosenType = shiftTypes.find((s) => s.id === shiftTypeId) || defaultShiftType;
+    const now = new Date();
+    const plannedHours = chosenType?.durationHours ?? 8;
+    const expectedClose = plannedHours > 0
+      ? new Date(now.getTime() + plannedHours * 60 * 60 * 1000).toISOString()
+      : undefined;
+
     const shift: CashShift = {
       id: `shift-${Date.now()}`,
       companyId: currentCompany.id,
@@ -3538,7 +3633,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       terminalId: currentTerminal.id,
       operatorId: currentUser.id,
       operatorName: currentUser.name,
-      openedAt: new Date().toISOString(),
+      openedAt: now.toISOString(),
       status: 'aberto',
       initialCash: safeInitialCash,
       totalSales: 0,
@@ -3550,6 +3645,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       sangriaTotal: 0,
       suprimentoTotal: 0,
       movements: [],
+      shiftTypeId: chosenType?.id,
+      shiftTypeName: chosenType?.name,
+      plannedDurationHours: plannedHours,
+      expectedCloseAt: expectedClose,
     };
     setActiveShift(shift);
     saveToStorage('activeShift', shift);
@@ -3559,9 +3658,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       terminal: currentTerminal.code,
       operator: currentUser.name,
       initialCash: safeInitialCash,
+      shiftType: chosenType?.name,
+      plannedHours,
     });
     sound.playSuccessChime();
-    notify(`Caixa aberto com sucesso (Fundo Inicial: ${formatCurrency(safeInitialCash)}). Pronto para vendas!`, 'success');
+    notify(
+      `Caixa aberto com sucesso (${chosenType?.name || 'Turno'}). Fundo Inicial: ${formatCurrency(safeInitialCash)}. Pronto para vendas!`,
+      'success'
+    );
   };
 
   const closeShift = (notesOrCounted?: string | number, notes?: string) => {
@@ -3634,6 +3738,84 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     emitEvent('POS', `pos.cash.${type}`, { amount, reason });
     sound.playCashRegisterSound();
   };
+
+  const syncActiveShiftWithTodaySales = useCallback(() => {
+    if (!activeShift) {
+      notify('Não há sessão de caixa aberta para sincronizar.', 'warning');
+      return;
+    }
+
+    const todayStr = getTodayDateStr();
+    // Vendas comerciais de hoje
+    const todaySales = salesHistory.filter(
+      (s) => s.date && s.date.substring(0, 10) === todayStr && isEffectiveSale(s)
+    );
+
+    let totalSales = 0;
+    let totalCash = 0;
+    let totalCards = 0;
+    let totalMbway = 0;
+    let totalTransfers = 0;
+    let totalVouchers = 0;
+
+    todaySales.forEach((s) => {
+      const isNC = (s.invoiceType || '').toUpperCase() === 'NC';
+      const mult = isNC ? -1 : 1;
+      totalSales += mult * (s.total || 0);
+
+      // Pagamentos
+      if (Array.isArray(s.payments) && s.payments.length > 0) {
+        s.payments.forEach((p) => {
+          const amt = mult * (Number(p.amount) || 0);
+          const method = (p.method || '').toLowerCase();
+          if (method === 'dinheiro' || method === 'numerario') {
+            totalCash += amt;
+          } else if (method === 'cartao' || method === 'tpa' || method === 'visa' || method === 'mastercard') {
+            totalCards += amt;
+          } else if (method === 'mbway' || method === 'mpesa' || method === 'emola') {
+            totalMbway += amt;
+          } else if (method === 'transferencia') {
+            totalTransfers += amt;
+          } else if (method === 'vale' || method === 'voucher') {
+            totalVouchers += amt;
+          } else {
+            totalCash += amt;
+          }
+        });
+      } else {
+        totalCash += mult * (s.total || 0);
+      }
+    });
+
+    const updatedShift: CashShift = {
+      ...activeShift,
+      totalSales: Math.max(0, totalSales),
+      totalCash: Math.max(0, totalCash),
+      totalCards: Math.max(0, totalCards),
+      totalMbway: Math.max(0, totalMbway),
+      totalTransfers: Math.max(0, totalTransfers),
+      totalVouchers: Math.max(0, totalVouchers),
+    };
+
+    // Atribui o shiftId a essas vendas de hoje se não tiverem
+    setSalesHistory((prev) =>
+      prev.map((s) => {
+        if (s.date && s.date.substring(0, 10) === todayStr && (!s.shiftId || s.shiftId === 'no-shift')) {
+          return { ...s, shiftId: activeShift.id };
+        }
+        return s;
+      })
+    );
+
+    setActiveShift(updatedShift);
+    saveToStorage('activeShift', updatedShift);
+    pushRecordToSupabase('turnos_caixa', 'upsert', updatedShift);
+    sound.playSuccessChime();
+    notify(
+      `Caixa sincronizada! ${todaySales.length} faturas de hoje foram reconciliadas com esta caixa (${formatCurrency(totalSales)}).`,
+      'success'
+    );
+  }, [activeShift, salesHistory, notify]);
 
   const getAvailableStock = useCallback(
     (productId: string, warehouseId?: string): number => {
@@ -3983,6 +4165,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     clearCart();
     sound.playCashRegisterSound();
     return sale;
+  };
+
+  const registerDocSaleInShift = (amount: number, paymentMethod: string = 'dinheiro') => {
+    if (!activeShift || amount <= 0) return;
+    const isCash = paymentMethod === 'dinheiro';
+    const isCard = paymentMethod === 'cartao' || paymentMethod === 'tpa';
+    const isMbway = paymentMethod === 'mbway' || paymentMethod === 'mpesa' || paymentMethod === 'emola';
+
+    const updatedShift: CashShift = {
+      ...activeShift,
+      totalSales: Number(activeShift.totalSales || 0) + amount,
+      totalCash: isCash ? Number(activeShift.totalCash || 0) + amount : Number(activeShift.totalCash || 0),
+      totalCards: isCard ? Number(activeShift.totalCards || 0) + amount : Number(activeShift.totalCards || 0),
+      totalMbway: isMbway ? Number(activeShift.totalMbway || 0) + amount : Number(activeShift.totalMbway || 0),
+    };
+
+    setActiveShift(updatedShift);
+    saveToStorage('activeShift', updatedShift);
+    pushRecordToSupabase('turnos_caixa', 'upsert', updatedShift);
   };
 
   const cancelInvoice = (invoiceId: string, reason: string, restockStock: boolean = true) => {
@@ -5427,11 +5628,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         transferStock,
         deductStockForItems,
         replenishStockForItems,
+        shiftTypes,
+        defaultShiftType,
+        addShiftType,
+        updateShiftType,
+        deleteShiftType,
+        setDefaultShiftType,
         activeShift,
         shiftsHistory: scopedShiftsHistory,
         openShift,
         closeShift,
         registerCashMovement,
+        syncActiveShiftWithTodaySales,
         cart,
         addToCart,
         removeFromCart,
@@ -5443,6 +5651,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setSelectedCustomer,
         clearCart,
         completeSale,
+        registerDocSaleInShift,
         salesHistory: scopedSalesHistory,
         setSalesHistory,
         cancelInvoice,

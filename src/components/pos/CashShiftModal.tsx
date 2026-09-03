@@ -13,6 +13,8 @@ import {
   History,
   CheckCircle2,
   Clock,
+  Timer,
+  AlertCircle,
   Printer,
   FileDown,
   Receipt,
@@ -25,8 +27,12 @@ import {
   Smartphone,
   Calendar,
   User,
+  Scale,
+  Info,
 } from 'lucide-react';
 import { printZReportA4, printZReportThermal, downloadZReportPdf } from '../../utils/print';
+import { getTodayDateStr } from '../../utils/dateUtils';
+import { isEffectiveSale, calculateNetSalesRevenue } from '../../utils/documentUtils';
 
 interface CashShiftModalProps {
   onClose: () => void;
@@ -45,6 +51,9 @@ export const CashShiftModal: React.FC<CashShiftModalProps> = ({ onClose, initial
     currentStore,
     currentCompany,
     currencyDefinition,
+    salesHistory,
+    shiftTypes,
+    defaultShiftType,
   } = useApp();
 
   const currencySymbol = currentCompany?.currencySymbol || currencyDefinition.symbol || 'MT';
@@ -61,6 +70,9 @@ export const CashShiftModal: React.FC<CashShiftModalProps> = ({ onClose, initial
   const [mode, setMode] = useState<'info' | 'open' | 'close' | 'sangria' | 'suprimento' | 'history'>(initialMode);
   const [initialCashInput, setInitialCashInput] = useState<number>(
     currencyDefinition.code === 'MZN' ? 2000 : 150
+  );
+  const [selectedShiftTypeId, setSelectedShiftTypeId] = useState<string>(
+    defaultShiftType?.id || 'shift-type-8h'
   );
   const [movementAmount, setMovementAmount] = useState<number>(
     currencyDefinition.code === 'MZN' ? 500 : 50
@@ -98,12 +110,66 @@ export const CashShiftModal: React.FC<CashShiftModalProps> = ({ onClose, initial
     return (shiftsHistory || []).reduce((acc, sh) => acc + (sh.totalSales || 0), 0);
   }, [shiftsHistory]);
 
+  const todayDateStr = getTodayDateStr();
+  const todayEffectiveSales = useMemo(() => {
+    return (salesHistory || []).filter(
+      (s) => s.date && s.date.substring(0, 10) === todayDateStr && isEffectiveSale(s)
+    );
+  }, [salesHistory, todayDateStr]);
+
+  const todayFiscalTotal = useMemo(() => {
+    return calculateNetSalesRevenue(todayEffectiveSales);
+  }, [todayEffectiveSales]);
+
+  const shiftSalesTotal = activeShift?.totalSales || 0;
+  const outsideShiftSales = Math.max(0, todayFiscalTotal - shiftSalesTotal);
+
+  const selectedShiftType = useMemo(() => {
+    return (
+      shiftTypes?.find((s) => s.id === selectedShiftTypeId) ||
+      defaultShiftType || {
+        id: 'shift-type-8h',
+        name: 'Turno Normal (8 Horas de Trabalho)',
+        durationHours: 8,
+        code: 'T-8H',
+      }
+    );
+  }, [shiftTypes, selectedShiftTypeId, defaultShiftType]);
+
+  const estimatedClosingTime = useMemo(() => {
+    if (!selectedShiftType || !selectedShiftType.durationHours) return null;
+    const now = new Date();
+    const closing = new Date(now.getTime() + selectedShiftType.durationHours * 3600 * 1000);
+    return closing.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }, [selectedShiftType]);
+
+  const shiftDurationInfo = useMemo(() => {
+    if (!activeShift?.openedAt) return null;
+    const openedTime = new Date(activeShift.openedAt).getTime();
+    const nowTime = Date.now();
+    const elapsedMinutes = Math.max(0, Math.floor((nowTime - openedTime) / 60000));
+    const elapsedHours = Math.floor(elapsedMinutes / 60);
+    const remainingMins = elapsedMinutes % 60;
+
+    const plannedHours = activeShift.plannedDurationHours ?? 8;
+    const isOvertime = plannedHours > 0 && elapsedMinutes > plannedHours * 60;
+
+    return {
+      elapsedMinutes,
+      elapsedFormatted: `${elapsedHours}h ${remainingMins}m`,
+      plannedHours,
+      isOvertime,
+      expectedCloseAt: activeShift.expectedCloseAt,
+      shiftTypeName: activeShift.shiftTypeName || 'Turno Normal (8 Horas de Trabalho)',
+    };
+  }, [activeShift]);
+
   const expectedCashInDrawer = activeShift
     ? activeShift.initialCash + activeShift.totalCash + activeShift.suprimentoTotal - activeShift.sangriaTotal
     : 0;
 
   const handleOpen = () => {
-    openShift(initialCashInput);
+    openShift(initialCashInput, selectedShiftTypeId);
     onClose();
   };
 
@@ -789,8 +855,86 @@ export const CashShiftModal: React.FC<CashShiftModalProps> = ({ onClose, initial
                 </div>
                 <h4 className="text-base font-serif font-bold text-[#c5a47e]">Abertura de Turno de Caixa</h4>
                 <p className="text-xs text-neutral-400">
-                  O caixa não se abre automaticamente. Introduza o Fundo de Maneio inicial para começar a registar artigos e processar pagamentos.
+                  O caixa não se abre automaticamente. Selecione o modelo de turno de trabalho e introduza o Fundo de Maneio inicial para começar a registar artigos e processar pagamentos.
                 </p>
+              </div>
+
+              {/* Shift Type Selection */}
+              <div className="text-left bg-[#0d0d0d] p-4 rounded-xl border border-[#262626] space-y-3">
+                <div className="flex items-center justify-between">
+                  <label className="text-[10px] font-bold text-neutral-400 uppercase tracking-widest flex items-center space-x-1.5">
+                    <Clock className="w-3.5 h-3.5 text-[#c5a47e]" />
+                    <span>Tipo de Turno de Trabalho *</span>
+                  </label>
+                  {selectedShiftType && (
+                    <span className="text-[11px] font-mono text-[#c5a47e] font-bold">
+                      {selectedShiftType.durationHours ? `${selectedShiftType.durationHours} Horas de Trabalho` : 'Duração Flexível'}
+                    </span>
+                  )}
+                </div>
+
+                {/* Grid of Shift Types Options */}
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                  {(shiftTypes || []).map((st) => {
+                    const isSelected = st.id === selectedShiftTypeId;
+                    return (
+                      <button
+                        key={st.id}
+                        type="button"
+                        onClick={() => setSelectedShiftTypeId(st.id)}
+                        className={`p-2.5 rounded-lg border text-left transition-all cursor-pointer flex flex-col justify-between ${
+                          isSelected
+                            ? 'bg-[#1a1713] border-[#c5a47e] text-white shadow-sm ring-1 ring-[#c5a47e]/30'
+                            : 'bg-[#141414] border-[#262626] text-neutral-300 hover:border-[#383838]'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-1 mb-1">
+                          <span
+                            className={`text-[9px] font-mono font-bold px-1.5 py-0.5 rounded ${
+                              isSelected ? 'bg-[#c5a47e] text-neutral-950' : 'bg-[#222] text-neutral-400'
+                            }`}
+                          >
+                            {st.durationHours ? `${st.durationHours}h` : 'FLX'}
+                          </span>
+                          {st.isDefault && (
+                            <span className="text-[8px] uppercase tracking-wider text-[#c5a47e] font-bold">
+                              Padrão
+                            </span>
+                          )}
+                        </div>
+                        <span className="text-xs font-bold leading-tight line-clamp-1 block">
+                          {st.name}
+                        </span>
+                        <span className="text-[10px] text-neutral-400 font-mono mt-0.5 block">
+                          {st.code}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Information preview of the selected shift */}
+                <div className="p-2.5 bg-[#141414] rounded-lg border border-[#222] flex items-center justify-between text-xs text-neutral-300">
+                  <div className="flex items-center space-x-2">
+                    <Timer className="w-3.5 h-3.5 text-[#c5a47e] shrink-0" />
+                    <span>
+                      {selectedShiftType.durationHours ? (
+                        <>
+                          Previsão de fecho Z do turno:{' '}
+                          <strong className="text-white font-mono">{estimatedClosingTime}</strong>{' '}
+                          <span className="text-neutral-400">({selectedShiftType.durationHours} horas de trabalho)</span>
+                        </>
+                      ) : (
+                        <span>Turno flexível sem limite fixo de horas (encerramento livre).</span>
+                      )}
+                    </span>
+                  </div>
+                  {selectedShiftType.breakMinutes ? (
+                    <span className="text-[10px] text-neutral-400 font-mono hidden sm:inline-block">
+                      Intervalo: {selectedShiftType.breakMinutes}m
+                    </span>
+                  ) : null}
+                </div>
               </div>
 
               <div className="text-left bg-[#0d0d0d] p-4 rounded-xl border border-[#262626] space-y-2">
@@ -883,24 +1027,57 @@ export const CashShiftModal: React.FC<CashShiftModalProps> = ({ onClose, initial
             /* Active Shift Overview (Info) */
             <div className="space-y-4">
               {/* Active Shift Header Badge */}
-              <div className="p-3 bg-emerald-500/10 border border-emerald-500/30 rounded-xl flex items-center justify-between">
-                <div className="flex items-center space-x-2.5">
-                  <div className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
-                  <div>
-                    <div className="flex items-center space-x-2">
-                      <span className="text-xs font-bold text-emerald-400 uppercase tracking-wider">
-                        Caixa Aberta &bull; Em Funcionamento
-                      </span>
+              <div className="p-3 bg-emerald-500/10 border border-emerald-500/30 rounded-xl space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-2.5">
+                    <div className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
+                    <div>
+                      <div className="flex items-center space-x-2">
+                        <span className="text-xs font-bold text-emerald-400 uppercase tracking-wider">
+                          Caixa Aberta &bull; Em Funcionamento
+                        </span>
+                        {shiftDurationInfo && (
+                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-[#141414] border border-[#333] text-[#c5a47e] font-mono font-bold">
+                            {shiftDurationInfo.shiftTypeName}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-neutral-400 font-mono mt-0.5">
+                        Operador: <strong className="text-neutral-200">{activeShift.operatorName}</strong> &bull; Aberto em: {formatDate(activeShift.openedAt)}
+                      </p>
                     </div>
-                    <p className="text-[11px] text-neutral-400 font-mono mt-0.5">
-                      Operador: <strong className="text-neutral-200">{activeShift.operatorName}</strong> &bull; Aberto em: {formatDate(activeShift.openedAt)}
-                    </p>
+                  </div>
+                  <div className="text-right">
+                    <span className="text-[10px] text-neutral-400 block font-mono">Fundo Inicial</span>
+                    <span className="text-xs font-bold font-mono text-[#c5a47e]">{formatCurrency(activeShift.initialCash)}</span>
                   </div>
                 </div>
-                <div className="text-right">
-                  <span className="text-[10px] text-neutral-400 block font-mono">Fundo Inicial</span>
-                  <span className="text-xs font-bold font-mono text-[#c5a47e]">{formatCurrency(activeShift.initialCash)}</span>
-                </div>
+
+                {/* Shift Time Progress Indicator */}
+                {shiftDurationInfo && (
+                  <div className="pt-2 border-t border-emerald-500/20 flex flex-wrap items-center justify-between gap-2 text-xs">
+                    <div className="flex items-center space-x-2 text-neutral-300">
+                      <Clock className="w-3.5 h-3.5 text-[#c5a47e]" />
+                      <span>
+                        Decorrido: <strong className="text-white font-mono">{shiftDurationInfo.elapsedFormatted}</strong>
+                        {shiftDurationInfo.plannedHours > 0 && (
+                          <span className="text-neutral-400 font-mono"> / {shiftDurationInfo.plannedHours}h previstas</span>
+                        )}
+                      </span>
+                    </div>
+
+                    {shiftDurationInfo.isOvertime ? (
+                      <span className="text-[10px] font-bold px-2 py-0.5 bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded-full flex items-center space-x-1">
+                        <AlertCircle className="w-3 h-3" />
+                        <span>Jornada de {shiftDurationInfo.plannedHours}h Ultrapassada &bull; Fecho Z Recomendado</span>
+                      </span>
+                    ) : shiftDurationInfo.expectedCloseAt ? (
+                      <span className="text-[11px] text-neutral-400 font-mono">
+                        Previsão de Fecho: <strong className="text-neutral-200">{formatDate(shiftDurationInfo.expectedCloseAt)}</strong>
+                      </span>
+                    ) : null}
+                  </div>
+                )}
               </div>
 
               {/* Summary Cards */}
@@ -937,6 +1114,39 @@ export const CashShiftModal: React.FC<CashShiftModalProps> = ({ onClose, initial
                   <span className="font-mono font-bold text-[#e5e5e5]">{formatCurrency(activeShift.totalVouchers)}</span>
                 </div>
               </div>
+
+              {/* Daily Sales Reconciliation Card */}
+              {todayFiscalTotal > 0 && (
+                <div className="bg-[#0f0f0f] p-3.5 rounded-lg border border-[#2b2b2b] space-y-2 text-xs">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-bold uppercase tracking-widest text-[#c5a47e] flex items-center space-x-1.5">
+                      <Scale className="w-3.5 h-3.5" />
+                      <span>Reconciliação com Menu Visão Geral</span>
+                    </span>
+                    <span className="text-[10px] font-mono text-neutral-400">Hoje</span>
+                  </div>
+
+                  <div className="flex justify-between items-center text-neutral-300">
+                    <span>Faturação Fiscal de Hoje ({todayEffectiveSales.length} faturas):</span>
+                    <span className="font-mono font-bold text-white">{formatCurrency(todayFiscalTotal)}</span>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 pt-0.5 font-mono text-[11px]">
+                    <div className="bg-[#151515] p-2 rounded-md border border-[#262626]">
+                      <span className="text-neutral-500 block text-[9px] uppercase font-sans">Neste Turno (Caixa)</span>
+                      <strong className="text-emerald-400">{formatCurrency(shiftSalesTotal)}</strong>
+                    </div>
+                    <div className="bg-[#151515] p-2 rounded-md border border-[#262626]">
+                      <span className="text-neutral-500 block text-[9px] uppercase font-sans">Turnos Ant. / Fora POS</span>
+                      <strong className="text-amber-400">+{formatCurrency(outsideShiftSales)}</strong>
+                    </div>
+                  </div>
+
+                  <p className="text-[10px] text-neutral-500 italic pt-0.5 leading-tight">
+                    A Visão Geral reflete todas as faturas do dia civil. A gaveta física calcula as entradas estritamente a partir da abertura deste turno ({formatDate(activeShift.openedAt)}).
+                  </p>
+                </div>
+              )}
 
               {/* Actions Grid */}
               <div className="grid grid-cols-2 gap-2 pt-1">
