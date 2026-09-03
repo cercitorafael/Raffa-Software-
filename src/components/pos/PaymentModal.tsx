@@ -18,7 +18,7 @@ import {
 
 interface PaymentModalProps {
   onClose: () => void;
-  onSuccess: () => void;
+  onSuccess: (sale?: any) => void;
 }
 
 export const PaymentModal: React.FC<PaymentModalProps> = ({ onClose, onSuccess }) => {
@@ -135,15 +135,17 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ onClose, onSuccess }
         ];
       }
 
-      await completeSale(
+      const completedSale = await completeSale(
         finalPayments,
         invoiceType,
         customCustomerNif.trim() || selectedCustomer?.taxNumber || '999999990',
         customCustomerName.trim() || selectedCustomer?.name || 'Consumidor Final'
       );
-      onSuccess();
+      notify('Venda registada com sucesso!', 'success');
+      onSuccess(completedSale);
     } catch (err: any) {
       console.error('Error completing sale:', err);
+      notify(err.message || 'Erro ao emitir venda', 'error');
     } finally {
       setIsProcessing(false);
     }
@@ -152,7 +154,6 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ onClose, onSuccess }
   const change = calculateChange();
   const canComplete =
     !isProcessing &&
-    !hasStockErrors &&
     (payments.length > 0
       ? totalPaidSoFar >= totalToPay - 0.001
       : selectedMethod === 'dinheiro'

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useApp } from '../../context/AppContext';
 import { formatCurrency } from '../../utils/crypto';
 import { sound } from '../../utils/audio';
@@ -84,6 +84,69 @@ export const POSModule: React.FC = () => {
   const [showDiscountModal, setShowDiscountModal] = useState(false);
   const [discountInput, setDiscountInput] = useState<number>(0);
   const [showSalesHistoryModal, setShowSalesHistoryModal] = useState(false);
+  const [selectedCartProductId, setSelectedCartProductId] = useState<string | null>(null);
+
+  // Global Keyboard Shortcuts for POS (Delete / Backspace to remove item, F12 to checkout)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const activeTag = document.activeElement?.tagName?.toLowerCase();
+      const isInput = activeTag === 'input' || activeTag === 'textarea' || activeTag === 'select';
+
+      // F12 -> Checkout
+      if (e.key === 'F12') {
+        e.preventDefault();
+        if (cart.length > 0 && !showPaymentModal) {
+          setShowPaymentModal(true);
+        }
+        return;
+      }
+
+      // Delete key or Backspace (when not typing in an input)
+      if (e.key === 'Delete' || (e.key === 'Backspace' && !isInput)) {
+        if (isInput) return;
+        if (
+          showPaymentModal ||
+          showReceiptModal ||
+          showCustomerPicker ||
+          showDiscountModal ||
+          showSalesHistoryModal ||
+          showShiftModal
+        ) {
+          return;
+        }
+
+        if (cart.length > 0) {
+          e.preventDefault();
+          const target = selectedCartProductId
+            ? cart.find((i) => i.productId === selectedCartProductId) || cart[cart.length - 1]
+            : cart[cart.length - 1];
+
+          if (target) {
+            removeFromCart(target.productId);
+            if (selectedCartProductId === target.productId) {
+              setSelectedCartProductId(null);
+            }
+            sound.playBeep();
+            notify(`Artigo "${target.productName}" removido (Tecla Delete)`, 'info');
+          }
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [
+    cart,
+    selectedCartProductId,
+    showPaymentModal,
+    showReceiptModal,
+    showCustomerPicker,
+    showDiscountModal,
+    showSalesHistoryModal,
+    showShiftModal,
+    removeFromCart,
+    notify,
+  ]);
 
   // Customer Picker Modal States & Quick Direct Input
   const [isTypingCustomer, setIsTypingCustomer] = useState(false);
@@ -134,12 +197,6 @@ export const POSModule: React.FC = () => {
     );
 
     if (found) {
-      const available = getProductStock(found.id);
-      if (available <= 0) {
-        sound.playError();
-        notify(`Venda não permitida: O artigo "${found.name}" está sem stock ou com stock zero (Stock: 0).`, 'error');
-        return;
-      }
       addToCart(found, qty);
       setBarcodeInput('');
       notify(`Adicionado: ${qty}x ${found.name}`, 'success');
@@ -453,17 +510,10 @@ export const POSModule: React.FC = () => {
                   <div
                     key={product.id}
                     onClick={() => {
-                      if (isOutOfStock) {
-                        sound.playError();
-                        notify(`Venda não permitida: O artigo "${product.name}" está sem stock ou esgotado (Stock: 0).`, 'error');
-                        return;
-                      }
                       addToCart(product);
                     }}
                     className={`bg-[#141414] rounded-xl border overflow-hidden shadow-xs transition-all flex flex-col group select-none ${
-                      isOutOfStock
-                        ? 'border-rose-900/30 opacity-60 cursor-not-allowed bg-[#140f0f]'
-                        : inCart
+                      inCart
                         ? 'border-[#c5a47e]/50 ring-1 ring-[#c5a47e]/30 cursor-pointer hover:border-[#c5a47e]/60 hover:shadow-md active:scale-98'
                         : 'border-[#262626] cursor-pointer hover:border-[#c5a47e]/60 hover:shadow-md active:scale-98'
                     }`}
@@ -542,17 +592,10 @@ export const POSModule: React.FC = () => {
                   <div
                     key={product.id}
                     onClick={() => {
-                      if (isOutOfStock) {
-                        sound.playError();
-                        notify(`Venda não permitida: O artigo "${product.name}" está sem stock ou esgotado (Stock: 0).`, 'error');
-                        return;
-                      }
                       addToCart(product);
                     }}
                     className={`p-2.5 sm:p-3 flex items-center justify-between gap-3 transition-all select-none ${
-                      isOutOfStock
-                        ? 'opacity-60 bg-[#120e0e] cursor-not-allowed'
-                        : inCart
+                      inCart
                         ? 'bg-[#c5a47e]/5 border-l-2 border-l-[#c5a47e] hover:bg-[#1c1c1c] cursor-pointer group active:bg-[#222]'
                         : 'hover:bg-[#1c1c1c] cursor-pointer group active:bg-[#222]'
                     }`}
@@ -910,12 +953,18 @@ export const POSModule: React.FC = () => {
               const isCustom = item.productId.startsWith('custom-');
               const itemStock = isCustom ? 9999 : getProductStock(item.productId);
               const isStockError = !isCustom && (itemStock <= 0 || item.quantity > itemStock);
+              const isSelected = selectedCartProductId === item.productId;
 
               return (
                 <div
                   key={item.productId}
-                  className={`bg-[#141414] rounded-lg p-2.5 border flex flex-col gap-1.5 transition-colors ${
-                    isStockError ? 'border-rose-700/80 bg-rose-950/20' : 'border-[#262626]'
+                  onClick={() => setSelectedCartProductId(item.productId)}
+                  className={`bg-[#141414] rounded-lg p-2.5 border flex flex-col gap-1.5 transition-all cursor-pointer ${
+                    isSelected
+                      ? 'border-[#c5a47e] ring-1 ring-[#c5a47e]/60 bg-[#171717]'
+                      : isStockError
+                      ? 'border-rose-700/80 bg-rose-950/20'
+                      : 'border-[#262626] hover:border-[#333333]'
                   }`}
                 >
                   <div className="flex items-start justify-between">
@@ -927,6 +976,11 @@ export const POSModule: React.FC = () => {
                         {isStockError && (
                           <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-rose-600 text-white animate-pulse shrink-0 font-mono">
                             {itemStock <= 0 ? 'STOCK ZERO' : `MAX: ${itemStock}`}
+                          </span>
+                        )}
+                        {isSelected && (
+                          <span className="px-1 py-0.2 rounded text-[8px] font-mono font-bold bg-[#c5a47e]/20 text-[#c5a47e] border border-[#c5a47e]/40">
+                            DEL
                           </span>
                         )}
                       </div>
@@ -948,7 +1002,10 @@ export const POSModule: React.FC = () => {
                   </div>
 
                   {/* Controls: Quantity +/- with direct typed input & Item Discount */}
-                  <div className="flex items-center justify-between pt-1 border-t border-[#262626]">
+                  <div
+                    className="flex items-center justify-between pt-1 border-t border-[#262626]"
+                    onClick={(e) => e.stopPropagation()}
+                  >
                     <div className="flex items-center space-x-1">
                       <button
                         type="button"
@@ -977,14 +1034,9 @@ export const POSModule: React.FC = () => {
 
                       <button
                         type="button"
-                        disabled={!isCustom && item.quantity >= itemStock}
                         onClick={() => updateCartQuantity(item.productId, item.quantity + 1)}
-                        className={`w-6 h-6 rounded-md border flex items-center justify-center transition-colors ${
-                          !isCustom && item.quantity >= itemStock
-                            ? 'bg-[#141414] border-[#222] text-neutral-600 cursor-not-allowed'
-                            : 'bg-[#1a1a1a] border-[#262626] text-neutral-300 hover:bg-[#262626] active:scale-95 cursor-pointer'
-                        }`}
-                        title={!isCustom && item.quantity >= itemStock ? 'Limite de stock atingido' : 'Aumentar quantidade (+1)'}
+                        className="w-6 h-6 rounded-md border border-[#262626] bg-[#1a1a1a] text-neutral-300 hover:bg-[#262626] active:scale-95 cursor-pointer flex items-center justify-center transition-colors"
+                        title="Aumentar quantidade (+1)"
                       >
                         <Plus className="w-3 h-3" />
                       </button>
@@ -1009,8 +1061,18 @@ export const POSModule: React.FC = () => {
                       </div>
 
                       <button
-                        onClick={() => removeFromCart(item.productId)}
-                        className="text-neutral-400 hover:text-rose-400 p-1 transition-colors cursor-pointer"
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          removeFromCart(item.productId);
+                          if (selectedCartProductId === item.productId) {
+                            setSelectedCartProductId(null);
+                          }
+                          sound.playBeep();
+                          notify(`Artigo "${item.productName}" removido`, 'info');
+                        }}
+                        className="text-neutral-400 hover:text-rose-400 hover:bg-rose-500/10 p-1.5 rounded-md transition-colors cursor-pointer"
+                        title="Eliminar artigo do carrinho (Tecla Delete)"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
@@ -1089,10 +1151,10 @@ export const POSModule: React.FC = () => {
             </div>
 
             {hasStockErrors && (
-              <div className="mt-2 p-2.5 rounded-lg bg-rose-500/15 border border-rose-500/40 text-rose-300 text-xs flex items-center gap-2">
-                <ShieldAlert className="w-4 h-4 text-rose-400 shrink-0" />
+              <div className="mt-2 p-2 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs flex items-center gap-2">
+                <ShieldAlert className="w-3.5 h-3.5 text-amber-400 shrink-0" />
                 <span className="leading-tight">
-                  <strong>Venda Bloqueada:</strong> Existem artigos com stock insuficiente ou a zero no cesto.
+                  <strong>Aviso:</strong> Artigos sem stock registado no cesto. A venda será debitada.
                 </span>
               </div>
             )}
@@ -1110,28 +1172,21 @@ export const POSModule: React.FC = () => {
           {/* Checkout Button */}
           <button
             onClick={() => {
-              if (hasStockErrors) {
-                sound.playError();
-                notify('Não é possível cobrar: Corrija os artigos com stock zero ou insuficiente no cesto.', 'error');
-                return;
-              }
               if (!activeShift) {
                 setShowShiftModal(true);
               } else {
                 setShowPaymentModal(true);
               }
             }}
-            disabled={cart.length === 0 || hasStockErrors}
+            disabled={cart.length === 0}
             className={`w-full py-3.5 rounded-xl font-bold text-xs uppercase tracking-widest transition-all flex items-center justify-center space-x-2 ${
-              cart.length > 0 && !hasStockErrors
+              cart.length > 0
                 ? 'bg-[#c5a47e] hover:bg-[#d4b896] text-black shadow-lg cursor-pointer active:scale-98'
                 : 'bg-[#1a1a1a] text-neutral-500 border border-[#262626] cursor-not-allowed'
             }`}
           >
             <Sparkles className="w-4 h-4" />
-            <span>
-              {hasStockErrors ? 'BLOQUEADO: SEM STOCK' : 'PAGAR / COBRAR (F12)'}
-            </span>
+            <span>PAGAR / COBRAR (F12)</span>
           </button>
         </div>
       </div>
@@ -1600,17 +1655,20 @@ export const POSModule: React.FC = () => {
       {showPaymentModal && (
         <PaymentModal
           onClose={() => setShowPaymentModal(false)}
-          onSuccess={() => {
+          onSuccess={(completedSale) => {
             setShowPaymentModal(false);
+            if (completedSale) {
+              setLastCompletedSale(completedSale);
+            }
             setShowReceiptModal(true);
           }}
         />
       )}
 
       {/* Post-Checkout Receipt Modal */}
-      {showReceiptModal && lastCompletedSale && (
+      {showReceiptModal && (lastCompletedSale || salesHistory[0]) && (
         <ReceiptModal
-          sale={lastCompletedSale}
+          sale={lastCompletedSale || salesHistory[0]}
           company={currentCompany}
           store={currentStore}
           onClose={() => setShowReceiptModal(false)}

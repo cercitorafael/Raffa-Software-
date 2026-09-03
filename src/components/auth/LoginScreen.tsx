@@ -88,7 +88,7 @@ export const LoginScreen: React.FC = () => {
           setPinInput((prev) => prev + e.key);
           setPinError(null);
         }
-      } else if (e.key === 'Backspace') {
+      } else if (e.key === 'Backspace' || e.key === 'Delete') {
         setPinInput((prev) => prev.slice(0, -1));
         setPinError(null);
       } else if (e.key === 'Enter') {

@@ -1,9 +1,27 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { AlertTriangle, Trash2, X, Check } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 
 export const ConfirmModal: React.FC = () => {
   const { confirmDialog, closeConfirm } = useApp();
+
+  useEffect(() => {
+    if (!confirmDialog || !confirmDialog.isOpen) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        closeConfirm();
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        confirmDialog.onConfirm();
+        closeConfirm();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [confirmDialog, closeConfirm]);
 
   if (!confirmDialog || !confirmDialog.isOpen) return null;
 
@@ -80,7 +98,10 @@ export const ConfirmModal: React.FC = () => {
           </button>
           <button
             type="button"
-            onClick={confirmDialog.onConfirm}
+            onClick={() => {
+              confirmDialog.onConfirm();
+              closeConfirm();
+            }}
             className={`px-4 py-2 rounded-lg text-xs font-bold flex items-center space-x-1.5 shadow-sm transition-all cursor-pointer ${
               isDestructive
                 ? 'bg-rose-600 hover:bg-rose-500 text-white'

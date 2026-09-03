@@ -415,6 +415,7 @@ export interface AppContextType {
   addTimeEntry: (entry: Omit<TimeClockEntry, 'id'>) => void;
   updateTimeEntry: (id: string, entry: Partial<TimeClockEntry>) => void;
   deleteTimeEntry: (id: string) => void;
+  approveTimeEntry: (id: string, approvedBy?: string) => void;
   clockInEmployee: (employeeId: string) => void;
   clockOutEmployee: (employeeId: string) => void;
 
@@ -423,6 +424,10 @@ export interface AppContextType {
   addPayrollSlip: (slip: Omit<PayrollSlip, 'id'>) => void;
   updatePayrollSlip: (id: string, slip: Partial<PayrollSlip>) => void;
   deletePayrollSlip: (id: string) => void;
+  addPayroll: (slip: Omit<PayrollSlip, 'id'>) => void;
+  updatePayroll: (id: string, slip: Partial<PayrollSlip>) => void;
+  deletePayroll: (id: string) => void;
+  clearAllPayrolls: () => void;
   markPayrollPaid: (id: string) => void;
 
   employeeShifts: EmployeeShift[];
@@ -3277,16 +3282,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     referenceDoc?: string,
     reason?: string
   ) => {
+    const compId = currentCompany?.id || 'comp-1';
+    const companyWarehouses = warehouses.filter((w) => w.companyId === compId);
     const targetWhId =
       warehouseId ||
-      currentStore.defaultWarehouseId ||
+      currentStore?.defaultWarehouseId ||
+      companyWarehouses[0]?.id ||
       warehouses[0]?.id ||
       'wh-default';
 
     const affectedStockList: StockItem[] = [];
     const newMovements: StockMovement[] = [];
     const nowIso = new Date().toISOString();
-    const compId = currentCompany?.id || 'comp-1';
     const opId = currentUser?.id || 'user-1';
 
     // 1. Update stock levels
@@ -3318,6 +3325,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         } else {
           const newStk: StockItem = {
             id: `stk-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+            companyId: compId,
             productId: item.productId,
             warehouseId: targetWhId,
             quantity: 0,
@@ -3643,7 +3651,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         const item = stock.find(
           (s) => s.productId === productId && s.warehouseId === targetWhId && (s.companyId === compId || companyWhIds.has(s.warehouseId))
         );
-        if (item) {
+        if (item && item.quantity > 0) {
           return Math.max(0, (Number(item.quantity) || 0) - (Number(item.reserved) || 0));
         }
       }
@@ -3664,14 +3672,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const addToCart = (product: Product, quantity = 1) => {
     const available = getAvailableStock(product.id);
-
-    // Strict block on zero or negative stock
-    if (available <= 0) {
-      sound.playError();
-      notify(`Venda não permitida: O artigo "${product.name}" está sem stock ou com stock zero (Stock: 0).`, 'error');
-      return;
-    }
-
     let addedSuccessfully = false;
 
     setCart((prev) => {
@@ -3679,13 +3679,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const currentInCart = idx >= 0 ? prev[idx].quantity : 0;
       const targetQty = currentInCart + quantity;
 
-      if (targetQty > available) {
-        sound.playError();
+      if (available <= 0) {
+        notify(`Artigo "${product.name}" adicionado. Aviso: Sem stock suficiente registado.`, 'info');
+      } else if (targetQty > available) {
         notify(
-          `Stock insuficiente para "${product.name}". Disponível: ${available} ${product.unit || 'un'} (já no cesto: ${currentInCart}).`,
-          'warning'
+          `Artigo "${product.name}": Quantidade (${targetQty}) excede stock (${available}). Venda autorizada.`,
+          'info'
         );
-        return prev;
       }
 
       addedSuccessfully = true;
@@ -3754,8 +3754,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const updateCartQuantity = (productId: string, quantityOrDelta: number, isDelta = false) => {
-    const available = getAvailableStock(productId);
-
     setCart((prev) => {
       const targetItem = prev.find((i) => i.productId === productId);
       if (!targetItem) return prev;
@@ -3765,69 +3763,28 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         return prev.filter((i) => i.productId !== productId);
       }
 
-      // Check stock availability
-      if (available <= 0) {
-        sound.playError();
-        notify(`Artigo "${targetItem.productName}" sem stock. Removido do cesto.`, 'error');
-        return prev.filter((i) => i.productId !== productId);
-      }
-
-      if (newQty > available) {
-        sound.playError();
-        notify(
-          `Stock insuficiente para "${targetItem.productName}". Quantidade máxima disponível: ${available}.`,
-          'warning'
-        );
-        return prev.map((item) => {
-          if (item.productId === productId) {
-            const cappedQty = available;
-            const discountPct = Number(item.discountPercent ?? item.discount ?? 0);
-            const unitPrice = Number(item.unitPrice || 0);
-            const gross = cappedQty * unitPrice;
-            const discountAmount = (gross * discountPct) / 100;
-            const total = Math.max(0, gross - discountAmount);
-            const rate = typeof item.taxRate === 'number' ? item.taxRate : 23;
-            const base = total / (1 + rate / 100);
-            const taxAmount = total - base;
-            return {
-              ...item,
-              quantity: cappedQty,
-              discountPercent: discountPct,
-              discount: discountPct,
-              discountAmount,
-              taxAmount,
-              total,
-            };
-          }
-          return item;
-        });
-      }
-
-      return prev
-        .map((item) => {
-          if (item.productId === productId) {
-            const discountPct = Number(item.discountPercent ?? item.discount ?? 0);
-            const unitPrice = Number(item.unitPrice || 0);
-            const gross = newQty * unitPrice;
-            const discountAmount = (gross * discountPct) / 100;
-            const total = Math.max(0, gross - discountAmount);
-            const rate = typeof item.taxRate === 'number' ? item.taxRate : 23;
-            const base = total / (1 + rate / 100);
-            const taxAmount = total - base;
-
-            return {
-              ...item,
-              quantity: newQty,
-              discountPercent: discountPct,
-              discount: discountPct,
-              discountAmount,
-              taxAmount,
-              total,
-            };
-          }
-          return item;
-        })
-        .filter(Boolean) as CartItem[];
+      return prev.map((item) => {
+        if (item.productId === productId) {
+          const discountPct = Number(item.discountPercent ?? item.discount ?? 0);
+          const unitPrice = Number(item.unitPrice || 0);
+          const gross = newQty * unitPrice;
+          const discountAmount = (gross * discountPct) / 100;
+          const total = Math.max(0, gross - discountAmount);
+          const rate = typeof item.taxRate === 'number' ? item.taxRate : 23;
+          const base = total / (1 + rate / 100);
+          const taxAmount = total - base;
+          return {
+            ...item,
+            quantity: newQty,
+            discountPercent: discountPct,
+            discount: discountPct,
+            discountAmount,
+            taxAmount,
+            total,
+          };
+        }
+        return item;
+      });
     });
   };
 
@@ -3869,26 +3826,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     customerTaxNumber?: string,
     customerName?: string
   ): Promise<Sale> => {
-    if (cart.length === 0) throw new Error('Carrinho vazio');
-
-    // Strict stock verification before finalizing sale
-    for (const item of cart) {
-      if (!item.productId || item.productId.startsWith('custom-')) continue;
-      const available = getAvailableStock(item.productId, currentStore.defaultWarehouseId);
-      if (available <= 0) {
-        sound.playError();
-        notify(`Venda não permitida: O artigo "${item.productName}" está com stock zero ou esgotado.`, 'error');
-        throw new Error(`Artigo "${item.productName}" está sem stock.`);
-      }
-      if (item.quantity > available) {
-        sound.playError();
-        notify(
-          `Venda não permitida: Quantidade solicitada de "${item.productName}" (${item.quantity}) excede o stock disponível (${available}).`,
-          'error'
-        );
-        throw new Error(`Stock insuficiente para "${item.productName}".`);
-      }
-    }
+    if (!cart || cart.length === 0) throw new Error('Carrinho vazio');
 
     const subtotal = cart.reduce((acc, item) => acc + Number(item.unitPrice || 0) * Number(item.quantity || 0), 0);
     const itemDiscounts = cart.reduce((acc, item) => acc + Number(item.discountAmount || 0), 0);
@@ -3919,13 +3857,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const totalPaid = paymentMethods.reduce((sum, p) => sum + Number(p.amount || 0), 0);
     const changeAmount = Math.max(0, totalPaid - finalTotal);
 
+    const compId = currentCompany?.id || 'comp-1';
+    const storeId = currentStore?.id || 'store-1';
+    const termId = currentTerminal?.id || 'term-1';
+    const opId = currentUser?.id || 'user-1';
+    const opName = currentUser?.name || 'Operador';
+    const compTaxNumber = currentCompany?.taxNumber || '999999990';
+    const tmplId = currentCompany?.activeInvoiceTemplateId || 'classic';
+
     const sale: Sale = {
-      id: `sale-${Date.now()}`,
-      companyId: currentCompany.id,
-      storeId: currentStore.id,
-      terminalId: currentTerminal.id,
-      operatorId: currentUser.id,
-      operatorName: currentUser.name,
+      id: `sale-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+      companyId: compId,
+      storeId: storeId,
+      terminalId: termId,
+      operatorId: opId,
+      operatorName: opName,
       shiftId: activeShift?.id || 'no-shift',
       invoiceNumber: invNumber,
       invoiceType: invType,
@@ -3949,16 +3895,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       customerId: selectedCustomer?.id,
       fiscalHash,
       previousHash: prevHash,
-      atcud: `ATCUD-${currentCompany.taxNumber}-${invNumber}`,
+      atcud: `ATCUD-${compTaxNumber}-${invNumber}`,
       isOffline: !isOnline,
       isSynced: isOnline,
-      invoiceTemplateId: currentCompany.activeInvoiceTemplateId,
+      invoiceTemplateId: tmplId,
+      status: 'emitido',
     };
 
     // 1. Decrement Stock reliably for all sold items
     deductStockForItems(
       cart,
-      currentStore.defaultWarehouseId,
+      currentStore?.defaultWarehouseId,
       invNumber,
       `Venda a balcão POS (${invNumber})`
     );
@@ -3967,25 +3914,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (activeShift) {
       const cashAmt = paymentMethods
         .filter((p) => p.method === 'dinheiro')
-        .reduce((sum, p) => sum + p.amount, 0);
+        .reduce((sum, p) => sum + Number(p.amount || 0), 0);
       const cardAmt = paymentMethods
         .filter((p) => p.method === 'cartao')
-        .reduce((sum, p) => sum + p.amount, 0);
+        .reduce((sum, p) => sum + Number(p.amount || 0), 0);
       const mbwayAmt = paymentMethods
-        .filter((p) => p.method === 'mbway')
-        .reduce((sum, p) => sum + p.amount, 0);
+        .filter((p) => p.method === 'mbway' || p.method === 'mpesa' || p.method === 'emola')
+        .reduce((sum, p) => sum + Number(p.amount || 0), 0);
 
-      setActiveShift((prev) =>
-        prev
-          ? {
-              ...prev,
-              totalSales: prev.totalSales + finalTotal,
-              totalCash: prev.totalCash + cashAmt,
-              totalCards: prev.totalCards + cardAmt,
-              totalMbway: prev.totalMbway + mbwayAmt,
-            }
-          : null
-      );
+      const updatedShift: CashShift = {
+        ...activeShift,
+        totalSales: Number(activeShift.totalSales || 0) + finalTotal,
+        totalCash: Number(activeShift.totalCash || 0) + cashAmt,
+        totalCards: Number(activeShift.totalCards || 0) + cardAmt,
+        totalMbway: Number(activeShift.totalMbway || 0) + mbwayAmt,
+      };
+
+      setActiveShift(updatedShift);
+      saveToStorage('activeShift', updatedShift);
+      pushRecordToSupabase('turnos_caixa', 'upsert', updatedShift);
     }
 
     // 3. Update Customer loyalty
@@ -3993,9 +3940,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       addLoyaltyPoints(selectedCustomer.id, Math.floor(finalTotal));
     }
 
-    // 4. Save to Sales History
-    setSalesHistory((prev) => [sale, ...prev]);
+    // 4. Save to Sales History immediately
+    setSalesHistory((prev) => {
+      const updated = [sale, ...prev];
+      saveToStorage('salesHistory', updated);
+      return updated;
+    });
     setLastCompletedSale(sale);
+    saveToStorage('lastCompletedSale', sale);
     pushRecordToSupabase('vendas', 'insert', sale);
 
     // 5. Offline handling
@@ -4101,8 +4053,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     if (restockStock && !['ORC', 'PF', 'NC', 'RC'].includes(doc.invoiceType || '')) {
       const targetWh = doc.storeId
-        ? stores.find((s) => s.id === doc.storeId)?.defaultWarehouseId || currentStore.defaultWarehouseId
-        : currentStore.defaultWarehouseId;
+        ? stores.find((s) => s.id === doc.storeId)?.defaultWarehouseId || currentStore?.defaultWarehouseId || warehouses[0]?.id || 'wh-default'
+        : currentStore?.defaultWarehouseId || warehouses[0]?.id || 'wh-default';
       replenishStockForItems(
         doc.items,
         targetWh,
@@ -4111,7 +4063,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       );
     }
 
-    setSalesHistory((prev) => prev.filter((s) => s.id !== id));
+    setSalesHistory((prev) => {
+      const updated = prev.filter((s) => s.id !== id);
+      saveToStorage('salesHistory', updated);
+      return updated;
+    });
     pushRecordToSupabase('vendas', 'delete', { id });
     emitEvent('Financeiro', 'document.deleted', {
       documentId: id,
@@ -4126,10 +4082,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     let toDelete: Sale[] = [];
     if (!idsOrScope || idsOrScope === 'all') {
       toDelete = [...salesHistory];
-      setSalesHistory([]);
     } else if (Array.isArray(idsOrScope)) {
       toDelete = salesHistory.filter((s) => idsOrScope.includes(s.id));
-      setSalesHistory((prev) => prev.filter((s) => !idsOrScope.includes(s.id)));
     }
 
     if (toDelete.length === 0) {
@@ -4141,8 +4095,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       toDelete.forEach((doc) => {
         if (!['ORC', 'PF', 'NC', 'RC'].includes(doc.invoiceType || '')) {
           const targetWh = doc.storeId
-            ? stores.find((s) => s.id === doc.storeId)?.defaultWarehouseId || currentStore.defaultWarehouseId
-            : currentStore.defaultWarehouseId;
+            ? stores.find((s) => s.id === doc.storeId)?.defaultWarehouseId || currentStore?.defaultWarehouseId || warehouses[0]?.id || 'wh-default'
+            : currentStore?.defaultWarehouseId || warehouses[0]?.id || 'wh-default';
           replenishStockForItems(
             doc.items,
             targetWh,
@@ -4152,6 +4106,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         }
       });
     }
+
+    setSalesHistory((prev) => {
+      let updated: Sale[];
+      if (!idsOrScope || idsOrScope === 'all') {
+        updated = [];
+      } else {
+        updated = prev.filter((s) => !idsOrScope.includes(s.id));
+      }
+      saveToStorage('salesHistory', updated);
+      return updated;
+    });
 
     toDelete.forEach((doc) => {
       pushRecordToSupabase('vendas', 'delete', { id: doc.id });
@@ -4747,9 +4712,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const deleteEmployee = (id: string) => {
+    const target = employees.find((e) => e.id === id);
     setEmployees((prev) => prev.filter((e) => e.id !== id));
-    emitEvent('RH', 'hr.employee.deleted', { employeeId: id });
+    emitEvent('RH', 'hr.employee.deleted', { employeeId: id, name: target?.name, companyId: target?.companyId });
     sound.playSuccessChime();
+    notify(`Colaborador "${target?.name || id}" eliminado com sucesso.`, 'success');
   };
 
   const addTimeEntry = (entry: Omit<TimeClockEntry, 'id'>) => {
@@ -4758,6 +4725,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setTimeEntries((prev) => [newEntry, ...prev]);
     emitEvent('RH', 'hr.timeclock.manual_entry', { entryId: id, employee: entry.employeeName });
     sound.playSuccessChime();
+    notify(`Ponto de ${entry.employeeName} registado com sucesso.`, 'success');
   };
 
   const updateTimeEntry = (id: string, updates: Partial<TimeClockEntry>) => {
@@ -4766,12 +4734,32 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     );
     emitEvent('RH', 'hr.timeclock.updated', { entryId: id, updates });
     sound.playSuccessChime();
+    notify('Registo de ponto atualizado com sucesso.', 'success');
   };
 
   const deleteTimeEntry = (id: string) => {
+    const target = timeEntries.find((t) => t.id === id);
     setTimeEntries((prev) => prev.filter((t) => t.id !== id));
-    emitEvent('RH', 'hr.timeclock.deleted', { entryId: id });
+    emitEvent('RH', 'hr.timeclock.deleted', { entryId: id, employee: target?.employeeName });
     sound.playSuccessChime();
+    notify('Registo de ponto eliminado com sucesso.', 'success');
+  };
+
+  const approveTimeEntry = (id: string, approvedBy = 'Diretor RH') => {
+    setTimeEntries((prev) =>
+      prev.map((t) =>
+        t.id === id
+          ? {
+              ...t,
+              status: 'aprovado',
+              approvedBy: approvedBy || 'Diretor RH',
+            }
+          : t
+      )
+    );
+    emitEvent('RH', 'hr.timeclock.approved', { entryId: id, approvedBy });
+    sound.playSuccessChime();
+    notify('Registo de ponto aprovado com sucesso.', 'success');
   };
 
   const clockInEmployee = (employeeId: string) => {
@@ -4796,9 +4784,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setTimeEntries((prev) => [newEntry, ...prev]);
     emitEvent('RH', 'hr.timeclock.clock_in', { employee: emp.name, time: timeStr });
     sound.playSuccessChime();
+    notify(`Picagem de Entrada registada para ${emp.name}.`, 'success');
   };
 
   const clockOutEmployee = (employeeId: string) => {
+    const emp = employees.find((e) => e.id === employeeId);
     const now = new Date();
     const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
     setTimeEntries((prev) =>
@@ -4816,14 +4806,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     );
     emitEvent('RH', 'hr.timeclock.clock_out', { employeeId, time: timeStr });
     sound.playSuccessChime();
+    notify(`Picagem de Saída registada para ${emp?.name || 'Colaborador'}.`, 'success');
   };
 
   const addPayrollSlip = (slip: Omit<PayrollSlip, 'id'>) => {
-    const id = `pay-${Date.now()}`;
-    const newSlip: PayrollSlip = { ...slip, id };
+    const compId = slip.companyId || currentCompany?.id || 'comp-1';
+    const id = `pay-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+    const newSlip: PayrollSlip = {
+      ...slip,
+      id,
+      companyId: compId,
+      monthYear: slip.monthYear || (slip as any).month || new Date().toISOString().slice(0, 7),
+    };
     setPayrolls((prev) => [newSlip, ...prev]);
-    emitEvent('RH', 'hr.payroll.created', { payrollId: id, employee: slip.employeeName });
+    emitEvent('RH', 'hr.payroll.created', { payrollId: id, employee: slip.employeeName, companyId: compId });
     sound.playSuccessChime();
+    notify(`Recibo de vencimento de ${slip.employeeName} criado com sucesso.`, 'success');
   };
 
   const updatePayrollSlip = (id: string, updates: Partial<PayrollSlip>) => {
@@ -4832,15 +4830,32 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     );
     emitEvent('RH', 'hr.payroll.updated', { payrollId: id, updates });
     sound.playSuccessChime();
+    notify('Recibo salarial atualizado com sucesso.', 'success');
   };
 
   const deletePayrollSlip = (id: string) => {
-    setPayrolls((prev) => prev.filter((p) => p.id !== id));
-    emitEvent('RH', 'hr.payroll.deleted', { payrollId: id });
+    const target = payrolls.find((p) => p.id === id);
+    setPayrolls((prev) => {
+      const updated = prev.filter((p) => p.id !== id);
+      saveToStorage('payrolls', updated);
+      return updated;
+    });
+    emitEvent('RH', 'hr.payroll.deleted', { payrollId: id, employee: target?.employeeName });
     sound.playSuccessChime();
+    notify(`Recibo de vencimento ${target?.employeeName ? `de ${target.employeeName}` : ''} eliminado com sucesso.`, 'success');
+  };
+
+  const clearAllPayrolls = () => {
+    const count = payrolls.length;
+    setPayrolls([]);
+    saveToStorage('payrolls', []);
+    emitEvent('RH', 'hr.payroll.cleared', { count });
+    sound.playSuccessChime();
+    notify(`Todos os ${count} recibos de vencimento foram eliminados.`, 'success');
   };
 
   const markPayrollPaid = (id: string) => {
+    const target = payrolls.find((p) => p.id === id);
     setPayrolls((prev) =>
       prev.map((p) =>
         p.id === id
@@ -4852,12 +4867,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           : p
       )
     );
-    emitEvent('RH', 'hr.payroll.paid', { payrollId: id });
+    emitEvent('RH', 'hr.payroll.paid', { payrollId: id, employee: target?.employeeName });
     sound.playSuccessChime();
+    notify(`Recibo de vencimento ${target?.employeeName ? `de ${target.employeeName}` : ''} marcado como pago.`, 'success');
   };
 
   const processMonthlyPayroll = (monthYear: string) => {
-    const activeEmployees = employees.filter((e) => e.status === 'ativo');
+    const compId = currentCompany?.id || 'comp-1';
+    const activeEmployees = employees.filter(
+      (e) => e.status === 'ativo' && (!e.companyId || e.companyId === compId)
+    );
     const newSlips: PayrollSlip[] = activeEmployees.map((emp) => {
       const base = emp.baseSalary;
       const meal = (emp.mealAllowanceDaily || 9.60) * 22;
@@ -4871,16 +4890,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       return {
         id: `pay-${Date.now()}-${emp.id}`,
-        companyId: currentCompany.id,
+        companyId: compId,
         employeeId: emp.id,
         employeeName: emp.name,
         employeeRole: emp.role,
         taxNumber: emp.taxNumber,
+        month: monthYear,
         monthYear,
         baseSalary: base,
         mealAllowance: meal,
+        bonus: 0,
         grossTotal: gross,
         socialSecurityDeduction: ssDeduction,
+        socialSecurityRetention: ssDeduction,
         irsRetention,
         netSalary: net,
         companySocialSecurity: compSS,
@@ -4891,19 +4913,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     setPayrolls((prev) => [...newSlips, ...prev]);
     emitEvent('RH', 'hr.payroll.monthly_processed', {
+      companyId: compId,
       monthYear,
       slipsCount: newSlips.length,
       totalNet: newSlips.reduce((acc, s) => acc + s.netSalary, 0),
     });
     sound.playSuccessChime();
+    notify(`Processamento salarial de ${monthYear} concluído (${newSlips.length} recibos gerados).`, 'success');
   };
 
   const addEmployeeShift = (shift: Omit<EmployeeShift, 'id'>) => {
+    const compId = (shift as any).companyId || currentCompany?.id || 'comp-1';
     const id = `sh-${Date.now()}`;
-    const newShift: EmployeeShift = { ...shift, id };
+    const newShift: EmployeeShift = { ...shift, id, ...(shift as any), companyId: compId };
     setEmployeeShifts((prev) => [newShift, ...prev]);
-    emitEvent('RH', 'hr.shift.created', { shiftId: id });
+    emitEvent('RH', 'hr.shift.created', { shiftId: id, companyId: compId });
     sound.playSuccessChime();
+    notify('Escala de turno agendada com sucesso.', 'success');
   };
 
   const updateEmployeeShift = (id: string, updates: Partial<EmployeeShift>) => {
@@ -4912,12 +4938,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     );
     emitEvent('RH', 'hr.shift.updated', { shiftId: id, updates });
     sound.playSuccessChime();
+    notify('Turno atualizado com sucesso.', 'success');
   };
 
   const deleteEmployeeShift = (id: string) => {
     setEmployeeShifts((prev) => prev.filter((s) => s.id !== id));
     emitEvent('RH', 'hr.shift.deleted', { shiftId: id });
     sound.playSuccessChime();
+    notify('Turno de serviço eliminado com sucesso.', 'success');
   };
 
   // ==================== CRM & CLIENTES CRUD ====================
@@ -5478,6 +5506,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         addPayrollSlip,
         updatePayrollSlip,
         deletePayrollSlip,
+        addPayroll: addPayrollSlip,
+        updatePayroll: updatePayrollSlip,
+        deletePayroll: deletePayrollSlip,
+        clearAllPayrolls,
         markPayrollPaid,
         employeeShifts,
         addEmployeeShift,

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useApp } from '../../context/AppContext';
 import { formatCurrency, formatDate } from '../../utils/crypto';
 import {
@@ -46,11 +46,13 @@ export const HRModule: React.FC = () => {
     addPayroll,
     updatePayroll,
     deletePayroll,
+    clearAllPayrolls,
     addEmployeeShift,
     updateEmployeeShift,
     deleteEmployeeShift,
     hasPermission,
     requestConfirm,
+    closeConfirm,
     notify,
   } = useApp();
 
@@ -131,6 +133,159 @@ export const HRModule: React.FC = () => {
   const canCreate = hasPermission('hr', 'create');
   const canEdit = hasPermission('hr', 'edit');
   const canDelete = hasPermission('hr', 'delete');
+
+  // Selected row tracking for keyboard Delete / Backspace actions
+  const [selectedPayrollId, setSelectedPayrollId] = useState<string | null>(null);
+  const [selectedEmployeeId, setSelectedEmployeeId] = useState<string | null>(null);
+  const [selectedTimeEntryId, setSelectedTimeEntryId] = useState<string | null>(null);
+  const [selectedShiftId, setSelectedShiftId] = useState<string | null>(null);
+
+  // Keyboard shortcut for Delete / Backspace in HR module
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const activeTag = document.activeElement?.tagName?.toLowerCase();
+      const isInput = activeTag === 'input' || activeTag === 'textarea' || activeTag === 'select';
+      if (isInput) return;
+
+      const isModalOpen =
+        showNewEmpModal ||
+        !!editingEmployee ||
+        showNewTimeModal ||
+        !!editingTimeEntry ||
+        showNewShiftModal ||
+        !!editingShift ||
+        showNewPayrollModal ||
+        !!editingPayroll;
+
+      if (isModalOpen) return;
+
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        if (activeTab === 'payroll') {
+          if (!canDelete || payrolls.length === 0) return;
+          const target = selectedPayrollId
+            ? payrolls.find((p) => p.id === selectedPayrollId) || payrolls[0]
+            : payrolls[0];
+
+          if (target) {
+            e.preventDefault();
+            const monthDisplay = target.monthYear || (target as any).month || currentMonthStr;
+            requestConfirm({
+              title: 'Eliminar Recibo de Vencimento',
+              message: `Tem a certeza que deseja eliminar o recibo de vencimento do colaborador "${target.employeeName}"?`,
+              itemDetails: `Mês: ${monthDisplay} | Líquido a Pagar: ${formatCurrency(target.netSalary)} | Estado: ${target.status}`,
+              confirmLabel: 'Eliminar Recibo',
+              isDestructive: true,
+              onConfirm: () => {
+                deletePayroll(target.id);
+                if (selectedPayrollId === target.id) {
+                  setSelectedPayrollId(null);
+                }
+                closeConfirm();
+              },
+            });
+          }
+        } else if (activeTab === 'directory') {
+          if (!canDelete || employees.length === 0) return;
+          const target = selectedEmployeeId
+            ? employees.find((emp) => emp.id === selectedEmployeeId) || employees[0]
+            : employees[0];
+
+          if (target) {
+            e.preventDefault();
+            requestConfirm({
+              title: 'Eliminar Colaborador',
+              message: `Tem a certeza que deseja eliminar o colaborador "${target.name}"?`,
+              itemDetails: `Cargo: ${target.role} | Departamento: ${target.department} | NIF: ${target.taxNumber}`,
+              confirmLabel: 'Eliminar Colaborador',
+              isDestructive: true,
+              onConfirm: () => {
+                deleteEmployee(target.id);
+                if (selectedEmployeeId === target.id) {
+                  setSelectedEmployeeId(null);
+                }
+                closeConfirm();
+              },
+            });
+          }
+        } else if (activeTab === 'timeclock') {
+          if (!canDelete || timeEntries.length === 0) return;
+          const target = selectedTimeEntryId
+            ? timeEntries.find((te) => te.id === selectedTimeEntryId) || timeEntries[0]
+            : timeEntries[0];
+
+          if (target) {
+            e.preventDefault();
+            requestConfirm({
+              title: 'Eliminar Registo de Ponto',
+              message: `Tem a certeza que deseja eliminar o registo de ponto de "${target.employeeName}"?`,
+              itemDetails: `Data: ${formatDate(target.clockIn)} | Horas: ${target.totalHours.toFixed(1)}h`,
+              confirmLabel: 'Eliminar Registo',
+              isDestructive: true,
+              onConfirm: () => {
+                deleteTimeEntry(target.id);
+                if (selectedTimeEntryId === target.id) {
+                  setSelectedTimeEntryId(null);
+                }
+                closeConfirm();
+              },
+            });
+          }
+        } else if (activeTab === 'shifts') {
+          if (!canDelete || employeeShifts.length === 0) return;
+          const target = selectedShiftId
+            ? employeeShifts.find((s) => s.id === selectedShiftId) || employeeShifts[0]
+            : employeeShifts[0];
+
+          if (target) {
+            e.preventDefault();
+            requestConfirm({
+              title: 'Eliminar Turno Agendado',
+              message: `Tem a certeza que deseja eliminar o turno agendado de "${target.employeeName}"?`,
+              itemDetails: `Data: ${formatDate(target.date)} | Horário: ${target.startTime} - ${target.endTime}`,
+              confirmLabel: 'Eliminar Turno',
+              isDestructive: true,
+              onConfirm: () => {
+                deleteEmployeeShift(target.id);
+                if (selectedShiftId === target.id) {
+                  setSelectedShiftId(null);
+                }
+                closeConfirm();
+              },
+            });
+          }
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [
+    activeTab,
+    canDelete,
+    selectedPayrollId,
+    selectedEmployeeId,
+    selectedTimeEntryId,
+    selectedShiftId,
+    payrolls,
+    employees,
+    timeEntries,
+    employeeShifts,
+    showNewEmpModal,
+    editingEmployee,
+    showNewTimeModal,
+    editingTimeEntry,
+    showNewShiftModal,
+    editingShift,
+    showNewPayrollModal,
+    editingPayroll,
+    deletePayroll,
+    deleteEmployee,
+    deleteTimeEntry,
+    deleteEmployeeShift,
+    requestConfirm,
+    closeConfirm,
+    currentMonthStr,
+  ]);
 
   const totalPayrollCost = employees.reduce((sum, e) => {
     const meal = 22 * e.mealAllowanceDaily;
@@ -441,8 +596,15 @@ export const HRModule: React.FC = () => {
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {filteredEmployees.map((emp) => {
                 const store = stores.find((s) => s.id === emp.storeId);
+                const isSelected = selectedEmployeeId === emp.id;
                 return (
-                  <div key={emp.id} className="bg-[#141414] border border-[#262626] rounded-xl p-5 hover:border-[#383838] transition-all">
+                  <div
+                    key={emp.id}
+                    onClick={() => setSelectedEmployeeId(emp.id)}
+                    className={`bg-[#141414] border rounded-xl p-5 transition-all cursor-pointer ${
+                      isSelected ? 'border-[#c5a47e] ring-1 ring-[#c5a47e]/50' : 'border-[#262626] hover:border-[#383838]'
+                    }`}
+                  >
                     <div className="flex items-start justify-between">
                       <div className="flex items-center space-x-3">
                         <img
@@ -451,15 +613,23 @@ export const HRModule: React.FC = () => {
                           className="w-12 h-12 rounded-full object-cover border border-[#333]"
                         />
                         <div>
-                          <h3 className="font-semibold text-neutral-200 text-sm">{emp.name}</h3>
+                          <div className="flex items-center space-x-1.5">
+                            {isSelected && (
+                              <span className="px-1 py-0.5 rounded text-[8px] font-mono font-bold bg-[#c5a47e]/20 text-[#c5a47e] border border-[#c5a47e]/40">
+                                DEL
+                              </span>
+                            )}
+                            <h3 className="font-semibold text-neutral-200 text-sm">{emp.name}</h3>
+                          </div>
                           <p className="text-xs text-[#c5a47e]">{emp.role}</p>
                           <span className="text-[11px] text-neutral-500">{emp.department}</span>
                         </div>
                       </div>
 
-                      <div className="flex items-center space-x-1">
+                      <div className="flex items-center space-x-1" onClick={(e) => e.stopPropagation()}>
                         {canEdit && (
                           <button
+                            type="button"
                             onClick={() => {
                               setEditingEmployee(emp);
                               setEmpForm({
@@ -486,6 +656,7 @@ export const HRModule: React.FC = () => {
                         )}
                         {canDelete && (
                           <button
+                            type="button"
                             onClick={() => {
                               requestConfirm({
                                 title: 'Eliminar Colaborador',
@@ -495,10 +666,15 @@ export const HRModule: React.FC = () => {
                                 isDestructive: true,
                                 onConfirm: () => {
                                   deleteEmployee(emp.id);
+                                  if (selectedEmployeeId === emp.id) {
+                                    setSelectedEmployeeId(null);
+                                  }
+                                  closeConfirm();
                                 },
                               });
                             }}
                             className="p-1.5 hover:bg-neutral-800 rounded-md text-rose-400 cursor-pointer"
+                            title="Eliminar Colaborador (Tecla Delete)"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
@@ -569,78 +745,104 @@ export const HRModule: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#262626]">
-                  {timeEntries.map((te) => (
-                    <tr key={te.id} className="hover:bg-[#191919] transition-colors">
-                      <td className="px-4 py-3 font-medium text-neutral-200">{te.employeeName}</td>
-                      <td className="px-4 py-3 font-mono text-neutral-400">{formatDate(te.clockIn)}</td>
-                      <td className="px-4 py-3 font-mono text-neutral-400">
-                        {te.clockOut ? formatDate(te.clockOut) : <span className="text-emerald-400 font-semibold">Em Curso...</span>}
-                      </td>
-                      <td className="px-4 py-3 text-right font-mono font-semibold text-neutral-200">
-                        {te.totalHours ? `${te.totalHours.toFixed(1)}h` : '—'}
-                      </td>
-                      <td className="px-4 py-3 text-center">
-                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium uppercase ${
-                          te.status === 'aprovado' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30' :
-                          te.status === 'em_curso' ? 'bg-blue-500/10 text-blue-400 border border-blue-500/30' :
-                          'bg-neutral-800 text-neutral-400'
-                        }`}>
-                          {te.status}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-neutral-400">{te.approvedBy || '—'}</td>
-                      <td className="px-4 py-3 text-right">
-                        <div className="flex items-center justify-end space-x-1">
-                          {te.status !== 'aprovado' && canEdit && (
-                            <button
-                              onClick={() => approveTimeEntry(te.id, 'Diretor RH')}
-                              className="px-2 py-1 bg-emerald-600/20 text-emerald-400 hover:bg-emerald-600/30 rounded text-[11px] font-medium cursor-pointer"
-                            >
-                              Aprovar
-                            </button>
-                          )}
-                          {canEdit && (
-                            <button
-                              onClick={() => {
-                                setEditingTimeEntry(te);
-                                const cIn = te.clockIn || new Date().toISOString();
-                                setTimeForm({
-                                  employeeId: te.employeeId,
-                                  date: cIn.split('T')[0],
-                                  clockIn: cIn.split('T')[1]?.slice(0, 5) || '09:00',
-                                  clockOut: te.clockOut ? te.clockOut.split('T')[1]?.slice(0, 5) || '18:00' : '18:00',
-                                  breakMinutes: 60,
-                                  notes: te.notes || '',
-                                });
-                              }}
-                              className="p-1.5 hover:bg-neutral-800 rounded text-cyan-400 cursor-pointer"
-                            >
-                              <Edit2 className="w-3.5 h-3.5" />
-                            </button>
-                          )}
-                          {canDelete && (
-                            <button
-                              onClick={() => {
-                                requestConfirm({
-                                  title: 'Eliminar Registo de Ponto',
-                                  message: `Tem a certeza que deseja eliminar o registo de ponto do colaborador ${te.employeeName}?`,
-                                  itemDetails: `Data: ${formatDate(te.clockIn)} | Horas Trabalhadas: ${te.totalHours.toFixed(1)}h | Estado: ${te.status}`,
-                                  confirmLabel: 'Eliminar Registo',
-                                  isDestructive: true,
-                                  onConfirm: () => {
-                                    deleteTimeEntry(te.id);
-                                  },
-                                });
-                              }}
-                              className="p-1.5 hover:bg-neutral-800 rounded text-rose-400 cursor-pointer"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
+                  {timeEntries.map((te) => {
+                    const isSelected = selectedTimeEntryId === te.id;
+                    return (
+                      <tr
+                        key={te.id}
+                        onClick={() => setSelectedTimeEntryId(te.id)}
+                        className={`transition-colors cursor-pointer ${
+                          isSelected ? 'bg-[#222222] ring-1 ring-[#c5a47e]/50' : 'hover:bg-[#191919]'
+                        }`}
+                      >
+                        <td className="px-4 py-3 font-medium text-neutral-200">
+                          <div className="flex items-center space-x-2">
+                            {isSelected && (
+                              <span className="px-1 py-0.5 rounded text-[8px] font-mono font-bold bg-[#c5a47e]/20 text-[#c5a47e] border border-[#c5a47e]/40">
+                                DEL
+                              </span>
+                            )}
+                            <span>{te.employeeName}</span>
+                          </div>
+                        </td>
+                        <td className="px-4 py-3 font-mono text-neutral-400">{formatDate(te.clockIn)}</td>
+                        <td className="px-4 py-3 font-mono text-neutral-400">
+                          {te.clockOut ? formatDate(te.clockOut) : <span className="text-emerald-400 font-semibold">Em Curso...</span>}
+                        </td>
+                        <td className="px-4 py-3 text-right font-mono font-semibold text-neutral-200">
+                          {te.totalHours ? `${te.totalHours.toFixed(1)}h` : '—'}
+                        </td>
+                        <td className="px-4 py-3 text-center">
+                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium uppercase ${
+                            te.status === 'aprovado' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30' :
+                            te.status === 'em_curso' ? 'bg-blue-500/10 text-blue-400 border border-blue-500/30' :
+                            'bg-neutral-800 text-neutral-400'
+                          }`}>
+                            {te.status}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-neutral-400">{te.approvedBy || '—'}</td>
+                        <td className="px-4 py-3 text-right" onClick={(e) => e.stopPropagation()}>
+                          <div className="flex items-center justify-end space-x-1">
+                            {te.status !== 'aprovado' && canEdit && (
+                              <button
+                                type="button"
+                                onClick={() => approveTimeEntry(te.id, 'Diretor RH')}
+                                className="px-2 py-1 bg-emerald-600/20 text-emerald-400 hover:bg-emerald-600/30 rounded text-[11px] font-medium cursor-pointer"
+                              >
+                                Aprovar
+                              </button>
+                            )}
+                            {canEdit && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setEditingTimeEntry(te);
+                                  const cIn = te.clockIn || new Date().toISOString();
+                                  setTimeForm({
+                                    employeeId: te.employeeId,
+                                    date: cIn.split('T')[0],
+                                    clockIn: cIn.split('T')[1]?.slice(0, 5) || '09:00',
+                                    clockOut: te.clockOut ? te.clockOut.split('T')[1]?.slice(0, 5) || '18:00' : '18:00',
+                                    breakMinutes: 60,
+                                    notes: te.notes || '',
+                                  });
+                                }}
+                                className="p-1.5 hover:bg-neutral-800 rounded text-cyan-400 cursor-pointer"
+                              >
+                                <Edit2 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                            {canDelete && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  requestConfirm({
+                                    title: 'Eliminar Registo de Ponto',
+                                    message: `Tem a certeza que deseja eliminar o registo de ponto do colaborador ${te.employeeName}?`,
+                                    itemDetails: `Data: ${formatDate(te.clockIn)} | Horas Trabalhadas: ${te.totalHours ? te.totalHours.toFixed(1) : '0'}h | Estado: ${te.status}`,
+                                    confirmLabel: 'Eliminar Registo',
+                                    isDestructive: true,
+                                    onConfirm: () => {
+                                      deleteTimeEntry(te.id);
+                                      if (selectedTimeEntryId === te.id) {
+                                        setSelectedTimeEntryId(null);
+                                      }
+                                      closeConfirm();
+                                    },
+                                  });
+                                }}
+                                className="p-1.5 hover:bg-neutral-800 rounded text-rose-400 cursor-pointer"
+                                title="Eliminar Registo (Tecla Delete)"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -683,9 +885,25 @@ export const HRModule: React.FC = () => {
                 <tbody className="divide-y divide-[#262626]">
                   {employeeShifts.map((shift) => {
                     const store = stores.find((s) => s.id === shift.storeId);
+                    const isSelected = selectedShiftId === shift.id;
                     return (
-                      <tr key={shift.id} className="hover:bg-[#191919] transition-colors">
-                        <td className="px-4 py-3 font-medium text-neutral-200">{shift.employeeName}</td>
+                      <tr
+                        key={shift.id}
+                        onClick={() => setSelectedShiftId(shift.id)}
+                        className={`transition-colors cursor-pointer ${
+                          isSelected ? 'bg-[#222222] ring-1 ring-[#c5a47e]/50' : 'hover:bg-[#191919]'
+                        }`}
+                      >
+                        <td className="px-4 py-3 font-medium text-neutral-200">
+                          <div className="flex items-center space-x-2">
+                            {isSelected && (
+                              <span className="px-1 py-0.5 rounded text-[8px] font-mono font-bold bg-[#c5a47e]/20 text-[#c5a47e] border border-[#c5a47e]/40">
+                                DEL
+                              </span>
+                            )}
+                            <span>{shift.employeeName}</span>
+                          </div>
+                        </td>
                         <td className="px-4 py-3 text-neutral-400">{store?.name || shift.storeId}</td>
                         <td className="px-4 py-3 font-mono text-neutral-400">{formatDate(shift.date)}</td>
                         <td className="px-4 py-3 font-mono text-[#c5a47e]">
@@ -701,10 +919,11 @@ export const HRModule: React.FC = () => {
                             {shift.status}
                           </span>
                         </td>
-                        <td className="px-4 py-3 text-right">
+                        <td className="px-4 py-3 text-right" onClick={(e) => e.stopPropagation()}>
                           <div className="flex items-center justify-end space-x-1">
                             {canEdit && (
                               <button
+                                type="button"
                                 onClick={() => {
                                   setEditingShift(shift);
                                   setShiftForm({
@@ -724,6 +943,7 @@ export const HRModule: React.FC = () => {
                             )}
                             {canDelete && (
                               <button
+                                type="button"
                                 onClick={() => {
                                   requestConfirm({
                                     title: 'Eliminar Turno Agendado',
@@ -733,10 +953,15 @@ export const HRModule: React.FC = () => {
                                     isDestructive: true,
                                     onConfirm: () => {
                                       deleteEmployeeShift(shift.id);
+                                      if (selectedShiftId === shift.id) {
+                                        setSelectedShiftId(null);
+                                      }
+                                      closeConfirm();
                                     },
                                   });
                                 }}
                                 className="p-1.5 hover:bg-neutral-800 rounded text-rose-400 cursor-pointer"
+                                title="Eliminar Turno (Tecla Delete)"
                               >
                                 <Trash2 className="w-3.5 h-3.5" />
                               </button>
@@ -755,24 +980,54 @@ export const HRModule: React.FC = () => {
         {/* ================= TAB 4: PAYROLL CRUD ================= */}
         {activeTab === 'payroll' && (
           <div className="space-y-4">
-            <div className="flex justify-between items-center bg-[#141414] p-3 rounded-lg border border-[#262626]">
-              <div className="text-xs text-neutral-400">
-                Processamento mensal de salários, retenções na fonte (IRS) e Segurança Social (11% + 23.75% TSU)
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 bg-[#141414] p-3 rounded-lg border border-[#262626]">
+              <div>
+                <div className="text-xs text-neutral-300 font-medium">
+                  Processamento mensal de salários, retenções na fonte (IRS) e Segurança Social (11% + 23.75% TSU)
+                </div>
+                <div className="text-[11px] text-neutral-500 mt-0.5">
+                  Prima a tecla <kbd className="px-1.5 py-0.5 bg-[#202020] border border-[#333] rounded text-neutral-300 font-mono text-[10px]">Delete</kbd> ou <kbd className="px-1.5 py-0.5 bg-[#202020] border border-[#333] rounded text-neutral-300 font-mono text-[10px]">Backspace</kbd> para eliminar o recibo selecionado.
+                </div>
               </div>
-              <div className="flex items-center space-x-2">
+              <div className="flex items-center space-x-2 shrink-0">
+                {payrolls.length > 0 && canDelete && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      requestConfirm({
+                        title: 'Eliminar Todos os Recibos',
+                        message: `Tem a certeza que deseja eliminar todos os ${payrolls.length} recibos de vencimento processados?`,
+                        confirmLabel: 'Eliminar Todos',
+                        isDestructive: true,
+                        onConfirm: () => {
+                          clearAllPayrolls();
+                          setSelectedPayrollId(null);
+                          closeConfirm();
+                        },
+                      });
+                    }}
+                    className="px-3 py-1.5 bg-rose-950/30 text-rose-300 border border-rose-800/40 hover:bg-rose-900/40 rounded-md text-xs font-medium cursor-pointer flex items-center space-x-1.5 transition-colors"
+                    title="Eliminar todos os recibos processados"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Limpar ({payrolls.length})</span>
+                  </button>
+                )}
                 <button
+                  type="button"
                   onClick={() => processMonthlyPayroll(currentMonthStr)}
-                  className="px-3 py-1.5 bg-[#1f1f1f] text-neutral-200 border border-[#333] rounded-md text-xs font-medium cursor-pointer"
+                  className="px-3 py-1.5 bg-[#1f1f1f] hover:bg-[#282828] text-neutral-200 border border-[#333] rounded-md text-xs font-medium cursor-pointer transition-colors"
                 >
                   Processamento Automático Global
                 </button>
                 {canCreate && (
                   <button
+                    type="button"
                     onClick={() => {
                       setEditingPayroll(null);
                       setShowNewPayrollModal(true);
                     }}
-                    className="px-3 py-1.5 bg-[#c5a47e] text-neutral-950 font-medium text-xs rounded-md cursor-pointer"
+                    className="px-3 py-1.5 bg-[#c5a47e] hover:bg-[#b5946e] text-neutral-950 font-medium text-xs rounded-md cursor-pointer transition-colors"
                   >
                     + Novo Recibo Individual
                   </button>
@@ -796,79 +1051,116 @@ export const HRModule: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#262626]">
-                  {payrolls.map((pr) => (
-                    <tr key={pr.id} className="hover:bg-[#191919] transition-colors">
-                      <td className="px-4 py-3 font-medium text-neutral-200">{pr.employeeName}</td>
-                      <td className="px-4 py-3 font-mono text-neutral-400">{pr.month}</td>
-                      <td className="px-4 py-3 text-right font-mono text-neutral-200">{formatCurrency(pr.baseSalary)}</td>
-                      <td className="px-4 py-3 text-right font-mono text-neutral-400">{formatCurrency(pr.mealAllowance)}</td>
-                      <td className="px-4 py-3 text-right font-mono text-rose-400">-{formatCurrency(pr.irsRetention)}</td>
-                      <td className="px-4 py-3 text-right font-mono text-rose-400">-{formatCurrency(pr.socialSecurityRetention)}</td>
-                      <td className="px-4 py-3 text-right font-mono font-semibold text-emerald-400">
-                        {formatCurrency(pr.netSalary)}
-                      </td>
-                      <td className="px-4 py-3 text-center">
-                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium uppercase ${
-                          pr.status === 'pago' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30' :
-                          'bg-amber-500/10 text-amber-400 border border-amber-500/30'
-                        }`}>
-                          {pr.status}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-right">
-                        <div className="flex items-center justify-end space-x-1">
-                          {pr.status !== 'pago' && canEdit && (
-                            <button
-                              onClick={() => updatePayroll(pr.id, { status: 'pago', paymentDate: new Date().toISOString().split('T')[0] })}
-                              className="px-2 py-1 bg-emerald-600/20 text-emerald-400 hover:bg-emerald-600/30 rounded text-[11px] font-medium cursor-pointer"
-                            >
-                              Pagar
-                            </button>
-                          )}
-                          {canEdit && (
-                            <button
-                              onClick={() => {
-                                setEditingPayroll(pr);
-                                setPayrollForm({
-                                  employeeId: pr.employeeId,
-                                  month: pr.month,
-                                  baseSalary: pr.baseSalary,
-                                  mealAllowance: pr.mealAllowance,
-                                  bonus: pr.bonus || 0,
-                                  irsRetention: pr.irsRetention,
-                                  socialSecurityRetention: pr.socialSecurityRetention,
-                                  netSalary: pr.netSalary,
-                                  status: pr.status,
-                                });
-                              }}
-                              className="p-1.5 hover:bg-neutral-800 rounded text-cyan-400 cursor-pointer"
-                            >
-                              <Edit2 className="w-3.5 h-3.5" />
-                            </button>
-                          )}
-                          {canDelete && (
-                            <button
-                              onClick={() => {
-                                requestConfirm({
-                                  title: 'Eliminar Recibo de Vencimento',
-                                  message: `Tem a certeza que deseja eliminar o recibo de vencimento do colaborador ${pr.employeeName}?`,
-                                  itemDetails: `Mês: ${pr.month} | Líquido a Pagar: ${formatCurrency(pr.netSalary)} | Estado: ${pr.status}`,
-                                  confirmLabel: 'Eliminar Recibo',
-                                  isDestructive: true,
-                                  onConfirm: () => {
-                                    deletePayroll(pr.id);
-                                  },
-                                });
-                              }}
-                              className="p-1.5 hover:bg-neutral-800 rounded text-rose-400 cursor-pointer"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          )}
-                        </div>
+                  {payrolls.length === 0 ? (
+                    <tr>
+                      <td colSpan={9} className="px-4 py-8 text-center text-neutral-500">
+                        Nenhum recibo de vencimento processado. Clique em &quot;Processamento Automático Global&quot; ou &quot;+ Novo Recibo Individual&quot;.
                       </td>
                     </tr>
-                  ))}
+                  ) : (
+                    payrolls.map((pr) => {
+                      const isSelected = selectedPayrollId === pr.id;
+                      const monthDisplay = pr.monthYear || (pr as any).month || currentMonthStr;
+
+                      return (
+                        <tr
+                          key={pr.id}
+                          onClick={() => setSelectedPayrollId(pr.id)}
+                          className={`transition-colors cursor-pointer ${
+                            isSelected ? 'bg-[#222222] ring-1 ring-[#c5a47e]/50' : 'hover:bg-[#191919]'
+                          }`}
+                        >
+                          <td className="px-4 py-3 font-medium text-neutral-200">
+                            <div className="flex items-center space-x-2">
+                              {isSelected && (
+                                <span className="px-1 py-0.5 rounded text-[8px] font-mono font-bold bg-[#c5a47e]/20 text-[#c5a47e] border border-[#c5a47e]/40">
+                                  DEL
+                                </span>
+                              )}
+                              <span>{pr.employeeName}</span>
+                            </div>
+                          </td>
+                          <td className="px-4 py-3 font-mono text-neutral-400">{monthDisplay}</td>
+                          <td className="px-4 py-3 text-right font-mono text-neutral-200">{formatCurrency(pr.baseSalary)}</td>
+                          <td className="px-4 py-3 text-right font-mono text-neutral-400">{formatCurrency(pr.mealAllowance)}</td>
+                          <td className="px-4 py-3 text-right font-mono text-rose-400">-{formatCurrency(pr.irsRetention)}</td>
+                          <td className="px-4 py-3 text-right font-mono text-rose-400">-{formatCurrency(pr.socialSecurityRetention)}</td>
+                          <td className="px-4 py-3 text-right font-mono font-semibold text-emerald-400">
+                            {formatCurrency(pr.netSalary)}
+                          </td>
+                          <td className="px-4 py-3 text-center">
+                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium uppercase ${
+                              pr.status === 'pago' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30' :
+                              'bg-amber-500/10 text-amber-400 border border-amber-500/30'
+                            }`}>
+                              {pr.status}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-right" onClick={(e) => e.stopPropagation()}>
+                            <div className="flex items-center justify-end space-x-1">
+                              {pr.status !== 'pago' && canEdit && (
+                                <button
+                                  type="button"
+                                  onClick={() => updatePayroll(pr.id, { status: 'pago', paymentDate: new Date().toISOString().split('T')[0] })}
+                                  className="px-2 py-1 bg-emerald-600/20 text-emerald-400 hover:bg-emerald-600/30 rounded text-[11px] font-medium cursor-pointer"
+                                >
+                                  Pagar
+                                </button>
+                              )}
+                              {canEdit && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setEditingPayroll(pr);
+                                    setPayrollForm({
+                                      employeeId: pr.employeeId,
+                                      month: monthDisplay,
+                                      baseSalary: pr.baseSalary,
+                                      mealAllowance: pr.mealAllowance,
+                                      bonus: pr.bonus || 0,
+                                      irsRetention: pr.irsRetention,
+                                      socialSecurityRetention: pr.socialSecurityRetention,
+                                      netSalary: pr.netSalary,
+                                      status: pr.status,
+                                    });
+                                  }}
+                                  className="p-1.5 hover:bg-neutral-800 rounded text-cyan-400 cursor-pointer"
+                                  title="Editar Recibo"
+                                >
+                                  <Edit2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                              {canDelete && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    requestConfirm({
+                                      title: 'Eliminar Recibo de Vencimento',
+                                      message: `Tem a certeza que deseja eliminar o recibo de vencimento do colaborador ${pr.employeeName}?`,
+                                      itemDetails: `Mês: ${monthDisplay} | Líquido a Pagar: ${formatCurrency(pr.netSalary)} | Estado: ${pr.status}`,
+                                      confirmLabel: 'Eliminar Recibo',
+                                      isDestructive: true,
+                                      onConfirm: () => {
+                                        deletePayroll(pr.id);
+                                        if (selectedPayrollId === pr.id) {
+                                          setSelectedPayrollId(null);
+                                        }
+                                        closeConfirm();
+                                      },
+                                    });
+                                  }}
+                                  className="p-1.5 hover:bg-neutral-800 rounded text-rose-400 cursor-pointer"
+                                  title="Eliminar Recibo (Tecla Delete)"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
                 </tbody>
               </table>
             </div>

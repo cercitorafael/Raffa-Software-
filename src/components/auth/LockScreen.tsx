@@ -70,7 +70,7 @@ export const LockScreen: React.FC = () => {
           setPinInput((prev) => prev + e.key);
           setErrorMsg(null);
         }
-      } else if (e.key === 'Backspace') {
+      } else if (e.key === 'Backspace' || e.key === 'Delete') {
         setPinInput((prev) => prev.slice(0, -1));
         setErrorMsg(null);
       } else if (e.key === 'Enter') {
