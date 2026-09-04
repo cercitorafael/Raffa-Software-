@@ -47,12 +47,12 @@ export const FiscalAuditModal: React.FC = () => {
       <AddressDetail>${currentCompany.address}</AddressDetail>
       <City>${currentCompany.city}</City>
       <PostalCode>${currentCompany.postalCode}</PostalCode>
-      <Country>PT</Country>
+      <Country>${currentCompany.country === 'Portugal' ? 'PT' : currentCompany.country === 'Moçambique' ? 'MZ' : currentCompany.country || 'MZ'}</Country>
     </CompanyAddress>
     <FiscalYear>2026</FiscalYear>
     <StartDate>2026-08-01</StartDate>
     <EndDate>2026-08-31</EndDate>
-    <CurrencyCode>EUR</CurrencyCode>
+    <CurrencyCode>${currentCompany.currency || 'MZN'}</CurrencyCode>
     <DateCreated>${new Date().toISOString().split('T')[0]}</DateCreated>
     <TaxEntity>Global</TaxEntity>
     <ProductCompanyID>OmniRetail Solutions Lda</ProductCompanyID>

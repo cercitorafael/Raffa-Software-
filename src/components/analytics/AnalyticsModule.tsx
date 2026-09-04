@@ -865,7 +865,7 @@ export const AnalyticsModule: React.FC = () => {
           </div>
           <div className="mt-2 flex items-baseline justify-between">
             <div className="text-xl font-bold text-neutral-100 tracking-tight truncate">
-              {peakSalesDay ? formatCurrency(peakSalesDay.revenue) : '0,00 €'}
+              {peakSalesDay ? formatCurrency(peakSalesDay.revenue) : formatCurrency(0)}
             </div>
           </div>
           <div className="mt-2 pt-2 border-t border-[#262626]/80 flex items-center justify-between text-[11px] text-neutral-400">
@@ -1186,7 +1186,7 @@ export const AnalyticsModule: React.FC = () => {
                         : 'text-neutral-400 hover:text-white'
                     }`}
                   >
-                    Por Valor (€)
+                    Por Valor ({currentCompany?.currencySymbol || 'Mt'})
                   </button>
                   <button
                     onClick={() => setTopProductsMetric('quantity')}

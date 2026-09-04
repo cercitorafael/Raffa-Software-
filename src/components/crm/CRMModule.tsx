@@ -777,7 +777,7 @@ export const CRMModule: React.FC = () => {
               <p className="text-xs text-neutral-400">Para clientes com mais de 500 pontos acumulados.</p>
               <ul className="text-xs text-neutral-300 space-y-1.5 list-disc pl-4">
                 <li>10% Desconto imediato em todas as compras</li>
-                <li>Acumulação a dobrar (2 pontos por cada 1€)</li>
+                <li>Acumulação a dobrar (2 pontos por cada {formatCurrency(1, currentCompany?.currency)})</li>
                 <li>Oferta exclusiva no dia de aniversário</li>
               </ul>
             </div>
@@ -790,7 +790,7 @@ export const CRMModule: React.FC = () => {
               <p className="text-xs text-neutral-400">Para clientes com 200 a 499 pontos.</p>
               <ul className="text-xs text-neutral-300 space-y-1.5 list-disc pl-4">
                 <li>5% Desconto em artigos selecionados</li>
-                <li>1.5 pontos por cada 1€ gasto</li>
+                <li>1.5 pontos por cada {formatCurrency(1, currentCompany?.currency)} gasto</li>
                 <li>Acesso antecipado a campanhas de saldos</li>
               </ul>
             </div>
@@ -802,8 +802,8 @@ export const CRMModule: React.FC = () => {
               </div>
               <p className="text-xs text-neutral-400">Todos os clientes registados com NIF.</p>
               <ul className="text-xs text-neutral-300 space-y-1.5 list-disc pl-4">
-                <li>1 ponto por cada 1€ gasto</li>
-                <li>Vales de desconto de 5€ a cada 100 pontos</li>
+                <li>1 ponto por cada {formatCurrency(1, currentCompany?.currency)} gasto</li>
+                <li>Vales de desconto de {formatCurrency(5, currentCompany?.currency)} a cada 100 pontos</li>
               </ul>
             </div>
           </div>
@@ -818,7 +818,7 @@ export const CRMModule: React.FC = () => {
                 onClick={() => {
                   const newCode = `GIFT-2026-${Math.floor(1000 + Math.random() * 9000)}`;
                   setGiftCards([...giftCards, { code: newCode, initialBalance: 50.0, currentBalance: 50.0, issuedTo: 'Novo Cliente', expiresAt: '2026-12-31' }]);
-                  notify(`Cartão Presente ${newCode} emitido com 50.00€ de saldo!`, 'success');
+                  notify(`Cartão Presente ${newCode} emitido com ${formatCurrency(50, currentCompany?.currency)} de saldo!`, 'success');
                 }}
                 className="px-3 py-1.5 bg-[#c5a47e] hover:bg-[#d4b896] text-black rounded-lg text-xs font-bold uppercase tracking-wider transition-colors"
               >

@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   Company,
   Store,
@@ -88,6 +88,7 @@ import {
   formatCurrency,
   getCurrencyDefinition,
   setActiveAppCurrency,
+  setActiveAppCompany,
   SUPPORTED_CURRENCIES,
 } from '../utils/crypto';
 import { CurrencyDefinition } from '../types';
@@ -580,23 +581,52 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [companies, setCompanies] = useState<Company[]>(() =>
     loadFromStorage('companies', initialCompanies)
   );
-  const [currentCompany, setCurrentCompany] = useState<Company>(() =>
-    loadFromStorage('company', initialCompanies[0])
-  );
+  const [currentCompany, setCurrentCompany] = useState<Company>(() => {
+    const comp = loadFromStorage('company', initialCompanies[0]);
+    if (comp) {
+      setActiveAppCompany(comp);
+      setActiveAppCurrency(comp.currencySymbol || comp.currency);
+    }
+    return comp;
+  });
+  const currentCompanyRef = useRef<Company>(currentCompany);
+  useEffect(() => {
+    currentCompanyRef.current = currentCompany;
+  }, [currentCompany]);
 
   const [stores, setStores] = useState<Store[]>(() =>
     loadFromStorage('stores', initialStores)
   );
-  const [currentStore, setCurrentStore] = useState<Store>(() =>
-    loadFromStorage('store', initialStores[0])
-  );
+  const [currentStore, setCurrentStore] = useState<Store>(() => {
+    const storedCompany = loadFromStorage<Company>('company', initialCompanies[0]);
+    const storedStore = loadFromStorage<Store | null>('store', null);
+    const allStoredStores = loadFromStorage<Store[]>('stores', initialStores);
+    if (storedStore && storedCompany && storedStore.companyId === storedCompany.id) {
+      return storedStore;
+    }
+    if (storedCompany) {
+      const match = allStoredStores.find((s) => s.companyId === storedCompany.id);
+      if (match) return match;
+    }
+    return initialStores[0];
+  });
 
   const [terminals, setTerminals] = useState<Terminal[]>(() =>
     loadFromStorage('terminals', initialTerminals)
   );
-  const [currentTerminal, setCurrentTerminal] = useState<Terminal>(() =>
-    loadFromStorage('terminal', initialTerminals[0])
-  );
+  const [currentTerminal, setCurrentTerminal] = useState<Terminal>(() => {
+    const storedStore = loadFromStorage<Store | null>('store', null);
+    const storedTerm = loadFromStorage<Terminal | null>('terminal', null);
+    const allStoredTerminals = loadFromStorage<Terminal[]>('terminals', initialTerminals);
+    if (storedStore && storedTerm && storedTerm.storeId === storedStore.id) {
+      return storedTerm;
+    }
+    if (storedStore) {
+      const match = allStoredTerminals.find((t) => t.storeId === storedStore.id);
+      if (match) return match;
+    }
+    return initialTerminals[0];
+  });
 
   const [fiscalSeries, setFiscalSeries] = useState<FiscalSeries[]>(() =>
     loadFromStorage('fiscalSeries', initialFiscalSeries)
@@ -733,9 +763,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const [activeShift, setActiveShift] = useState<CashShift | null>(() => {
     const stored = loadFromStorage<CashShift | null>('activeShift', null);
+    const initialComp = loadFromStorage<Company>('company', initialCompanies[0]);
     // Explicit rule: Upon first session or if closed in previous day, register must be CLOSED (null).
-    // Only remains open if a user explicitly opened it and status is 'aberto'.
+    // Only remains open if a user explicitly opened it and status is 'aberto' AND matches the active company.
     if (stored && stored.status === 'aberto' && typeof stored.initialCash === 'number') {
+      if (stored.companyId && initialComp?.id && stored.companyId !== initialComp.id) {
+        return null;
+      }
       return stored;
     }
     return null;
@@ -984,12 +1018,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     refreshDBStats();
   }, [stock, refreshDBStats]);
 
-  // Sync state to localStorage
+  // Sync state to localStorage & currency engine
   useEffect(() => {
-    if (currentCompany?.currency) {
-      setActiveAppCurrency(currentCompany.currency);
+    if (currentCompany) {
+      setActiveAppCompany(currentCompany);
+      setActiveAppCurrency(currentCompany.currencySymbol || currentCompany.currency);
     }
-  }, [currentCompany?.currency]);
+  }, [
+    currentCompany?.currency,
+    currentCompany?.currencySymbol,
+    currentCompany?.currencyPosition,
+    currentCompany?.currencyDecimals,
+  ]);
 
   useEffect(() => {
     saveToStorage('companies', companies);
@@ -1096,7 +1136,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             return [...prev, item as Company];
           });
           setCurrentCompany((prev) => {
-            if (String(prev.id) === String(item.id) || prev.id === 'comp-1') {
+            if (String(prev.id) === String(item.id)) {
               return { ...prev, ...item } as Company;
             }
             return prev;
@@ -1104,6 +1144,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         }
       },
       onStoreChange: (event, item, rawOld) => {
+        const storeItem = item as Store;
+        const currentCompId = currentCompanyRef.current?.id;
+        // Multi-tenant isolation: Ignore stores from other companies
+        if (storeItem.companyId && currentCompId && storeItem.companyId !== currentCompId) {
+          return;
+        }
+
         if (event === 'DELETE') {
           const idToDelete = item.id || rawOld?.id;
           if (idToDelete) {
@@ -1112,21 +1159,26 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           }
         } else if (item.id) {
           setStores((prev) => {
-            const exists = prev.some((s) => String(s.id) === String(item.id));
+            const exists = prev.some((s) => String(s.id) === String(storeItem.id));
             if (exists) {
-              return prev.map((s) => (String(s.id) === String(item.id) ? ({ ...s, ...item } as Store) : s));
+              return prev.map((s) => (String(s.id) === String(storeItem.id) ? ({ ...s, ...storeItem } as Store) : s));
             }
-            return [...prev, item as Store];
+            return [...prev, storeItem];
           });
           setCurrentStore((prev) => {
-            if (String(prev.id) === String(item.id) || prev.id === 'store-1') {
-              return { ...prev, ...item } as Store;
+            if (String(prev.id) === String(storeItem.id)) {
+              return { ...prev, ...storeItem };
             }
             return prev;
           });
         }
       },
       onProductChange: (event, item, rawOld) => {
+        const prodItem = item as Product;
+        const currentCompId = currentCompanyRef.current?.id;
+        if (prodItem.companyId && currentCompId && prodItem.companyId !== currentCompId) {
+          return;
+        }
         if (event === 'DELETE') {
           const idToDelete = item.id || rawOld?.id;
           if (idToDelete) {
@@ -1145,6 +1197,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         }
       },
       onCustomerChange: (event, item, rawOld) => {
+        const custItem = item as Customer;
+        const currentCompId = currentCompanyRef.current?.id;
+        if (custItem.companyId && currentCompId && custItem.companyId !== currentCompId) {
+          return;
+        }
         if (event === 'DELETE') {
           const idToDelete = item.id || rawOld?.id;
           if (idToDelete) {
@@ -1162,6 +1219,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         }
       },
       onSupplierChange: (event, item, rawOld) => {
+        const suppItem = item as Supplier;
+        const currentCompId = currentCompanyRef.current?.id;
+        if (suppItem.companyId && currentCompId && suppItem.companyId !== currentCompId) {
+          return;
+        }
         if (event === 'DELETE') {
           const idToDelete = item.id || rawOld?.id;
           if (idToDelete) {
@@ -1195,6 +1257,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         }
       },
       onSaleChange: (event, item, rawOld) => {
+        const saleItem = item as Sale;
+        const currentCompId = currentCompanyRef.current?.id;
+        if (saleItem.companyId && currentCompId && saleItem.companyId !== currentCompId) {
+          return;
+        }
         if (event === 'DELETE') {
           const idToDelete = item.id || rawOld?.id;
           if (idToDelete) {
@@ -1212,6 +1279,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         }
       },
       onUserChange: (event, item, rawOld) => {
+        const userItem = item as User;
+        const currentCompId = currentCompanyRef.current?.id;
+        if (userItem.companyId && currentCompId && userItem.companyId !== currentCompId) {
+          return;
+        }
         if (event === 'DELETE') {
           const idToDelete = item.id || rawOld?.id;
           if (idToDelete) {
@@ -1229,6 +1301,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         }
       },
       onWarehouseChange: (event, item, rawOld) => {
+        const whItem = item as Warehouse;
+        const currentCompId = currentCompanyRef.current?.id;
+        if (whItem.companyId && currentCompId && whItem.companyId !== currentCompId) {
+          return;
+        }
         if (event === 'DELETE') {
           const idToDelete = item.id || rawOld?.id;
           if (idToDelete) {
@@ -1261,6 +1338,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         }
       },
       onAccountPayableChange: (event, item, rawOld) => {
+        const apItem = item as AccountPayable;
+        const currentCompId = currentCompanyRef.current?.id;
+        if (apItem.companyId && currentCompId && apItem.companyId !== currentCompId) {
+          return;
+        }
         if (event === 'DELETE') {
           const idToDelete = item.id || rawOld?.id;
           if (idToDelete) {
@@ -1277,6 +1359,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         }
       },
       onAccountReceivableChange: (event, item, rawOld) => {
+        const arItem = item as AccountReceivable;
+        const currentCompId = currentCompanyRef.current?.id;
+        if (arItem.companyId && currentCompId && arItem.companyId !== currentCompId) {
+          return;
+        }
         if (event === 'DELETE') {
           const idToDelete = item.id || rawOld?.id;
           if (idToDelete) {
@@ -1293,6 +1380,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         }
       },
       onShiftChange: (event, item, rawOld) => {
+        const shiftItem = item as CashShift;
+        const currentCompId = currentCompanyRef.current?.id;
+
+        // MULTI-TENANT ISOLATION:
+        // Strictly ignore shifts belonging to other companies (e.g. operators like Efigenia from another company)
+        if (shiftItem.companyId && currentCompId && shiftItem.companyId !== currentCompId) {
+          return;
+        }
+
         if (event === 'DELETE') {
           const idToDelete = item.id || rawOld?.id;
           if (idToDelete) {
@@ -1306,7 +1402,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             });
           }
         } else if (item.id) {
-          const shiftItem = item as CashShift;
           setShiftsHistory((prev) => {
             const exists = prev.some((s) => String(s.id) === String(shiftItem.id));
             if (exists) {
@@ -1315,9 +1410,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             return [shiftItem, ...prev];
           });
 
-          // Multi-device sync for active cash register
+          // Multi-device sync for active cash register in THIS company
           if (shiftItem.status === 'aberto') {
             setActiveShift((curr) => {
+              if (shiftItem.companyId && currentCompId && shiftItem.companyId !== currentCompId) {
+                return curr;
+              }
               if (!curr || String(curr.id) === String(shiftItem.id) || new Date(shiftItem.openedAt) > new Date(curr.openedAt)) {
                 saveToStorage('activeShift', shiftItem);
                 return shiftItem;
@@ -1350,36 +1448,91 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     let timer: any = null;
     const executeSilentPull = async () => {
       try {
-        const res = await pullAllFromSupabase({ companyId: currentCompany?.id || 'ALL' });
+        const compId = currentCompanyRef.current?.id || currentCompany?.id;
+        if (!compId) return;
+        const res = await pullAllFromSupabase({ companyId: compId });
         if (res.data) {
           if (res.data.companies && res.data.companies.length > 0) {
-            setCompanies(res.data.companies);
+            setCompanies((prev) => {
+              const updated = [...prev];
+              res.data.companies!.forEach((c) => {
+                const idx = updated.findIndex((item) => item.id === c.id);
+                if (idx >= 0) updated[idx] = c;
+                else updated.push(c);
+              });
+              return updated;
+            });
           }
           if (res.data.stores && res.data.stores.length > 0) {
-            setStores(res.data.stores);
+            const compStores = res.data.stores.filter((s) => s.companyId === compId);
+            if (compStores.length > 0) {
+              setStores((prev) => {
+                const other = prev.filter((s) => s.companyId !== compId);
+                return [...compStores, ...other];
+              });
+              setCurrentStore((prev) => {
+                if (prev.companyId === compId) {
+                  const matched = compStores.find((s) => s.id === prev.id);
+                  return matched || prev;
+                }
+                return compStores[0] || prev;
+              });
+            }
           }
-          if (res.data.products && res.data.products.length > 0) setProducts(res.data.products);
-          if (res.data.customers && res.data.customers.length > 0) setCustomers(res.data.customers);
-          if (res.data.suppliers && res.data.suppliers.length > 0) setSuppliers(res.data.suppliers);
-          if (res.data.categories && res.data.categories.length > 0) setCategories(res.data.categories);
-          if (res.data.sales && res.data.sales.length > 0) setSalesHistory(res.data.sales);
-          if (res.data.users && res.data.users.length > 0) setUsers(res.data.users);
-          if (res.data.warehouses && res.data.warehouses.length > 0) setWarehouses(res.data.warehouses);
-          if (res.data.stock && res.data.stock.length > 0) setStock(res.data.stock);
-          if (res.data.accountsPayable && res.data.accountsPayable.length > 0) setAccountsPayable(res.data.accountsPayable);
-          if (res.data.accountsReceivable && res.data.accountsReceivable.length > 0) setAccountsReceivable(res.data.accountsReceivable);
+          if (res.data.products && res.data.products.length > 0) {
+            const compProds = res.data.products.filter((p) => p.companyId === compId);
+            setProducts((prev) => [...compProds, ...prev.filter((p) => p.companyId !== compId)]);
+          }
+          if (res.data.customers && res.data.customers.length > 0) {
+            const compCust = res.data.customers.filter((c) => c.companyId === compId);
+            setCustomers((prev) => [...compCust, ...prev.filter((c) => c.companyId !== compId)]);
+          }
+          if (res.data.suppliers && res.data.suppliers.length > 0) {
+            const compSupp = res.data.suppliers.filter((s) => s.companyId === compId);
+            setSuppliers((prev) => [...compSupp, ...prev.filter((s) => s.companyId !== compId)]);
+          }
+          if (res.data.categories && res.data.categories.length > 0) {
+            setCategories(res.data.categories);
+          }
+          if (res.data.sales && res.data.sales.length > 0) {
+            const compSales = res.data.sales.filter((s) => s.companyId === compId);
+            setSalesHistory((prev) => [...compSales, ...prev.filter((s) => s.companyId !== compId)]);
+          }
+          if (res.data.users && res.data.users.length > 0) {
+            const compUsers = res.data.users.filter((u) => u.companyId === compId);
+            setUsers((prev) => [...compUsers, ...prev.filter((u) => u.companyId !== compId)]);
+          }
+          if (res.data.warehouses && res.data.warehouses.length > 0) {
+            const compWh = res.data.warehouses.filter((w) => w.companyId === compId);
+            setWarehouses((prev) => [...compWh, ...prev.filter((w) => w.companyId !== compId)]);
+          }
+          if (res.data.stock && res.data.stock.length > 0) {
+            setStock(res.data.stock);
+          }
+          if (res.data.accountsPayable && res.data.accountsPayable.length > 0) {
+            const compAP = res.data.accountsPayable.filter((a) => a.companyId === compId);
+            setAccountsPayable((prev) => [...compAP, ...prev.filter((a) => a.companyId !== compId)]);
+          }
+          if (res.data.accountsReceivable && res.data.accountsReceivable.length > 0) {
+            const compAR = res.data.accountsReceivable.filter((a) => a.companyId === compId);
+            setAccountsReceivable((prev) => [...compAR, ...prev.filter((a) => a.companyId !== compId)]);
+          }
           if (res.data.shifts && res.data.shifts.length > 0) {
-            setShiftsHistory(res.data.shifts);
-            // Reconcile active cash shift across devices in the same company/store
-            const openShift = res.data.shifts.find(
-              (s: CashShift) => s.status === 'aberto' && (!s.companyId || s.companyId === currentCompany?.id)
+            const compShifts = res.data.shifts.filter((s: CashShift) => s.companyId === compId);
+            setShiftsHistory((prev) => {
+              const other = prev.filter((s) => s.companyId !== compId);
+              return [...compShifts, ...other];
+            });
+            // Reconcile active cash shift strictly for THIS company
+            const openShift = compShifts.find(
+              (s: CashShift) => s.status === 'aberto' && s.companyId === compId
             );
             if (openShift) {
               setActiveShift(openShift);
               saveToStorage('activeShift', openShift);
             } else {
               setActiveShift((curr) => {
-                if (curr && !res.data.shifts.some((s: CashShift) => String(s.id) === String(curr.id) && s.status === 'aberto')) {
+                if (curr && (curr.companyId !== compId || !compShifts.some((s: CashShift) => String(s.id) === String(curr.id) && s.status === 'aberto'))) {
                   saveToStorage('activeShift', null);
                   return null;
                 }
@@ -1411,37 +1564,88 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, [currentCompany?.id]);
 
   const pullFromSupabase = async (options?: { companyId?: string; profileId?: string }) => {
-    const scopeTxt = options?.companyId && options.companyId !== 'ALL' ? ` para a empresa [${options.companyId}]` : '';
+    const targetCompId = options?.companyId || currentCompany?.id || 'ALL';
+    const scopeTxt = targetCompId && targetCompId !== 'ALL' ? ` para a empresa [${targetCompId}]` : '';
     notify(`A sincronizar dados a partir do Supabase${scopeTxt}...`, 'info');
     const res = await pullAllFromSupabase(options);
     if (res.data.companies && res.data.companies.length > 0) {
-      setCompanies(res.data.companies);
+      setCompanies((prev) => {
+        const merged = [...prev];
+        res.data.companies!.forEach((c) => {
+          const idx = merged.findIndex((m) => m.id === c.id);
+          if (idx >= 0) merged[idx] = c;
+          else merged.push(c);
+        });
+        return merged;
+      });
       const matched = res.data.companies.find((c) => c.id === currentCompany.id) || res.data.companies[0];
       if (matched) setCurrentCompany(matched);
     }
     if (res.data.stores && res.data.stores.length > 0) {
-      setStores(res.data.stores);
-      const matchedStore = res.data.stores.find((s) => s.id === currentStore.id) || res.data.stores[0];
-      if (matchedStore) setCurrentStore(matchedStore);
+      const compStores = res.data.stores.filter((s) => targetCompId === 'ALL' || s.companyId === targetCompId);
+      if (compStores.length > 0) {
+        setStores((prev) => {
+          const other = prev.filter((s) => targetCompId !== 'ALL' && s.companyId !== targetCompId);
+          return [...compStores, ...other];
+        });
+        const matchedStore = compStores.find((s) => s.id === currentStore.id) || compStores[0];
+        if (matchedStore) setCurrentStore(matchedStore);
+      }
     }
-    if (res.data.products && res.data.products.length > 0) setProducts(res.data.products);
-    if (res.data.customers && res.data.customers.length > 0) setCustomers(res.data.customers);
-    if (res.data.suppliers && res.data.suppliers.length > 0) setSuppliers(res.data.suppliers);
+    if (res.data.products && res.data.products.length > 0) {
+      const compProds = res.data.products.filter((p) => targetCompId === 'ALL' || p.companyId === targetCompId);
+      setProducts((prev) => [...compProds, ...prev.filter((p) => targetCompId !== 'ALL' && p.companyId !== targetCompId)]);
+    }
+    if (res.data.customers && res.data.customers.length > 0) {
+      const compCust = res.data.customers.filter((c) => targetCompId === 'ALL' || c.companyId === targetCompId);
+      setCustomers((prev) => [...compCust, ...prev.filter((c) => targetCompId !== 'ALL' && c.companyId !== targetCompId)]);
+    }
+    if (res.data.suppliers && res.data.suppliers.length > 0) {
+      const compSupp = res.data.suppliers.filter((s) => targetCompId === 'ALL' || s.companyId === targetCompId);
+      setSuppliers((prev) => [...compSupp, ...prev.filter((s) => targetCompId !== 'ALL' && s.companyId !== targetCompId)]);
+    }
     if (res.data.categories && res.data.categories.length > 0) setCategories(res.data.categories);
-    if (res.data.sales && res.data.sales.length > 0) setSalesHistory(res.data.sales);
-    if (res.data.users && res.data.users.length > 0) setUsers(res.data.users);
-    if (res.data.warehouses && res.data.warehouses.length > 0) setWarehouses(res.data.warehouses);
+    if (res.data.sales && res.data.sales.length > 0) {
+      const compSales = res.data.sales.filter((s) => targetCompId === 'ALL' || s.companyId === targetCompId);
+      setSalesHistory((prev) => [...compSales, ...prev.filter((s) => targetCompId !== 'ALL' && s.companyId !== targetCompId)]);
+    }
+    if (res.data.users && res.data.users.length > 0) {
+      const compUsers = res.data.users.filter((u) => targetCompId === 'ALL' || u.companyId === targetCompId);
+      setUsers((prev) => [...compUsers, ...prev.filter((u) => targetCompId !== 'ALL' && u.companyId !== targetCompId)]);
+    }
+    if (res.data.warehouses && res.data.warehouses.length > 0) {
+      const compWh = res.data.warehouses.filter((w) => targetCompId === 'ALL' || w.companyId === targetCompId);
+      setWarehouses((prev) => [...compWh, ...prev.filter((w) => targetCompId !== 'ALL' && w.companyId !== targetCompId)]);
+    }
     if (res.data.stock && res.data.stock.length > 0) setStock(res.data.stock);
-    if (res.data.accountsPayable && res.data.accountsPayable.length > 0) setAccountsPayable(res.data.accountsPayable);
-    if (res.data.accountsReceivable && res.data.accountsReceivable.length > 0) setAccountsReceivable(res.data.accountsReceivable);
+    if (res.data.accountsPayable && res.data.accountsPayable.length > 0) {
+      const compAP = res.data.accountsPayable.filter((a) => targetCompId === 'ALL' || a.companyId === targetCompId);
+      setAccountsPayable((prev) => [...compAP, ...prev.filter((a) => targetCompId !== 'ALL' && a.companyId !== targetCompId)]);
+    }
+    if (res.data.accountsReceivable && res.data.accountsReceivable.length > 0) {
+      const compAR = res.data.accountsReceivable.filter((a) => targetCompId === 'ALL' || a.companyId === targetCompId);
+      setAccountsReceivable((prev) => [...compAR, ...prev.filter((a) => targetCompId !== 'ALL' && a.companyId !== targetCompId)]);
+    }
     if (res.data.shifts && res.data.shifts.length > 0) {
-      setShiftsHistory(res.data.shifts);
-      const openShift = res.data.shifts.find(
-        (s: CashShift) => s.status === 'aberto' && (!s.companyId || s.companyId === currentCompany?.id)
+      const compShifts = res.data.shifts.filter((s: CashShift) => targetCompId === 'ALL' || s.companyId === targetCompId);
+      setShiftsHistory((prev) => {
+        const other = prev.filter((s) => targetCompId !== 'ALL' && s.companyId !== targetCompId);
+        return [...compShifts, ...other];
+      });
+      const openShift = compShifts.find(
+        (s: CashShift) => s.status === 'aberto' && (targetCompId === 'ALL' || s.companyId === targetCompId)
       );
       if (openShift) {
         setActiveShift(openShift);
         saveToStorage('activeShift', openShift);
+      } else {
+        setActiveShift((curr) => {
+          if (curr && targetCompId !== 'ALL' && (curr.companyId !== targetCompId || !compShifts.some((s) => String(s.id) === String(curr.id) && s.status === 'aberto'))) {
+            saveToStorage('activeShift', null);
+            return null;
+          }
+          return curr;
+        });
       }
     }
 
@@ -2313,7 +2517,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         })
       );
       if (currentCompany.id === id && updates) {
-        setCurrentCompany((prev) => ({ ...prev, ...updates }));
+        const merged = { ...currentCompany, ...updates };
+        setCurrentCompany(merged);
+        setActiveAppCompany(merged);
+        setActiveAppCurrency(merged.currencySymbol || merged.currency);
       }
       if (updatedObj) {
         pushRecordToSupabase('empresas', 'update', updatedObj);
@@ -2333,7 +2540,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           return c;
         })
       );
-      setCurrentCompany((prev) => ({ ...prev, ...updatesObj }));
+      setCurrentCompany(updatedObj);
+      setActiveAppCompany(updatedObj);
+      setActiveAppCurrency(updatedObj.currencySymbol || updatedObj.currency);
       pushRecordToSupabase('empresas', 'update', updatedObj);
       emitEvent('POS', 'company.updated', { companyId: currentCompany.id, updates: updatesObj });
     }
@@ -2452,8 +2661,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           postalCode: '1100',
           country: 'Moçambique',
           currency: params.company.currency || 'MZN',
-          currencySymbol: params.company.currency === 'EUR' ? '€' : params.company.currency === 'USD' ? '$' : 'Mt',
-          currencyPosition: 'suffix',
+          currencySymbol: (params.company as any).currencySymbol || getCurrencyDefinition(params.company.currency || 'MZN').symbol || 'Mt',
+          currencyPosition: (params.company as any).currencyPosition || getCurrencyDefinition(params.company.currency || 'MZN').position || 'suffix',
           currencyDecimals: 2,
           phone: params.company.phone?.trim() || '+258 84 000 0000',
           email: params.company.email?.trim() || params.adminUser.email.trim(),
@@ -2570,6 +2779,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           avgCost: p.costPrice,
         }));
 
+        // Reset active shift and transactional session to isolate the newly registered company
+        setActiveShift(null);
+        saveToStorage('activeShift', null);
+        setCart([]);
+        saveToStorage('cart', []);
+        setSelectedCustomer(null);
+        setGlobalDiscount(0);
+
         // Atualizar estado da aplicação
         setCompanies((prev) => [...prev, newComp]);
         setCurrentCompany(newComp);
@@ -2625,6 +2842,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           saveToStorage('user', newUser);
           saveToStorage('company', newComp);
           saveToStorage('store', newStore);
+          saveToStorage('terminal', newTerminal);
+          saveToStorage('activeShift', null);
         }
 
         sound.playSuccessChime();
@@ -3746,9 +3965,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     const todayStr = getTodayDateStr();
-    // Vendas comerciais de hoje
+    const compId = currentCompany?.id;
+    // Vendas comerciais de hoje da empresa ativa
     const todaySales = salesHistory.filter(
-      (s) => s.date && s.date.substring(0, 10) === todayStr && isEffectiveSale(s)
+      (s) => s.date && s.date.substring(0, 10) === todayStr && isEffectiveSale(s) && (!compId || s.companyId === compId)
     );
 
     let totalSales = 0;
@@ -5461,7 +5681,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const scopedUsers = useMemo(() => {
     const compId = currentCompany?.id || 'comp-1';
-    return users.filter((u) => u.companyId === compId || u.role === 'admin_master');
+    return users.filter((u) => u.companyId === compId);
   }, [users, currentCompany?.id]);
 
   const scopedSalesHistory = useMemo(() => {
@@ -5504,6 +5724,76 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const compId = currentCompany?.id || 'comp-1';
     return shiftsHistory.filter((s) => s.companyId === compId);
   }, [shiftsHistory, currentCompany?.id]);
+
+  const scopedActiveShift = useMemo(() => {
+    if (!activeShift) return null;
+    const compId = currentCompany?.id || 'comp-1';
+    if (activeShift.companyId && activeShift.companyId !== compId) {
+      return null;
+    }
+    return activeShift;
+  }, [activeShift, currentCompany?.id]);
+
+  // Continuous Multi-Tenant Isolation: Guard activeShift, store and terminal
+  useEffect(() => {
+    if (!currentCompany?.id) return;
+    const compId = currentCompany.id;
+
+    // 1. Foreign active shift purge
+    if (activeShift && activeShift.companyId && activeShift.companyId !== compId) {
+      setActiveShift(null);
+      saveToStorage('activeShift', null);
+    }
+
+    // 2. Ensure currentStore belongs to currentCompany
+    if (currentStore.companyId !== compId) {
+      const matchStore = stores.find((s) => s.companyId === compId);
+      if (matchStore) {
+        setCurrentStore(matchStore);
+        saveToStorage('store', matchStore);
+      } else {
+        const defaultStore: Store = {
+          id: `store-${compId}-sede`,
+          companyId: compId,
+          code: 'LOJA-01',
+          name: 'Loja Principal',
+          address: currentCompany.address || 'Sede Principal',
+          city: currentCompany.city || 'Maputo',
+          phone: currentCompany.phone || '',
+          managerId: currentUser?.id || 'usr-admin',
+          defaultWarehouseId: `wh-${compId}-default`,
+          terminalsCount: 1,
+        };
+        setStores((prev) => [...prev, defaultStore]);
+        setCurrentStore(defaultStore);
+        saveToStorage('store', defaultStore);
+      }
+    }
+  }, [currentCompany?.id, activeShift, currentStore.companyId, stores, currentCompany?.address, currentCompany?.city, currentCompany?.phone, currentUser?.id]);
+
+  useEffect(() => {
+    if (!currentStore?.id) return;
+    // 3. Ensure currentTerminal belongs to currentStore
+    if (currentTerminal.storeId !== currentStore.id) {
+      const matchTerm = terminals.find((t) => t.storeId === currentStore.id);
+      if (matchTerm) {
+        setCurrentTerminal(matchTerm);
+        saveToStorage('terminal', matchTerm);
+      } else {
+        const defaultTerm: Terminal = {
+          id: `term-${currentStore.id}-01`,
+          storeId: currentStore.id,
+          code: 'POS-01',
+          description: 'Caixa Balcão Principal',
+          isActive: true,
+          currentShiftId: null,
+        };
+        setTerminals((prev) => [...prev, defaultTerm]);
+        setCurrentTerminal(defaultTerm);
+        saveToStorage('terminal', defaultTerm);
+      }
+    }
+  }, [currentStore?.id, currentTerminal.storeId, terminals]);
 
   return (
     <AppContext.Provider
@@ -5634,7 +5924,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         updateShiftType,
         deleteShiftType,
         setDefaultShiftType,
-        activeShift,
+        activeShift: scopedActiveShift,
         shiftsHistory: scopedShiftsHistory,
         openShift,
         closeShift,

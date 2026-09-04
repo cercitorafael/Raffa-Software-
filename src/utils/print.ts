@@ -91,6 +91,189 @@ export function getDocumentTitle(invoiceType?: string, uppercase: boolean = fals
   return uppercase ? title.toUpperCase() : title;
 }
 
+export interface LoadedPdfLogo {
+  dataUrl: string;
+  format: 'PNG' | 'JPEG';
+  width: number;
+  height: number;
+}
+
+/**
+ * Calculates fitted dimensions preserving aspect ratio within a bounding box
+ */
+export function calculateFittedDimensions(
+  maxW: number,
+  maxH: number,
+  imgW: number,
+  imgH: number
+): { width: number; height: number } {
+  if (!imgW || !imgH) return { width: maxW, height: maxH };
+  const aspect = imgW / imgH;
+  if (aspect > maxW / maxH) {
+    return {
+      width: maxW,
+      height: Math.round((maxW / aspect) * 10) / 10,
+    };
+  } else {
+    return {
+      width: Math.round(maxH * aspect * 10) / 10,
+      height: maxH,
+    };
+  }
+}
+
+/**
+ * Safely loads and processes a company logo for jsPDF embedding.
+ * Handles:
+ * 1. Base64 data URLs (PNG, JPG, WebP, SVG) -> converts via off-screen canvas to clean PNG for jsPDF
+ * 2. Remote / local HTTP image URLs -> preloads via Image and converts to PNG
+ * 3. Graceful fallback corporate logo monogram (with company initials and luxury brand styling)
+ */
+export async function getCompanyLogoForPdf(
+  logoUrl?: string,
+  companyName?: string,
+  primaryHex?: string
+): Promise<LoadedPdfLogo | null> {
+  if (typeof window === 'undefined') return null;
+
+  // 1. Attempt to load provided logoUrl
+  if (logoUrl && typeof logoUrl === 'string' && logoUrl.trim().length > 0) {
+    try {
+      const loaded = await new Promise<LoadedPdfLogo | null>((resolve) => {
+        const timeout = setTimeout(() => {
+          if (logoUrl.startsWith('data:image/')) {
+            resolve({
+              dataUrl: logoUrl,
+              format: logoUrl.includes('jpeg') || logoUrl.includes('jpg') ? 'JPEG' : 'PNG',
+              width: 240,
+              height: 120,
+            });
+          } else {
+            resolve(null);
+          }
+        }, 2500);
+
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+
+        img.onload = () => {
+          clearTimeout(timeout);
+          try {
+            const w = img.naturalWidth || img.width || 240;
+            const h = img.naturalHeight || img.height || 120;
+            const canvas = document.createElement('canvas');
+            canvas.width = w;
+            canvas.height = h;
+            const ctx = canvas.getContext('2d');
+            if (ctx) {
+              ctx.drawImage(img, 0, 0, w, h);
+              const pngData = canvas.toDataURL('image/png');
+              resolve({
+                dataUrl: pngData,
+                format: 'PNG',
+                width: w,
+                height: h,
+              });
+              return;
+            }
+          } catch {
+            if (logoUrl.startsWith('data:image/')) {
+              resolve({
+                dataUrl: logoUrl,
+                format: logoUrl.includes('jpeg') || logoUrl.includes('jpg') ? 'JPEG' : 'PNG',
+                width: img.naturalWidth || 240,
+                height: img.naturalHeight || 120,
+              });
+              return;
+            }
+          }
+          resolve(null);
+        };
+
+        img.onerror = () => {
+          clearTimeout(timeout);
+          if (logoUrl.startsWith('data:image/')) {
+            resolve({
+              dataUrl: logoUrl,
+              format: logoUrl.includes('jpeg') || logoUrl.includes('jpg') ? 'JPEG' : 'PNG',
+              width: 240,
+              height: 120,
+            });
+          } else {
+            resolve(null);
+          }
+        };
+
+        img.src = logoUrl;
+      });
+
+      if (loaded) return loaded;
+    } catch {
+      // Fall through to corporate monogram fallback
+    }
+  }
+
+  // 2. Fallback: Generate a crisp corporate logo emblem canvas
+  try {
+    const name = (companyName || 'RAFFA POS').trim();
+    const words = name.split(/\s+/).filter(Boolean);
+    const initials =
+      words.length >= 2
+        ? `${words[0][0]}${words[1][0]}`.toUpperCase()
+        : name.slice(0, 2).toUpperCase() || 'RP';
+
+    const canvas = document.createElement('canvas');
+    canvas.width = 240;
+    canvas.height = 120;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+
+    const brandColor = primaryHex && primaryHex.startsWith('#') ? primaryHex : '#166534';
+
+    // Rounded rectangle emblem
+    ctx.fillStyle = brandColor;
+    const r = 14;
+    ctx.beginPath();
+    ctx.moveTo(r, 0);
+    ctx.lineTo(240 - r, 0);
+    ctx.quadraticCurveTo(240, 0, 240, r);
+    ctx.lineTo(240, 120 - r);
+    ctx.quadraticCurveTo(240, 120, 240 - r, 120);
+    ctx.lineTo(r, 120);
+    ctx.quadraticCurveTo(0, 120, 0, 120 - r);
+    ctx.lineTo(0, r);
+    ctx.quadraticCurveTo(0, 0, r, 0);
+    ctx.closePath();
+    ctx.fill();
+
+    // Inner gold accent border
+    ctx.strokeStyle = '#c5a47e';
+    ctx.lineWidth = 3.5;
+    ctx.stroke();
+
+    // Monogram text
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 44px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(initials, 120, 52);
+
+    // Subtle bottom tag
+    ctx.fillStyle = '#c5a47e';
+    ctx.font = 'bold 13px sans-serif';
+    ctx.fillText('EMPRESA REGISTADA', 120, 96);
+
+    return {
+      dataUrl: canvas.toDataURL('image/png'),
+      format: 'PNG',
+      width: 240,
+      height: 120,
+    };
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Direct print thermal receipt via hidden iframe with fallback
  */
@@ -324,14 +507,25 @@ function openPrintWindow(html: string) {
 /**
  * Generate and download thermal receipt as PDF
  */
-export function downloadReceiptPdf(sale: Sale, company: Company, store: Store): void {
-  const doc = new jsPDF({
-    unit: 'mm',
-    format: [80, 200 + sale.items.length * 10],
-  });
-
+export async function downloadReceiptPdf(sale: Sale, company: Company, store: Store): Promise<void> {
+  const logo = await getCompanyLogoForPdf(company.logoUrl, company.tradeName || company.name);
   const pageWidth = 80;
   let y = 8;
+
+  const doc = new jsPDF({
+    unit: 'mm',
+    format: [80, 200 + sale.items.length * 10 + (logo ? 18 : 0)],
+  });
+
+  if (logo) {
+    const { width: logoW, height: logoH } = calculateFittedDimensions(34, 14, logo.width, logo.height);
+    try {
+      doc.addImage(logo.dataUrl, logo.format, (pageWidth - logoW) / 2, y, logoW, logoH);
+      y += logoH + 3.5;
+    } catch {
+      // ignore
+    }
+  }
 
   // Header
   doc.setFont('courier', 'bold');
@@ -997,11 +1191,11 @@ export function printInvoiceDocument(
 /**
  * Generate A4 Invoice PDF matching the active template design
  */
-export function downloadInvoicePdf(
+export async function downloadInvoicePdf(
   sale: Sale,
   company: Company,
   templateOverride?: InvoiceTemplateConfig | string
-): void {
+): Promise<void> {
   const activeTemplate = getActiveInvoiceTemplate(company, templateOverride, sale);
   const currency = company.currencySymbol || company.currency || 'Mt';
 
@@ -1029,25 +1223,46 @@ export function downloadInvoicePdf(
   doc.setFillColor(primaryRgb[0], primaryRgb[1], primaryRgb[2]);
   doc.rect(14, 10, 182, 2, 'F');
 
+  // Load and render company logo if enabled
+  const shouldShowLogo = activeTemplate.showLogo !== false;
+  const logo = shouldShowLogo
+    ? await getCompanyLogoForPdf(company.logoUrl, company.tradeName || company.name, activeTemplate.primaryColor)
+    : null;
+
+  let logoHeight = 0;
+  if (logo) {
+    const { width: logoW, height: logoH } = calculateFittedDimensions(46, 15, logo.width, logo.height);
+    logoHeight = logoH;
+    try {
+      doc.addImage(logo.dataUrl, logo.format, 14, 14, logoW, logoH);
+    } catch (e) {
+      console.warn('Could not render logo in PDF:', e);
+      logoHeight = 0;
+    }
+  }
+
+  // Company Name position
+  const compY = logoHeight > 0 ? 14 + logoHeight + 4.5 : 20;
+
   // Company Name
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(13);
+  doc.setFontSize(12.5);
   doc.setTextColor(15, 23, 42);
-  doc.text(company.tradeName || company.name, 14, 20);
+  doc.text(company.tradeName || company.name, 14, compY);
 
   // Slogan / Header notes
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(8.5);
   doc.setTextColor(primaryRgb[0], primaryRgb[1], primaryRgb[2]);
-  doc.text(activeTemplate.headerNotes || 'FOCO NO AGRO, GANHO NO CAMPO', 14, 24.5);
+  doc.text(activeTemplate.headerNotes || 'FOCO NO AGRO, GANHO NO CAMPO', 14, compY + 4.5);
 
   // Company details
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(8);
   doc.setTextColor(55, 65, 81);
-  doc.text(`${company.address || ''}${company.city ? `, ${company.city}` : ''}`, 14, 29);
-  doc.text(`NUIT / NIF: ${company.taxNumber || ''}`, 14, 33);
-  doc.text(`E-mail: ${company.email || ''} | Tel: ${company.phone || company.mobile || ''}`, 14, 37);
+  doc.text(`${company.address || ''}${company.city ? `, ${company.city}` : ''}`, 14, compY + 9);
+  doc.text(`NUIT / NIF: ${company.taxNumber || ''}`, 14, compY + 13);
+  doc.text(`E-mail: ${company.email || ''} | Tel: ${company.phone || company.mobile || ''}`, 14, compY + 17);
 
   // Customer Right Top
   doc.setFont('helvetica', 'bold');
@@ -1064,37 +1279,38 @@ export function downloadInvoicePdf(
 
   // Document Title
   const docTypeName = getDocumentTitle(sale.invoiceType, false);
+  const docTitleY = Math.max(compY + 23, 46);
 
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(11);
   doc.setTextColor(primaryRgb[0], primaryRgb[1], primaryRgb[2]);
-  doc.text(`${docTypeName} n.º ${sale.invoiceNumber}`, 14, 46);
+  doc.text(`${docTypeName} n.º ${sale.invoiceNumber}`, 14, docTitleY);
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(8.5);
   doc.setTextColor(75, 85, 99);
-  doc.text(`Original • ${activeTemplate.name}`, 196, 46, { align: 'right' });
+  doc.text(`Original • ${activeTemplate.name}`, 196, docTitleY, { align: 'right' });
 
   // 4-Column Bar
   doc.setDrawColor(31, 41, 55);
   doc.setLineWidth(0.3);
-  doc.line(14, 49, 196, 49);
-  doc.line(14, 59, 196, 59);
+  doc.line(14, docTitleY + 3, 196, docTitleY + 3);
+  doc.line(14, docTitleY + 13, 196, docTitleY + 13);
 
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(7.5);
   doc.setTextColor(17, 24, 39);
-  doc.text('Data (Date)', 16, 53);
-  doc.text('Vencimento (Due)', 62, 53);
-  doc.text('Contribuinte (VAT NR)', 108, 53);
-  doc.text('V/ Ref. (Your Ref.)', 154, 53);
+  doc.text('Data (Date)', 16, docTitleY + 7);
+  doc.text('Vencimento (Due)', 62, docTitleY + 7);
+  doc.text('Contribuinte (VAT NR)', 108, docTitleY + 7);
+  doc.text('V/ Ref. (Your Ref.)', 154, docTitleY + 7);
 
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(8);
   doc.setTextColor(55, 65, 81);
-  doc.text(formattedDate, 16, 57);
-  doc.text(dueDate, 62, 57);
-  doc.text(sale.customerTaxNumber || sale.customerNif || '---------', 108, 57);
-  doc.text(sale.invoiceNumber, 154, 57);
+  doc.text(formattedDate, 16, docTitleY + 11);
+  doc.text(dueDate, 62, docTitleY + 11);
+  doc.text(sale.customerTaxNumber || sale.customerNif || '---------', 108, docTitleY + 11);
+  doc.text(sale.invoiceNumber, 154, docTitleY + 11);
 
   // Items Table
   const tableData = sale.items.map((it, idx) => [
@@ -1108,7 +1324,7 @@ export function downloadInvoicePdf(
   ]);
 
   autoTable(doc, {
-    startY: 62,
+    startY: docTitleY + 16,
     head: [['Código (Code)', 'Descrição (Description)', 'P. Uni. (Unit Price)', 'Uni. (Unit)', 'Qtd (Qty)', 'IVA (VAT)', 'Total (Total)']],
     body: tableData,
     theme: 'plain',
@@ -1891,12 +2107,12 @@ export function printZReportThermal(
 /**
  * Download Z-Report as formal PDF Document
  */
-export function downloadZReportPdf(
+export async function downloadZReportPdf(
   shift: CashShift,
   company: Company,
   store?: Store,
   terminal?: Terminal
-): void {
+): Promise<void> {
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
   const currency = company.currencySymbol || company.currency || 'Mt';
   const expectedCash = (shift.initialCash || 0) + (shift.totalCash || 0) + (shift.suprimentoTotal || 0) - (shift.sangriaTotal || 0);
@@ -1904,17 +2120,29 @@ export function downloadZReportPdf(
   const difference = typeof shift.cashDifference === 'number' ? shift.cashDifference : (countedCash - expectedCash);
   const zNumber = shift.zReportNumber || `Z-${new Date(shift.closedAt || shift.openedAt).getFullYear()}/${shift.id.slice(-4).toUpperCase()}`;
 
+  const logo = await getCompanyLogoForPdf(company.logoUrl, company.tradeName || company.name);
+  let textStartX = 14;
+  if (logo) {
+    const { width: logoW, height: logoH } = calculateFittedDimensions(32, 14, logo.width, logo.height);
+    try {
+      doc.addImage(logo.dataUrl, logo.format, 14, 13, logoW, logoH);
+      textStartX = 14 + logoW + 4;
+    } catch {
+      textStartX = 14;
+    }
+  }
+
   // Header
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(14);
+  doc.setFontSize(13);
   doc.setTextColor(15, 23, 42);
-  doc.text(company.tradeName || company.name, 14, 18);
+  doc.text(company.tradeName || company.name, textStartX, 18);
 
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(8.5);
   doc.setTextColor(75, 85, 99);
-  doc.text(`NIF: ${company.taxNumber || '400123987'} • ${company.city || 'Maputo'}, ${company.country || 'Moçambique'}`, 14, 23);
-  doc.text(`Loja: ${store?.name || 'Loja Principal'} • Terminal: ${terminal?.code || shift.terminalId || 'POS-01'}`, 14, 27);
+  doc.text(`NIF: ${company.taxNumber || '400123987'} • ${company.city || 'Maputo'}, ${company.country || 'Moçambique'}`, textStartX, 23);
+  doc.text(`Loja: ${store?.name || 'Loja Principal'} • Terminal: ${terminal?.code || shift.terminalId || 'POS-01'}`, textStartX, 27);
 
   // Document Title Badge
   doc.setFont('helvetica', 'bold');
@@ -2291,7 +2519,7 @@ export function printInventoryExtractA4(options: InventoryExtractPrintOptions): 
 /**
  * Download Inventory Extract as PDF
  */
-export function downloadInventoryExtractPdf(options: InventoryExtractPrintOptions): void {
+export async function downloadInventoryExtractPdf(options: InventoryExtractPrintOptions): Promise<void> {
   const {
     rows,
     periodLabel,
@@ -2307,16 +2535,28 @@ export function downloadInventoryExtractPdf(options: InventoryExtractPrintOption
 
   const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
 
+  const logo = await getCompanyLogoForPdf(company.logoUrl, company.tradeName || company.name);
+  let textStartX = 14;
+  if (logo) {
+    const { width: logoW, height: logoH } = calculateFittedDimensions(32, 12, logo.width, logo.height);
+    try {
+      doc.addImage(logo.dataUrl, logo.format, 14, 11, logoW, logoH);
+      textStartX = 14 + logoW + 4;
+    } catch {
+      textStartX = 14;
+    }
+  }
+
   // Header
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(14);
+  doc.setFontSize(13.5);
   doc.setTextColor(15, 23, 42);
-  doc.text(company.tradeName || company.name, 14, 16);
+  doc.text(company.tradeName || company.name, textStartX, 16);
 
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(8.5);
   doc.setTextColor(75, 85, 99);
-  doc.text(`NIF: ${company.taxNumber || '400123987'} • Armazém: ${warehouseName} • Loja: ${store?.name || 'Geral'}`, 14, 21);
+  doc.text(`NIF: ${company.taxNumber || '400123987'} • Armazém: ${warehouseName} • Loja: ${store?.name || 'Geral'}`, textStartX, 21);
 
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(13);

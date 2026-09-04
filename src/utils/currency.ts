@@ -124,6 +124,7 @@ export const SUPPORTED_CURRENCIES: CurrencyDefinition[] = [
 ];
 
 let globalActiveCurrencyCode = 'MZN';
+let activeCompanySettings: Partial<CurrencyDefinition> | null = null;
 
 // Try to initialize from cached company in localStorage
 try {
@@ -133,9 +134,37 @@ try {
     if (parsed.currency) {
       globalActiveCurrencyCode = parsed.currency;
     }
+    const opts: Partial<CurrencyDefinition> = {};
+    if (parsed.currencySymbol) opts.symbol = parsed.currencySymbol;
+    if (parsed.currencyPosition) opts.position = parsed.currencyPosition;
+    if (parsed.currencyDecimals !== undefined && parsed.currencyDecimals !== null) {
+      opts.decimalPlaces = Number(parsed.currencyDecimals);
+    }
+    if (Object.keys(opts).length > 0) {
+      activeCompanySettings = opts;
+    }
   }
 } catch {
   // safe fallback
+}
+
+export function setActiveAppCompany(company: {
+  currency?: string;
+  currencySymbol?: string;
+  currencyPosition?: 'prefix' | 'suffix';
+  currencyDecimals?: number;
+} | null): void {
+  if (!company) return;
+  if (company.currency) {
+    globalActiveCurrencyCode = company.currency;
+  }
+  activeCompanySettings = {
+    ...(company.currencySymbol ? { symbol: company.currencySymbol } : {}),
+    ...(company.currencyPosition ? { position: company.currencyPosition } : {}),
+    ...(company.currencyDecimals !== undefined && company.currencyDecimals !== null
+      ? { decimalPlaces: Number(company.currencyDecimals) }
+      : {}),
+  };
 }
 
 export function setActiveAppCurrency(codeOrSymbol: string): void {
@@ -149,6 +178,9 @@ export function getActiveAppCurrencyCode(): string {
 }
 
 export function getActiveCompanyCustomSettings(): Partial<CurrencyDefinition> | null {
+  if (activeCompanySettings && Object.keys(activeCompanySettings).length > 0) {
+    return activeCompanySettings;
+  }
   try {
     const savedComp = localStorage.getItem('erp_company') || localStorage.getItem('company');
     if (savedComp) {
@@ -168,7 +200,7 @@ export function getActiveCompanyCustomSettings(): Partial<CurrencyDefinition> | 
 }
 
 export function getCurrencyDefinition(codeOrSymbol?: string): CurrencyDefinition {
-  const target = (codeOrSymbol || globalActiveCurrencyCode || 'EUR').trim().toUpperCase();
+  const target = (codeOrSymbol || globalActiveCurrencyCode || 'MZN').trim().toUpperCase();
 
   // Special matchers for Mozambique Metical
   if (target === 'MZN' || target === 'MT' || target === 'MTN' || target === 'METICAIS' || target === 'METICAL' || target === 'MOÇAMBIQUE' || target === 'MOCAMBIQUE') {
@@ -231,11 +263,11 @@ export function getCurrencyDefinition(codeOrSymbol?: string): CurrencyDefinition
 
   // Fallback graceful custom currency definition
   return {
-    code: codeOrSymbol || 'EUR',
-    symbol: codeOrSymbol || '€',
+    code: codeOrSymbol || 'MZN',
+    symbol: codeOrSymbol || 'MT',
     name: codeOrSymbol || 'Moeda Personalizada',
-    country: 'Geral',
-    flag: '🌐',
+    country: 'Moçambique',
+    flag: '🇲🇿',
     position: 'suffix',
     spaceBetween: true,
     decimalPlaces: 2,
@@ -254,7 +286,14 @@ export function formatCurrency(
   }
 
   const def = getCurrencyDefinition(currencyCodeOrCustom);
-  const companyCustom = !customOptions ? getActiveCompanyCustomSettings() : null;
+  const activeCode = getActiveAppCurrencyCode();
+  const isCompanyCurrency =
+    !currencyCodeOrCustom ||
+    currencyCodeOrCustom.toUpperCase() === activeCode.toUpperCase() ||
+    currencyCodeOrCustom.toUpperCase() === def.code.toUpperCase() ||
+    (def.symbol && currencyCodeOrCustom.toUpperCase() === def.symbol.toUpperCase());
+
+  const companyCustom = isCompanyCurrency && !customOptions ? getActiveCompanyCustomSettings() : null;
   const finalDef: CurrencyDefinition = { ...def, ...companyCustom, ...customOptions };
 
   const isNegative = amount < 0;

@@ -4,6 +4,7 @@ export {
   formatCurrencyCompact,
   getCurrencyDefinition,
   setActiveAppCurrency,
+  setActiveAppCompany,
   getActiveAppCurrencyCode,
   SUPPORTED_CURRENCIES,
 } from './currency';

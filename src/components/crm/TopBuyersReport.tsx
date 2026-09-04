@@ -36,7 +36,8 @@ export const TopBuyersReport: React.FC<TopBuyersReportProps> = ({
   onInitiateCall,
   onViewHistory,
 }) => {
-  const { customers, salesHistory, addLoyaltyPoints, notify } = useApp();
+  const { customers, salesHistory, addLoyaltyPoints, notify, currentCompany } = useApp();
+  const currSym = currentCompany?.currencySymbol || 'Mt';
 
   const [searchTerm, setSearchTerm] = useState('');
   const [tierFilter, setTierFilter] = useState<'all' | 'Bronze' | 'Prata' | 'Ouro' | 'Platina'>('all');
@@ -150,9 +151,9 @@ export const TopBuyersReport: React.FC<TopBuyersReportProps> = ({
       'Telefone',
       'Email',
       'Escalao Fidelizacao',
-      'Total Compras (EUR)',
+      `Total Compras (${currSym})`,
       'Numero de Encomendas',
-      'Ticket Medio (EUR)',
+      `Ticket Medio (${currSym})`,
       'Pontos Fidelidade',
       'Artigo Mais Comprado',
       'Ultima Compra',
@@ -452,7 +453,7 @@ export const TopBuyersReport: React.FC<TopBuyersReportProps> = ({
               onChange={(e) => setSortBy(e.target.value as any)}
               className="bg-transparent text-white font-medium focus:outline-none cursor-pointer"
             >
-              <option value="spent" className="bg-slate-900">Maior Valor Gasto (€)</option>
+              <option value="spent" className="bg-slate-900">Maior Valor Gasto ({currSym})</option>
               <option value="orders" className="bg-slate-900">Mais Encomendas (Qtd)</option>
               <option value="avgTicket" className="bg-slate-900">Maior Ticket Médio</option>
               <option value="points" className="bg-slate-900">Mais Pontos Fidelidade</option>

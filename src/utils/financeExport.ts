@@ -3,6 +3,12 @@ import autoTable from 'jspdf-autotable';
 import * as XLSX from 'xlsx';
 import { Company, Sale, LedgerEntry, ChartOfAccounts } from '../types';
 import { calculateNetSalesRevenue, calculateNetTax } from './documentUtils';
+import { getCompanyLogoForPdf, calculateFittedDimensions } from './print';
+import { getCurrencyDefinition } from './currency';
+
+export function resolveCurrencySymbol(company: Company): string {
+  return company.currencySymbol || getCurrencyDefinition(company.currency).symbol || 'Mt';
+}
 
 export interface BalanceSheetRow {
   code: string;
@@ -76,22 +82,34 @@ export function calculateBalancete(
 // 1. EXPORT INVOICE HISTORY (HISTÓRICO DE FATURAÇÃO) - PDF & EXCEL
 // -------------------------------------------------------------
 
-export function exportInvoicesToPDF(company: Company, sales: Sale[], periodLabel = 'Agosto 2026') {
+export async function exportInvoicesToPDF(company: Company, sales: Sale[], periodLabel = 'Agosto 2026') {
   const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
 
   // Brand Header
   doc.setFillColor(15, 15, 15);
   doc.rect(0, 0, 297, 24, 'F');
 
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(14);
-  doc.setTextColor(197, 164, 126); // #c5a47e
-  doc.text(company.name.toUpperCase(), 14, 12);
+  const logo = await getCompanyLogoForPdf(company.logoUrl, company.tradeName || company.name);
+  let textStartX = 14;
+  if (logo) {
+    const { width: logoW, height: logoH } = calculateFittedDimensions(28, 14, logo.width, logo.height);
+    try {
+      doc.addImage(logo.dataUrl, logo.format, 14, 5, logoW, logoH);
+      textStartX = 14 + logoW + 4;
+    } catch {
+      textStartX = 14;
+    }
+  }
 
-  doc.setFontSize(9);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(13);
+  doc.setTextColor(197, 164, 126); // #c5a47e
+  doc.text(company.name.toUpperCase(), textStartX, 12);
+
+  doc.setFontSize(8.5);
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(200, 200, 200);
-  doc.text(`NIF: ${company.taxNumber} | Certificado AT: ${company.softwareCertNumber} | SAF-T: ${company.saftVersion}`, 14, 18);
+  doc.text(`NIF: ${company.taxNumber} | Certificado AT: ${company.softwareCertNumber} | SAF-T: ${company.saftVersion}`, textStartX, 18);
 
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(255, 255, 255);
@@ -102,7 +120,7 @@ export function exportInvoicesToPDF(company: Company, sales: Sale[], periodLabel
   doc.setTextColor(180, 180, 180);
   doc.text(`Emitido em: ${new Date().toLocaleString('pt-PT')}`, 297 - 14, 18, { align: 'right' });
 
-  const currSym = company.currencySymbol || (company.currency === 'MZN' ? 'Mt' : company.currency === 'USD' ? '$' : company.currency === 'BRL' ? 'R$' : company.currency === 'AOA' ? 'Kz' : 'Mt');
+  const currSym = resolveCurrencySymbol(company);
 
   // Summary Banner
   const totalGross = sales.reduce((sum, s) => sum + s.total, 0);
@@ -191,9 +209,9 @@ export function exportInvoicesToPDF(company: Company, sales: Sale[], periodLabel
         '',
         '',
         '',
-        totalNet.toFixed(2) + ' €',
-        totalTax.toFixed(2) + ' €',
-        totalGross.toFixed(2) + ' €',
+        `${totalNet.toFixed(2)} ${currSym}`,
+        `${totalTax.toFixed(2)} ${currSym}`,
+        `${totalGross.toFixed(2)} ${currSym}`,
         '',
         '',
       ],
@@ -220,7 +238,7 @@ export function exportInvoicesToPDF(company: Company, sales: Sale[], periodLabel
 }
 
 export function exportInvoicesToExcel(company: Company, sales: Sale[], periodLabel = 'Agosto 2026') {
-  const currSym = company.currencySymbol || (company.currency === 'MZN' ? 'Mt' : company.currency === 'USD' ? '$' : company.currency === 'BRL' ? 'R$' : company.currency === 'AOA' ? 'Kz' : 'Mt');
+  const currSym = resolveCurrencySymbol(company);
 
   const data = sales.map((s, index) => ({
     'Nº Registo': index + 1,
@@ -290,27 +308,39 @@ export function exportInvoicesToExcel(company: Company, sales: Sale[], periodLab
 // 2. EXPORT BALANCETE (TRIAL BALANCE / BALANCETE SNC) - PDF & EXCEL
 // -------------------------------------------------------------
 
-export function exportBalanceteToPDF(
+export async function exportBalanceteToPDF(
   company: Company,
   balanceteRows: BalanceSheetRow[],
   periodLabel = 'Agosto 2026'
 ) {
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
-  const currSym = company.currencySymbol || (company.currency === 'MZN' ? 'Mt' : company.currency === 'USD' ? '$' : company.currency === 'BRL' ? 'R$' : company.currency === 'AOA' ? 'Kz' : 'Mt');
+  const currSym = resolveCurrencySymbol(company);
 
   // Header
   doc.setFillColor(15, 15, 15);
   doc.rect(0, 0, 210, 22, 'F');
 
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(13);
-  doc.setTextColor(197, 164, 126);
-  doc.text(company.name.toUpperCase(), 14, 10);
+  const logo = await getCompanyLogoForPdf(company.logoUrl, company.tradeName || company.name);
+  let textStartX = 14;
+  if (logo) {
+    const { width: logoW, height: logoH } = calculateFittedDimensions(26, 13, logo.width, logo.height);
+    try {
+      doc.addImage(logo.dataUrl, logo.format, 14, 4.5, logoW, logoH);
+      textStartX = 14 + logoW + 4;
+    } catch {
+      textStartX = 14;
+    }
+  }
 
-  doc.setFontSize(8);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(12.5);
+  doc.setTextColor(197, 164, 126);
+  doc.text(company.name.toUpperCase(), textStartX, 10);
+
+  doc.setFontSize(7.5);
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(200, 200, 200);
-  doc.text(`NIF: ${company.taxNumber} | Sistema de Normalização Contabilística (SNC)`, 14, 16);
+  doc.text(`NIF: ${company.taxNumber} | Sistema de Normalização Contabilística (SNC)`, textStartX, 16);
 
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(255, 255, 255);
@@ -410,7 +440,7 @@ export function exportBalanceteToExcel(
   balanceteRows: BalanceSheetRow[],
   periodLabel = 'Agosto 2026'
 ) {
-  const currSym = company.currencySymbol || (company.currency === 'MZN' ? 'Mt' : company.currency === 'USD' ? '$' : company.currency === 'BRL' ? 'R$' : company.currency === 'AOA' ? 'Kz' : 'Mt');
+  const currSym = resolveCurrencySymbol(company);
 
   const data = balanceteRows.map((r) => ({
     'Código Conta': r.code,
@@ -466,23 +496,35 @@ export function exportBalanceteToExcel(
 // 3. EXPORT DRE (DEMONSTRAÇÃO DE RESULTADOS) - PDF & EXCEL
 // -------------------------------------------------------------
 
-export function exportDreToPDF(company: Company, totalSalesRevenue: number, periodLabel = 'Agosto 2026') {
+export async function exportDreToPDF(company: Company, totalSalesRevenue: number, periodLabel = 'Agosto 2026') {
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
-  const currSym = company.currencySymbol || (company.currency === 'MZN' ? 'Mt' : company.currency === 'USD' ? '$' : company.currency === 'BRL' ? 'R$' : company.currency === 'AOA' ? 'Kz' : 'Mt');
+  const currSym = resolveCurrencySymbol(company);
 
   // Header
   doc.setFillColor(15, 15, 15);
   doc.rect(0, 0, 210, 22, 'F');
 
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(13);
-  doc.setTextColor(197, 164, 126);
-  doc.text(company.name.toUpperCase(), 14, 10);
+  const logo = await getCompanyLogoForPdf(company.logoUrl, company.tradeName || company.name);
+  let textStartX = 14;
+  if (logo) {
+    const { width: logoW, height: logoH } = calculateFittedDimensions(26, 13, logo.width, logo.height);
+    try {
+      doc.addImage(logo.dataUrl, logo.format, 14, 4.5, logoW, logoH);
+      textStartX = 14 + logoW + 4;
+    } catch {
+      textStartX = 14;
+    }
+  }
 
-  doc.setFontSize(8);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(12.5);
+  doc.setTextColor(197, 164, 126);
+  doc.text(company.name.toUpperCase(), textStartX, 10);
+
+  doc.setFontSize(7.5);
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(200, 200, 200);
-  doc.text(`NIF: ${company.taxNumber} | Demonstração de Resultados por Naturezas`, 14, 16);
+  doc.text(`NIF: ${company.taxNumber} | Demonstração de Resultados por Naturezas`, textStartX, 16);
 
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(255, 255, 255);
@@ -520,7 +562,7 @@ export function exportDreToPDF(company: Company, totalSalesRevenue: number, peri
 }
 
 export function exportDreToExcel(company: Company, totalSalesRevenue: number, periodLabel = 'Agosto 2026') {
-  const currSym = company.currencySymbol || (company.currency === 'MZN' ? 'Mt' : company.currency === 'USD' ? '$' : company.currency === 'BRL' ? 'R$' : company.currency === 'AOA' ? 'Kz' : 'Mt');
+  const currSym = resolveCurrencySymbol(company);
 
   const cmvmc = totalSalesRevenue * 0.48;
   const grossMargin = totalSalesRevenue * 0.52;

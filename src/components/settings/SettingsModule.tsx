@@ -130,12 +130,12 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
     address: currentCompany?.address || '',
     city: currentCompany?.city || '',
     postalCode: currentCompany?.postalCode || '',
-    country: currentCompany?.country || 'Portugal',
-    currency: currentCompany?.currency || 'EUR',
-    currencySymbol: currentCompany?.currencySymbol || '',
+    country: currentCompany?.country || 'Moçambique',
+    currency: currentCompany?.currency || 'MZN',
+    currencySymbol: currentCompany?.currencySymbol || 'Mt',
     currencyPosition: currentCompany?.currencyPosition || 'suffix',
     currencyDecimals: currentCompany?.currencyDecimals ?? 2,
-    shareCapital: currentCompany?.shareCapital || '50.000,00 €',
+    shareCapital: currentCompany?.shareCapital || '100.000,00 MT',
     softwareCertNumber: currentCompany?.softwareCertNumber || '3024/AT',
     saftVersion: currentCompany?.saftVersion || '1.04_01',
   });
@@ -149,12 +149,12 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
         address: currentCompany.address || '',
         city: currentCompany.city || '',
         postalCode: currentCompany.postalCode || '',
-        country: currentCompany.country || 'Portugal',
-        currency: currentCompany.currency || 'EUR',
-        currencySymbol: currentCompany.currencySymbol || '',
+        country: currentCompany.country || 'Moçambique',
+        currency: currentCompany.currency || 'MZN',
+        currencySymbol: currentCompany.currencySymbol || 'Mt',
         currencyPosition: currentCompany.currencyPosition || 'suffix',
         currencyDecimals: currentCompany.currencyDecimals ?? 2,
-        shareCapital: currentCompany.shareCapital || '50.000,00 €',
+        shareCapital: currentCompany.shareCapital || '100.000,00 MT',
         softwareCertNumber: currentCompany.softwareCertNumber || '3024/AT',
         saftVersion: currentCompany.saftVersion || '1.04_01',
       });
@@ -449,7 +449,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
     <FiscalYear>2026</FiscalYear>
     <StartDate>2026-08-01</StartDate>
     <EndDate>2026-08-31</EndDate>
-    <CurrencyCode>EUR</CurrencyCode>
+    <CurrencyCode>${currentCompany.currency || 'MZN'}</CurrencyCode>
     <DateCreated>${new Date().toISOString().split('T')[0]}</DateCreated>
     <TaxEntity>Global</TaxEntity>
     <ProductCompanyID>DeepMind Technologies</ProductCompanyID>
@@ -1393,7 +1393,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
 
                 <div className="bg-[#0d0d0d] p-4 rounded-xl border border-[#262626] space-y-2">
                   <span className="text-[10px] text-neutral-400 font-bold uppercase block">Indicador Financeiro</span>
-                  <div className="text-xl font-bold font-mono text-[#c5a47e]">1.450,80 €</div>
+                  <div className="text-xl font-bold font-mono text-[#c5a47e]">{formatCurrency(1450.80, companyForm.currency)}</div>
                   <p className="text-[11px] text-neutral-400">Total Faturado no Turno Atual</p>
                 </div>
               </div>

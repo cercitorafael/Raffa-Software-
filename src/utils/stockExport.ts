@@ -1,5 +1,6 @@
 import * as XLSX from 'xlsx';
 import { Product, ProductCategory, StockItem, Warehouse, Supplier } from '../types';
+import { getCurrencyDefinition } from './currency';
 
 export interface ParsedProductRow {
   rowNumber: number;
@@ -266,8 +267,10 @@ export function exportProductsToExcel(
   stock: StockItem[],
   warehouses: Warehouse[],
   suppliers: Supplier[],
-  companyName: string = 'Empresa'
+  companyName: string = 'Empresa',
+  currencySymbol?: string
 ) {
+  const currSym = currencySymbol || getCurrencyDefinition().symbol || 'Mt';
   const categoryMap = new Map(categories.map((c) => [c.id, c.name]));
   const supplierMap = new Map(suppliers.map((s) => [s.id, s.name]));
 
@@ -289,15 +292,15 @@ export function exportProductsToExcel(
       'Designação do Artigo': p.name,
       'Código de Barras (EAN)': p.barcode,
       'Categoria': catName,
-      'PVP (€ com IVA)': p.price,
-      'Preço Custo (€)': p.costPrice,
-      'Margem Bruta (€)': Number((p.price - p.costPrice).toFixed(2)),
+      [`PVP (${currSym} com IVA)`]: p.price,
+      [`Preço Custo (${currSym})`]: p.costPrice,
+      [`Margem Bruta (${currSym})`]: Number((p.price - p.costPrice).toFixed(2)),
       'Taxa IVA (%)': p.taxRate,
       'Unidade': p.unit,
       'Stock Atual (Total)': totalQty,
       'Stock Mínimo': p.minStock,
       'Stock Máximo': p.maxStock,
-      'Valor Total Stock (€)': Number((totalQty * p.costPrice).toFixed(2)),
+      [`Valor Total Stock (${currSym})`]: Number((totalQty * p.costPrice).toFixed(2)),
       'Controlo de Lotes': p.hasBatchControl ? 'Sim' : 'Não',
       'Fornecedor Habitual': supName,
       'Descrição / Notas': p.description || '',

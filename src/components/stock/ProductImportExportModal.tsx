@@ -183,7 +183,8 @@ export const ProductImportExportModal: React.FC<ProductImportExportModalProps> =
         stock,
         warehouses,
         suppliers,
-        currentCompany.tradeName || currentCompany.name
+        currentCompany.tradeName || currentCompany.name,
+        currentCompany.currencySymbol || currentCompany.currency
       );
     } else if (exportFormat === 'csv') {
       exportProductsToCSV(
@@ -428,7 +429,7 @@ export const ProductImportExportModal: React.FC<ProductImportExportModalProps> =
                             <th className="py-2 px-3">Estado</th>
                             <th className="py-2 px-3">SKU</th>
                             <th className="py-2 px-3">Nome do Artigo</th>
-                            <th className="py-2 px-3">PVP (€)</th>
+                            <th className="py-2 px-3">PVP ({currentCompany?.currencySymbol || 'Mt'})</th>
                             <th className="py-2 px-3">IVA</th>
                             <th className="py-2 px-3">Stock Inicial</th>
                             <th className="py-2 px-3">Observações</th>
