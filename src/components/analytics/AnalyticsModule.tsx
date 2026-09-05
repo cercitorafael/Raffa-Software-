@@ -877,32 +877,82 @@ export const AnalyticsModule: React.FC = () => {
         </div>
       </div>
 
-      {/* 3. Section Tabs Navigation */}
-      <div className="flex items-center space-x-1 border-b border-[#262626] pb-1 overflow-x-auto">
-        {[
-          { id: 'overview', label: 'Visão Geral & Volume Diário', icon: BarChart3 },
-          { id: 'products', label: 'Produtos Mais Vendidos', icon: Award },
-          { id: 'daily', label: 'Tabela de Desempenho Diário', icon: Calendar },
-          { id: 'payments', label: 'Formas de Pagamento', icon: CreditCard },
-          { id: 'hours', label: 'Horários de Pico', icon: Clock },
-        ].map((tab) => {
-          const Icon = tab.icon;
-          const isActive = activeTab === tab.id;
-          return (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id as any)}
-              className={`flex items-center space-x-2 px-4 py-2 text-xs font-medium rounded-t-lg transition-all cursor-pointer whitespace-nowrap ${
-                isActive
-                  ? 'bg-[#181818] text-[#c5a47e] border-t-2 border-[#c5a47e] font-semibold'
-                  : 'text-neutral-400 hover:text-neutral-200 hover:bg-[#141414]'
-              }`}
-            >
-              <Icon className="w-4 h-4" />
-              <span>{tab.label}</span>
-            </button>
-          );
-        })}
+      {/* 3. Section Tabs Navigation Bar */}
+      <div
+        id="analytics-section-tabs-bar"
+        className="bg-[#141414] border border-[#262626] rounded-xl p-2.5 shadow-md shrink-0"
+      >
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+          <div className="flex items-center space-x-2 text-xs text-neutral-400 shrink-0 px-1">
+            <Layers className="w-4 h-4 text-[#c5a47e]" />
+            <span className="font-semibold text-neutral-200">Vistas do Relatório:</span>
+          </div>
+
+          <div className="flex items-center gap-2 overflow-x-auto no-scrollbar py-0.5 scroll-smooth flex-wrap sm:flex-nowrap">
+            {[
+              {
+                id: 'overview',
+                label: 'Visão Geral & Volume Diário',
+                badge: 'Completo',
+                icon: BarChart3,
+              },
+              {
+                id: 'products',
+                label: 'Produtos Mais Vendidos',
+                badge: 'Ranking',
+                icon: Award,
+              },
+              {
+                id: 'daily',
+                label: 'Tabela de Desempenho Diário',
+                badge: `${dailySalesData.length} dias`,
+                icon: Calendar,
+              },
+              {
+                id: 'payments',
+                label: 'Formas de Pagamento',
+                badge: `${paymentMethodsData.length} métodos`,
+                icon: CreditCard,
+              },
+              {
+                id: 'hours',
+                label: 'Horários de Pico',
+                badge: '24 Horas',
+                icon: Clock,
+              },
+            ].map((tab) => {
+              const Icon = tab.icon;
+              const isActive = activeTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  id={`analytics-tab-${tab.id}`}
+                  onClick={() => setActiveTab(tab.id as any)}
+                  className={`flex items-center space-x-2 px-3.5 py-2 text-xs font-semibold rounded-lg transition-all cursor-pointer whitespace-nowrap border shrink-0 ${
+                    isActive
+                      ? 'bg-[#c5a47e] text-neutral-950 border-[#c5a47e] shadow-sm font-bold'
+                      : 'bg-[#1c1c1c] text-neutral-300 hover:text-white hover:bg-[#252525] border-[#2c2c2c]'
+                  }`}
+                  title={`Alternar visualização para: ${tab.label}`}
+                >
+                  <Icon className={`w-3.5 h-3.5 ${isActive ? 'text-neutral-950' : 'text-[#c5a47e]'}`} />
+                  <span>{tab.label}</span>
+                  {tab.badge && (
+                    <span
+                      className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono font-medium ${
+                        isActive
+                          ? 'bg-neutral-950/25 text-neutral-900 border border-neutral-950/20'
+                          : 'bg-[#141414] text-neutral-400 border border-[#2e2e2e]'
+                      }`}
+                    >
+                      {tab.badge}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </div>
       </div>
 
       {/* 4. TAB 1 & PRIMARY CHART: Daily Sales Volume & Overview */}
@@ -1433,32 +1483,82 @@ export const AnalyticsModule: React.FC = () => {
 
       {/* 6. TAB 3: Payment Methods & Peak Hours Analysis */}
       {(activeTab === 'overview' || activeTab === 'payments' || activeTab === 'hours') && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className={`grid grid-cols-1 ${activeTab === 'overview' ? 'lg:grid-cols-2' : ''} gap-6`}>
           {/* Payment Methods Breakdown Chart */}
-          <div className="bg-[#141414] border border-[#262626] rounded-xl p-4 lg:p-6 shadow-md">
-            <div className="mb-4">
-              <h2 className="text-base font-semibold text-neutral-100 flex items-center space-x-2">
-                <CreditCard className="w-4 h-4 text-[#c5a47e]" />
-                <span>Volume por Forma de Pagamento</span>
-              </h2>
-              <p className="text-xs text-neutral-400 mt-0.5">
-                Comparação de receitas recebidas por TPA, Numerário, MB WAY e Transferência.
-              </p>
-            </div>
+          {(activeTab === 'overview' || activeTab === 'payments') && (
+            <div className="bg-[#141414] border border-[#262626] rounded-xl p-4 lg:p-6 shadow-md">
+              <div className="mb-4">
+                <h2 className="text-base font-semibold text-neutral-100 flex items-center space-x-2">
+                  <CreditCard className="w-4 h-4 text-[#c5a47e]" />
+                  <span>Volume por Forma de Pagamento</span>
+                </h2>
+                <p className="text-xs text-neutral-400 mt-0.5">
+                  Comparação de receitas recebidas por TPA, Numerário, MB WAY e Transferência.
+                </p>
+              </div>
 
-            <div className="h-64 w-full">
-              {paymentMethodsData.length === 0 ? (
-                <div className="h-full flex items-center justify-center text-neutral-500 text-sm">
-                  Sem registos de pagamentos
-                </div>
-              ) : (
+              <div className="h-64 w-full">
+                {paymentMethodsData.length === 0 ? (
+                  <div className="h-full flex items-center justify-center text-neutral-500 text-sm">
+                    Sem registos de pagamentos
+                  </div>
+                ) : (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart
+                      data={paymentMethodsData}
+                      margin={{ top: 10, right: 10, left: 10, bottom: 10 }}
+                    >
+                      <CartesianGrid strokeDasharray="3 3" stroke="#262626" vertical={false} />
+                      <XAxis dataKey="label" stroke="#737373" fontSize={11} tickLine={false} />
+                      <YAxis
+                        stroke="#737373"
+                        fontSize={11}
+                        tickLine={false}
+                        tickFormatter={(v) => `${v} ${currentCompany.currencySymbol}`}
+                      />
+                      <Tooltip
+                        contentStyle={{
+                          backgroundColor: '#171717',
+                          borderColor: '#333333',
+                          borderRadius: '8px',
+                          fontSize: '12px',
+                          color: '#f5f5f5',
+                        }}
+                        formatter={(val: any) => [formatCurrency(Number(val)), 'Total Faturado']}
+                      />
+                      <Bar dataKey="amount" fill="#3b82f6" radius={[6, 6, 0, 0]}>
+                        {paymentMethodsData.map((_, index) => (
+                          <Cell key={`pay-cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Peak Hours Breakdown Chart */}
+          {(activeTab === 'overview' || activeTab === 'hours') && (
+            <div className="bg-[#141414] border border-[#262626] rounded-xl p-4 lg:p-6 shadow-md">
+              <div className="mb-4">
+                <h2 className="text-base font-semibold text-neutral-100 flex items-center space-x-2">
+                  <Clock className="w-4 h-4 text-[#c5a47e]" />
+                  <span>Horários de Maior Afluência (Horas de Pico)</span>
+                </h2>
+                <p className="text-xs text-neutral-400 mt-0.5">
+                  Distribuição horária de faturação para planeamento de equipas e turnos de caixa.
+                </p>
+              </div>
+
+              <div className="h-64 w-full">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart
-                    data={paymentMethodsData}
+                    data={hourlySalesData}
                     margin={{ top: 10, right: 10, left: 10, bottom: 10 }}
                   >
                     <CartesianGrid strokeDasharray="3 3" stroke="#262626" vertical={false} />
-                    <XAxis dataKey="label" stroke="#737373" fontSize={11} tickLine={false} />
+                    <XAxis dataKey="hour" stroke="#737373" fontSize={11} tickLine={false} />
                     <YAxis
                       stroke="#737373"
                       fontSize={11}
@@ -1473,63 +1573,17 @@ export const AnalyticsModule: React.FC = () => {
                         fontSize: '12px',
                         color: '#f5f5f5',
                       }}
-                      formatter={(val: any) => [formatCurrency(Number(val)), 'Total Faturado']}
+                      formatter={(val: any, name: string, item: any) => [
+                        formatCurrency(Number(val)),
+                        `Faturação (${item.payload.salesCount} vendas)`,
+                      ]}
                     />
-                    <Bar dataKey="amount" fill="#3b82f6" radius={[6, 6, 0, 0]}>
-                      {paymentMethodsData.map((_, index) => (
-                        <Cell key={`pay-cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                      ))}
-                    </Bar>
+                    <Bar dataKey="revenue" fill="#c5a47e" radius={[4, 4, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
-              )}
+              </div>
             </div>
-          </div>
-
-          {/* Peak Hours Breakdown Chart */}
-          <div className="bg-[#141414] border border-[#262626] rounded-xl p-4 lg:p-6 shadow-md">
-            <div className="mb-4">
-              <h2 className="text-base font-semibold text-neutral-100 flex items-center space-x-2">
-                <Clock className="w-4 h-4 text-[#c5a47e]" />
-                <span>Horários de Maior Afluência (Horas de Pico)</span>
-              </h2>
-              <p className="text-xs text-neutral-400 mt-0.5">
-                Distribuição horária de faturação para planeamento de equipas e turnos de caixa.
-              </p>
-            </div>
-
-            <div className="h-64 w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart
-                  data={hourlySalesData}
-                  margin={{ top: 10, right: 10, left: 10, bottom: 10 }}
-                >
-                  <CartesianGrid strokeDasharray="3 3" stroke="#262626" vertical={false} />
-                  <XAxis dataKey="hour" stroke="#737373" fontSize={11} tickLine={false} />
-                  <YAxis
-                    stroke="#737373"
-                    fontSize={11}
-                    tickLine={false}
-                    tickFormatter={(v) => `${v} ${currentCompany.currencySymbol}`}
-                  />
-                  <Tooltip
-                    contentStyle={{
-                      backgroundColor: '#171717',
-                      borderColor: '#333333',
-                      borderRadius: '8px',
-                      fontSize: '12px',
-                      color: '#f5f5f5',
-                    }}
-                    formatter={(val: any, name: string, item: any) => [
-                      formatCurrency(Number(val)),
-                      `Faturação (${item.payload.salesCount} vendas)`,
-                    ]}
-                  />
-                  <Bar dataKey="revenue" fill="#c5a47e" radius={[4, 4, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
+          )}
         </div>
       )}
     </div>
