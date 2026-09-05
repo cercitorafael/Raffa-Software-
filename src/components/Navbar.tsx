@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect } from 'react';
+import React, { useRef, useState, useEffect, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
 import {
   Building2,
@@ -102,6 +102,24 @@ export const Navbar: React.FC<{ onOpenShiftModal: () => void }> = ({ onOpenShift
     }
   };
 
+  const uniqueStores = useMemo(() => {
+    const seen = new Set<string>();
+    return stores.filter((s) => {
+      if (!s || !s.id || seen.has(s.id)) return false;
+      seen.add(s.id);
+      return true;
+    });
+  }, [stores]);
+
+  const uniqueTerminals = useMemo(() => {
+    const seen = new Set<string>();
+    return terminals.filter((t) => {
+      if (!t || !t.id || seen.has(t.id)) return false;
+      seen.add(t.id);
+      return true;
+    });
+  }, [terminals]);
+
   const roleLabels: Record<Role, { name: string; badge: string; color: string }> = {
     caixa: { name: 'Operador de Caixa', badge: 'POS', color: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' },
     gerente: { name: 'Gerente de Loja', badge: 'GERÊNCIA', color: 'bg-[#c5a47e]/15 text-[#c5a47e] border-[#c5a47e]/30' },
@@ -201,13 +219,13 @@ export const Navbar: React.FC<{ onOpenShiftModal: () => void }> = ({ onOpenShift
             <select
               value={currentStore.id}
               onChange={(e) => {
-                const st = stores.find((s) => s.id === e.target.value);
+                const st = uniqueStores.find((s) => s.id === e.target.value);
                 if (st) setCurrentStore(st);
               }}
               className="bg-transparent border-none text-xs font-medium text-[#e5e5e5] focus:outline-hidden cursor-pointer [&>option]:bg-[#141414] [&>option]:text-[#e5e5e5] max-w-[180px] truncate"
               title={`Loja / Armazém Ativo: ${currentStore.name}`}
             >
-              {stores.map((s) => (
+              {uniqueStores.map((s) => (
                 <option key={s.id} value={s.id} className="bg-[#141414] text-[#e5e5e5]">
                   {s.name} ({s.code})
                 </option>
@@ -221,13 +239,13 @@ export const Navbar: React.FC<{ onOpenShiftModal: () => void }> = ({ onOpenShift
             <select
               value={currentTerminal.id}
               onChange={(e) => {
-                const term = terminals.find((t) => t.id === e.target.value);
+                const term = uniqueTerminals.find((t) => t.id === e.target.value);
                 if (term) setCurrentTerminal(term);
               }}
               className="bg-transparent border-none text-xs font-medium text-[#e5e5e5] focus:outline-hidden cursor-pointer [&>option]:bg-[#141414] [&>option]:text-[#e5e5e5] max-w-[180px] truncate"
               title={`Terminal Ativo: ${currentTerminal.code} - ${currentTerminal.description}`}
             >
-              {terminals.map((t) => (
+              {uniqueTerminals.map((t) => (
                 <option key={t.id} value={t.id} className="bg-[#141414] text-[#e5e5e5]">
                   {t.code} - {t.description}
                 </option>

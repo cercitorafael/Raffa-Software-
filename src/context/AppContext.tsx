@@ -550,6 +550,25 @@ function saveToStorage<T>(key: string, value: T) {
 }
 
 /**
+ * Remove duplicatas de um array mantendo apenas a primeira ocorrência pelo campo 'id'
+ */
+export function deduplicateById<T extends { id?: any }>(items: T[]): T[] {
+  if (!Array.isArray(items)) return items;
+  const seen = new Set<string>();
+  const result: T[] = [];
+  for (const item of items) {
+    if (!item) continue;
+    const strId = item.id !== undefined && item.id !== null ? String(item.id).trim() : '';
+    if (strId) {
+      if (seen.has(strId)) continue;
+      seen.add(strId);
+    }
+    result.push(item);
+  }
+  return result;
+}
+
+/**
  * Organiza a lista de produtos em ordem alfabética de forma estrita em todos os setores e módulos
  */
 export const sortProductsAlphabetically = <T extends { name: string }>(list: T[]): T[] => {
@@ -580,7 +599,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Multi-Tenancy & User
   const [companies, setCompanies] = useState<Company[]>(() =>
-    loadFromStorage('companies', initialCompanies)
+    deduplicateById(loadFromStorage('companies', initialCompanies))
   );
   const [currentCompany, setCurrentCompany] = useState<Company>(() => {
     const comp = loadFromStorage('company', initialCompanies[0]);
@@ -596,12 +615,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, [currentCompany]);
 
   const [stores, setStores] = useState<Store[]>(() =>
-    loadFromStorage('stores', initialStores)
+    deduplicateById(loadFromStorage('stores', initialStores))
   );
   const [currentStore, setCurrentStore] = useState<Store>(() => {
     const storedCompany = loadFromStorage<Company>('company', initialCompanies[0]);
     const storedStore = loadFromStorage<Store | null>('store', null);
-    const allStoredStores = loadFromStorage<Store[]>('stores', initialStores);
+    const allStoredStores = deduplicateById(loadFromStorage<Store[]>('stores', initialStores));
     if (storedStore && storedCompany && storedStore.companyId === storedCompany.id) {
       return storedStore;
     }
@@ -613,12 +632,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   });
 
   const [terminals, setTerminals] = useState<Terminal[]>(() =>
-    loadFromStorage('terminals', initialTerminals)
+    deduplicateById(loadFromStorage('terminals', initialTerminals))
   );
   const [currentTerminal, setCurrentTerminal] = useState<Terminal>(() => {
     const storedStore = loadFromStorage<Store | null>('store', null);
     const storedTerm = loadFromStorage<Terminal | null>('terminal', null);
-    const allStoredTerminals = loadFromStorage<Terminal[]>('terminals', initialTerminals);
+    const allStoredTerminals = deduplicateById(loadFromStorage<Terminal[]>('terminals', initialTerminals));
     if (storedStore && storedTerm && storedTerm.storeId === storedStore.id) {
       return storedTerm;
     }
@@ -1032,12 +1051,40 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     currentCompany?.currencyDecimals,
   ]);
 
+  // One-time startup purge of any duplicated IDs in localStorage/state
   useEffect(() => {
-    saveToStorage('companies', companies);
+    setTerminals((prev) => {
+      const clean = deduplicateById(prev);
+      if (clean.length !== prev.length) {
+        saveToStorage('terminals', clean);
+        return clean;
+      }
+      return prev;
+    });
+    setStores((prev) => {
+      const clean = deduplicateById(prev);
+      if (clean.length !== prev.length) {
+        saveToStorage('stores', clean);
+        return clean;
+      }
+      return prev;
+    });
+    setCompanies((prev) => {
+      const clean = deduplicateById(prev);
+      if (clean.length !== prev.length) {
+        saveToStorage('companies', clean);
+        return clean;
+      }
+      return prev;
+    });
+  }, []);
+
+  useEffect(() => {
+    saveToStorage('companies', deduplicateById(companies));
     saveToStorage('company', currentCompany);
-    saveToStorage('stores', stores);
+    saveToStorage('stores', deduplicateById(stores));
     saveToStorage('store', currentStore);
-    saveToStorage('terminals', terminals);
+    saveToStorage('terminals', deduplicateById(terminals));
     saveToStorage('terminal', currentTerminal);
     saveToStorage('fiscalSeries', fiscalSeries);
     saveToStorage('users', users);
@@ -5821,21 +5868,33 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setCurrentStore(matchStore);
         saveToStorage('store', matchStore);
       } else {
-        const defaultStore: Store = {
-          id: `store-${compId}-sede`,
-          companyId: compId,
-          code: 'LOJA-01',
-          name: 'Loja Principal',
-          address: currentCompany.address || 'Sede Principal',
-          city: currentCompany.city || 'Maputo',
-          phone: currentCompany.phone || '',
-          managerId: currentUser?.id || 'usr-admin',
-          defaultWarehouseId: `wh-${compId}-default`,
-          terminalsCount: 1,
-        };
-        setStores((prev) => [...prev, defaultStore]);
-        setCurrentStore(defaultStore);
-        saveToStorage('store', defaultStore);
+        const defaultStoreId = `store-${compId}-sede`;
+        const existingStore = stores.find((s) => s.id === defaultStoreId);
+        if (existingStore) {
+          setCurrentStore(existingStore);
+          saveToStorage('store', existingStore);
+        } else {
+          const defaultStore: Store = {
+            id: defaultStoreId,
+            companyId: compId,
+            code: 'LOJA-01',
+            name: 'Loja Principal',
+            address: currentCompany.address || 'Sede Principal',
+            city: currentCompany.city || 'Maputo',
+            phone: currentCompany.phone || '',
+            managerId: currentUser?.id || 'usr-admin',
+            defaultWarehouseId: `wh-${compId}-default`,
+            terminalsCount: 1,
+          };
+          setStores((prev) => {
+            if (prev.some((s) => s.id === defaultStore.id)) return prev;
+            const updated = [...prev, defaultStore];
+            saveToStorage('stores', deduplicateById(updated));
+            return updated;
+          });
+          setCurrentStore(defaultStore);
+          saveToStorage('store', defaultStore);
+        }
       }
     }
   }, [currentCompany?.id, activeShift, currentStore.companyId, stores, currentCompany?.address, currentCompany?.city, currentCompany?.phone, currentUser?.id]);
@@ -5849,17 +5908,29 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setCurrentTerminal(matchTerm);
         saveToStorage('terminal', matchTerm);
       } else {
-        const defaultTerm: Terminal = {
-          id: `term-${currentStore.id}-01`,
-          storeId: currentStore.id,
-          code: 'POS-01',
-          description: 'Caixa Balcão Principal',
-          isActive: true,
-          currentShiftId: null,
-        };
-        setTerminals((prev) => [...prev, defaultTerm]);
-        setCurrentTerminal(defaultTerm);
-        saveToStorage('terminal', defaultTerm);
+        const defaultTermId = `term-${currentStore.id}-01`;
+        const existingTerm = terminals.find((t) => t.id === defaultTermId);
+        if (existingTerm) {
+          setCurrentTerminal(existingTerm);
+          saveToStorage('terminal', existingTerm);
+        } else {
+          const defaultTerm: Terminal = {
+            id: defaultTermId,
+            storeId: currentStore.id,
+            code: 'POS-01',
+            description: 'Caixa Balcão Principal',
+            isActive: true,
+            currentShiftId: null,
+          };
+          setTerminals((prev) => {
+            if (prev.some((t) => t.id === defaultTerm.id)) return prev;
+            const updated = [...prev, defaultTerm];
+            saveToStorage('terminals', deduplicateById(updated));
+            return updated;
+          });
+          setCurrentTerminal(defaultTerm);
+          saveToStorage('terminal', defaultTerm);
+        }
       }
     }
   }, [currentStore?.id, currentTerminal.storeId, terminals]);

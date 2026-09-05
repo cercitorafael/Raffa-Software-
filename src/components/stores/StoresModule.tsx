@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useApp } from '../../context/AppContext';
 import { Store, Terminal } from '../../types';
 import { formatCurrency } from '../../utils/crypto';
@@ -109,6 +109,15 @@ export const StoresModule: React.FC = () => {
     printerModel: 'Bixolon SRP-350III (Térmica 80mm)',
     isActive: true,
   });
+
+  const uniqueTerminals = useMemo(() => {
+    const seen = new Set<string>();
+    return terminals.filter((t) => {
+      if (!t || !t.id || seen.has(t.id)) return false;
+      seen.add(t.id);
+      return true;
+    });
+  }, [terminals]);
 
   // Cities for filter
   const cities = Array.from(new Set(stores.map((s) => s.city).filter(Boolean)));
@@ -580,7 +589,7 @@ export const StoresModule: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#1f1f1f]">
-                  {terminals.map((term) => {
+                  {uniqueTerminals.map((term) => {
                     const store = stores.find((s) => s.id === term.storeId);
                     return (
                       <tr key={term.id} className="hover:bg-[#171717] transition-colors">
