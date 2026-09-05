@@ -748,7 +748,7 @@ export const DashboardModule: React.FC = () => {
                     stroke="#525252"
                     tick={{ fill: '#737373', fontSize: 11 }}
                     axisLine={{ stroke: '#262626' }}
-                    tickFormatter={(val) => `${val}€`}
+                    tickFormatter={(val) => `${val} ${currentCompany?.currencySymbol || 'Mt'}`}
                   />
                   <Tooltip
                     contentStyle={{

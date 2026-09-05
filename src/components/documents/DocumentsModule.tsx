@@ -52,6 +52,7 @@ import {
   ChevronDown,
   Ban,
   ArrowLeft,
+  Percent,
 } from 'lucide-react';
 import { sound } from '../../utils/audio';
 import {
@@ -63,11 +64,13 @@ import {
 } from '../../utils/print';
 import { calculateNetSalesRevenue, isEffectiveSale, canEditDocument, canDeleteDocument } from '../../utils/documentUtils';
 import { defaultInvoiceTemplates } from '../../mockData';
+import { generateFiscalHash } from '../../utils/crypto';
 
 export const DocumentsModule: React.FC = () => {
   const {
     salesHistory,
     setSalesHistory,
+    addFiscalDocument,
     products,
     categories,
     customers,
@@ -243,18 +246,25 @@ export const DocumentsModule: React.FC = () => {
       return;
     }
 
-    const subtotal = editItems.reduce((acc, it) => acc + it.total, 0);
+    let subtotalBase = 0;
+    let taxTotalCalc = 0;
+    let totalCalc = 0;
     const taxSummary: Record<number, { base: number; tax: number }> = {};
     editItems.forEach((i) => {
-      const rate = i.taxRate || 23;
-      const base = i.total / (1 + rate / 100);
-      const tax = i.total - base;
+      const rate = typeof i.taxRate === 'number' ? i.taxRate : defaultCompanyTaxRate;
+      const itTax = Number(i.taxAmount || 0);
+      const itTotal = Number(i.total || 0);
+      const itBase = Number((itTotal - itTax).toFixed(2));
+      subtotalBase += itBase;
+      taxTotalCalc += itTax;
+      totalCalc += itTotal;
       if (!taxSummary[rate]) taxSummary[rate] = { base: 0, tax: 0 };
-      taxSummary[rate].base += base;
-      taxSummary[rate].tax += tax;
+      taxSummary[rate].base += itBase;
+      taxSummary[rate].tax += itTax;
     });
-    const taxTotal = Object.values(taxSummary).reduce((acc, t) => acc + t.tax, 0);
-    const total = subtotal;
+    const subtotal = Number(subtotalBase.toFixed(2));
+    const taxTotal = Number(taxTotalCalc.toFixed(2));
+    const total = Number(totalCalc.toFixed(2));
 
     updateDocument(editingDoc.id, {
       customerName: editCustomerName.trim(),
@@ -333,15 +343,24 @@ export const DocumentsModule: React.FC = () => {
 
   // Items in the document
   const [docItems, setDocItems] = useState<
-    (SaleItem & { tempId: string; notes?: string })[]
+    (SaleItem & { tempId: string; notes?: string; baseUnitPrice?: number })[]
   >([]);
+
+  // VAT Pricing Mode & Regional Defaults
+  const [pricesIncludeTax, setPricesIncludeTax] = useState<boolean>(true);
+  const defaultCompanyTaxRate =
+    currentCompany?.country === 'Moçambique' || currentCompany?.currency === 'MZN'
+      ? 16
+      : currentCompany?.country === 'Angola' || currentCompany?.currency === 'AOA'
+      ? 14
+      : 23;
 
   // Item selector helpers
   const [selectedProductId, setSelectedProductId] = useState<string>('');
   const [itemQty, setItemQty] = useState<number>(1);
   const [customItemName, setCustomItemName] = useState<string>('');
   const [customItemPrice, setCustomItemPrice] = useState<number>(10);
-  const [customItemTax, setCustomItemTax] = useState<number>(23);
+  const [customItemTax, setCustomItemTax] = useState<number>(defaultCompanyTaxRate);
 
   // ================= MASS PRODUCT SELECTION STATE =================
   const [showMassAddModal, setShowMassAddModal] = useState<boolean>(false);
@@ -407,16 +426,17 @@ export const DocumentsModule: React.FC = () => {
         }
       }
 
-      const rate = prod.taxRate || 23;
+      const rate = typeof prod.taxRate === 'number' ? prod.taxRate : defaultCompanyTaxRate;
       const unitPrice = prod.price;
-      const total = unitPrice * itemQty;
-      const base = total / (1 + rate / 100);
-      const taxAmount = total - base;
+      const baseUnitPrice = pricesIncludeTax ? unitPrice / (1 + rate / 100) : unitPrice;
+      const baseTotal = baseUnitPrice * itemQty;
+      const taxAmount = Number((baseTotal * (rate / 100)).toFixed(2));
+      const total = Number((baseTotal + taxAmount).toFixed(2));
 
       setDocItems((prev) => [
         ...prev,
         {
-          tempId: `item-${Date.now()}-${Math.random()}`,
+          tempId: `item-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
           productId: prod.id,
           productName: prod.name,
           sku: prod.sku,
@@ -427,14 +447,18 @@ export const DocumentsModule: React.FC = () => {
           discountPercent: 0,
           discountAmount: 0,
           total,
+          baseUnitPrice,
         },
       ]);
       setSelectedProductId('');
       setItemQty(1);
     } else if (customItemName.trim()) {
-      const total = customItemPrice * itemQty;
-      const base = total / (1 + customItemTax / 100);
-      const taxAmount = total - base;
+      const rate = typeof customItemTax === 'number' ? customItemTax : defaultCompanyTaxRate;
+      const unitPrice = customItemPrice;
+      const baseUnitPrice = pricesIncludeTax ? unitPrice / (1 + rate / 100) : unitPrice;
+      const baseTotal = baseUnitPrice * itemQty;
+      const taxAmount = Number((baseTotal * (rate / 100)).toFixed(2));
+      const total = Number((baseTotal + taxAmount).toFixed(2));
 
       setDocItems((prev) => [
         ...prev,
@@ -445,11 +469,12 @@ export const DocumentsModule: React.FC = () => {
           sku: 'SERV-DIV',
           quantity: itemQty,
           unitPrice: customItemPrice,
-          taxRate: customItemTax,
+          taxRate: rate,
           taxAmount,
           discountPercent: 0,
           discountAmount: 0,
           total,
+          baseUnitPrice,
         },
       ]);
       setCustomItemName('');
@@ -479,16 +504,43 @@ export const DocumentsModule: React.FC = () => {
             }
           }
 
-          const rate = item.taxRate || 23;
-          const unitPrice = item.unitPrice;
-          const total = unitPrice * newQty;
-          const base = total / (1 + rate / 100);
-          const taxAmount = total - base;
+          const rate = typeof item.taxRate === 'number' ? item.taxRate : defaultCompanyTaxRate;
+          const baseUnit = item.baseUnitPrice ?? (pricesIncludeTax ? item.unitPrice / (1 + rate / 100) : item.unitPrice);
+          const baseTotal = baseUnit * newQty;
+          const taxAmount = Number((baseTotal * (rate / 100)).toFixed(2));
+          const total = Number((baseTotal + taxAmount).toFixed(2));
+
           return {
             ...item,
             quantity: newQty,
             taxAmount,
             total,
+            baseUnitPrice: baseUnit,
+          };
+        }
+        return item;
+      })
+    );
+  };
+
+  // Manual VAT update for a document line item - directly updates line total and document total
+  const handleUpdateItemTaxRate = (tempId: string, newRate: number) => {
+    const rate = Math.max(0, Number(newRate) || 0);
+    setDocItems((prev) =>
+      prev.map((item) => {
+        if (item.tempId === tempId) {
+          const prevRate = typeof item.taxRate === 'number' ? item.taxRate : defaultCompanyTaxRate;
+          const baseUnit = item.baseUnitPrice ?? (pricesIncludeTax ? item.unitPrice / (1 + prevRate / 100) : item.unitPrice);
+          const baseTotal = baseUnit * item.quantity;
+          const taxAmount = Number((baseTotal * (rate / 100)).toFixed(2));
+          const total = Number((baseTotal + taxAmount).toFixed(2));
+
+          return {
+            ...item,
+            taxRate: rate,
+            taxAmount,
+            total,
+            baseUnitPrice: baseUnit,
           };
         }
         return item;
@@ -558,7 +610,7 @@ export const DocumentsModule: React.FC = () => {
 
     const isInventoryDoc = !['ORC', 'PF', 'NC', 'RC'].includes(docType);
     let addedCount = 0;
-    const newItems: (SaleItem & { tempId: string; notes?: string })[] = [];
+    const newItems: (SaleItem & { tempId: string; notes?: string; baseUnitPrice?: number })[] = [];
 
     for (const [prodId, qty] of selectedEntries) {
       const prod = products.find((p) => p.id === prodId);
@@ -573,11 +625,12 @@ export const DocumentsModule: React.FC = () => {
         }
       }
 
-      const rate = prod.taxRate || 23;
+      const rate = typeof prod.taxRate === 'number' ? prod.taxRate : defaultCompanyTaxRate;
       const unitPrice = prod.price;
-      const total = unitPrice * qty;
-      const base = total / (1 + rate / 100);
-      const taxAmount = total - base;
+      const baseUnitPrice = pricesIncludeTax ? unitPrice / (1 + rate / 100) : unitPrice;
+      const baseTotal = baseUnitPrice * qty;
+      const taxAmount = Number((baseTotal * (rate / 100)).toFixed(2));
+      const total = Number((baseTotal + taxAmount).toFixed(2));
 
       newItems.push({
         tempId: `item-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
@@ -591,6 +644,7 @@ export const DocumentsModule: React.FC = () => {
         discountPercent: 0,
         discountAmount: 0,
         total,
+        baseUnitPrice,
       });
       addedCount++;
     }
@@ -604,19 +658,33 @@ export const DocumentsModule: React.FC = () => {
     }
   };
 
-  // Document Totals Calculation
-  const subtotal = docItems.reduce((acc, item) => acc + item.total, 0);
-  const taxSummary: Record<number, { base: number; tax: number }> = {};
+  // Document Totals Calculation - strictly reflects line totals, item VAT overrides and tax amounts
+  const taxSummary: Record<number, { base: number; tax: number; total: number }> = {};
+  let subtotalBase = 0;
+  let calculatedTaxTotal = 0;
+  let calculatedGrandTotal = 0;
+
   docItems.forEach((i) => {
-    const rate = i.taxRate || 23;
-    const base = i.total / (1 + rate / 100);
-    const tax = i.total - base;
-    if (!taxSummary[rate]) taxSummary[rate] = { base: 0, tax: 0 };
-    taxSummary[rate].base += base;
-    taxSummary[rate].tax += tax;
+    const rate = typeof i.taxRate === 'number' ? i.taxRate : defaultCompanyTaxRate;
+    const itemTax = Number(i.taxAmount || 0);
+    const itemTotal = Number(i.total || 0);
+    const itemBase = Number((itemTotal - itemTax).toFixed(2));
+
+    subtotalBase += itemBase;
+    calculatedTaxTotal += itemTax;
+    calculatedGrandTotal += itemTotal;
+
+    if (!taxSummary[rate]) {
+      taxSummary[rate] = { base: 0, tax: 0, total: 0 };
+    }
+    taxSummary[rate].base += itemBase;
+    taxSummary[rate].tax += itemTax;
+    taxSummary[rate].total += itemTotal;
   });
-  const taxTotal = Object.values(taxSummary).reduce((acc, t) => acc + t.tax, 0);
-  const total = subtotal;
+
+  const subtotal = Number(subtotalBase.toFixed(2));
+  const taxTotal = Number(calculatedTaxTotal.toFixed(2));
+  const total = Number(calculatedGrandTotal.toFixed(2));
 
   // Cancel Document Emission Handler
   const handleCancelEmission = () => {
@@ -643,7 +711,7 @@ export const DocumentsModule: React.FC = () => {
   };
 
   // Emit Document Handler
-  const handleEmitDocument = (e: React.FormEvent) => {
+  const handleEmitDocument = async (e: React.FormEvent) => {
     e.preventDefault();
 
     if (docItems.length === 0) {
@@ -686,7 +754,7 @@ export const DocumentsModule: React.FC = () => {
     const dateStr = new Date().toISOString();
     const prevSale = salesHistory[0];
     const prevHash = prevSale ? prevSale.fiscalHash : '0000000000000000';
-    const fiscalHash = `HASH-${Math.random().toString(36).substring(2, 6).toUpperCase()}-${Date.now().toString().slice(-4)}`;
+    const fiscalHash = generateFiscalHash(dateStr, invNumber, total, prevHash);
 
     let generatedNotes = documentNotes;
     if (!generatedNotes) {
@@ -707,14 +775,14 @@ export const DocumentsModule: React.FC = () => {
     const initialStatus =
       docType === 'ORC' || docType === 'PF'
         ? 'pendente'
-        : docType === 'FR' || docType === 'FS' || docType === 'VD'
-        ? 'pago'
-        : docType === 'NC'
-        ? 'anulado'
-        : 'emitido';
+      : docType === 'FR' || docType === 'FS' || docType === 'VD'
+      ? 'pago'
+      : docType === 'NC'
+      ? 'anulado'
+      : 'emitido';
 
     const newDoc: Sale = {
-      id: `doc-${Date.now()}`,
+      id: `doc-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
       companyId: currentCompany.id,
       storeId: currentStore.id,
       terminalId: currentTerminal.id,
@@ -722,9 +790,9 @@ export const DocumentsModule: React.FC = () => {
       invoiceType: docType,
       date: dateStr,
       customerId: selectedCustomerId || undefined,
-      customerName: customerName.trim(),
-      customerNif: customerNif.trim(),
-      customerTaxNumber: customerNif.trim(),
+      customerName: customerName.trim() || 'Consumidor Final',
+      customerNif: customerNif.trim() || '999999990',
+      customerTaxNumber: customerNif.trim() || '999999990',
       items: docItems.map(({ tempId, ...rest }) => rest),
       subtotal,
       discountTotal: 0,
@@ -745,7 +813,7 @@ export const DocumentsModule: React.FC = () => {
       shiftId: activeShift ? activeShift.id : 'shift-doc',
       fiscalHash,
       previousHash: prevHash,
-      atcud: `ATCUD-${currentCompany.taxNumber}-${invNumber}`,
+      atcud: `ATCUD-${currentCompany.taxNumber || '400123987'}-${invNumber}`,
       isOffline: false,
       isSynced: true,
       fiscalSeries: selectedSeries,
@@ -777,11 +845,11 @@ export const DocumentsModule: React.FC = () => {
       registerDocSaleInShift(total, selectedPaymentMethod);
     }
 
-    // 3. Append to salesHistory in App context
-    setSalesHistory((prev) => [newDoc, ...prev]);
+    // 3. Atomically archive to salesHistory, LocalStorage, Supabase, IndexedDB & audit log
+    await addFiscalDocument(newDoc);
     sound.playCashRegisterSound();
     const docDisplayTitle = getDocumentTitle(docType);
-    notify(`${docDisplayTitle} ${invNumber} emitida e assinada digitalmente com sucesso (Cert. 4120/AT).`, 'success');
+    notify(`${docDisplayTitle} ${invNumber} emitida e registrada com sucesso no Arquivo & Histórico Fiscal!`, 'success');
 
     // Reset doc form
     setDocItems([]);
@@ -1508,9 +1576,27 @@ export const DocumentsModule: React.FC = () => {
                   </h3>
                 </div>
 
-                <div className="flex items-center space-x-3">
+                <div className="flex items-center space-x-2.5 flex-wrap">
+                  {/* VAT Pricing Regime Toggle */}
+                  <div className="inline-flex items-center space-x-1.5 bg-[#0a0a0a] border border-[#2a2a2a] rounded-xl px-2.5 py-1">
+                    <span className="text-[11px] text-neutral-400 font-medium">Preço:</span>
+                    <button
+                      type="button"
+                      onClick={() => setPricesIncludeTax(!pricesIncludeTax)}
+                      className={`px-2 py-0.5 rounded-lg text-[11px] font-bold transition-all cursor-pointer flex items-center space-x-1 ${
+                        pricesIncludeTax
+                          ? 'bg-[#c5a47e]/20 text-[#c5a47e] border border-[#c5a47e]/40'
+                          : 'bg-[#1e1e1e] text-neutral-300 border border-[#333] hover:text-white'
+                      }`}
+                      title="PVP c/ IVA Incluído (taxa calcula parcela de IVA e ajusta o total) vs PVP Base (+ IVA soma ao total)"
+                    >
+                      <Tag className="w-3 h-3" />
+                      <span>{pricesIncludeTax ? 'PVP c/ IVA Incl.' : 'PVP s/ IVA (+ IVA)'}</span>
+                    </button>
+                  </div>
+
                   <span className="text-xs font-mono text-[#c5a47e] font-bold">
-                    {docItems.length} {docItems.length === 1 ? 'linha adicionada' : 'linhas adicionadas'}
+                    {docItems.length} {docItems.length === 1 ? 'linha' : 'linhas'}
                   </span>
 
                   {/* Mass Product Selection Button */}
@@ -1523,11 +1609,11 @@ export const DocumentsModule: React.FC = () => {
                       setMassBatchQty(1);
                       setShowMassAddModal(true);
                     }}
-                    className="px-3.5 py-1.5 bg-[#c5a47e] hover:bg-[#b5946e] text-neutral-950 rounded-xl text-xs font-bold flex items-center space-x-1.5 transition-all shadow-md cursor-pointer active:scale-95"
+                    className="px-3 py-1.5 bg-[#c5a47e] hover:bg-[#b5946e] text-neutral-950 rounded-xl text-xs font-bold flex items-center space-x-1.5 transition-all shadow-md cursor-pointer active:scale-95"
                     title="Adicionar múltiplos produtos de uma só vez selecionando produtos e definindo quantidades"
                   >
                     <Boxes className="w-4 h-4" />
-                    <span>Seleção Massiva de Produtos</span>
+                    <span>Seleção Massiva</span>
                   </button>
                 </div>
               </div>
@@ -1556,7 +1642,7 @@ export const DocumentsModule: React.FC = () => {
                         : `🟢 Stock: ${avail}`;
                       return (
                         <option key={p.id} value={p.id} disabled={!canBypassStock && isOutOfStock}>
-                          {p.name} ({p.sku}) - {formatCurrency(p.price)} (IVA {p.taxRate}%) — {stockLabel}
+                          {p.name} ({p.sku}) - {formatCurrency(p.price)} (IVA {p.taxRate ?? defaultCompanyTaxRate}%) — {stockLabel}
                         </option>
                       );
                     })}
@@ -1608,9 +1694,12 @@ export const DocumentsModule: React.FC = () => {
                         onChange={(e) => setCustomItemTax(Number(e.target.value))}
                         className="w-full px-1 py-2 bg-[#181818] border border-[#2a2a2a] rounded-xl text-white font-mono text-center cursor-pointer"
                       >
-                        <option value="23">23%</option>
+                        <option value="16">16% (MZ)</option>
+                        <option value="23">23% (PT)</option>
+                        <option value="14">14% (AO)</option>
                         <option value="13">13%</option>
                         <option value="6">6%</option>
+                        <option value="5">5%</option>
                         <option value="0">0%</option>
                       </select>
                     </div>
@@ -1645,16 +1734,21 @@ export const DocumentsModule: React.FC = () => {
                 </div>
               </div>
 
-              {/* Items Table with interactive inline quantity adjustments */}
+              {/* Items Table with interactive inline quantity and manual VAT rate adjustments */}
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs">
                   <thead>
                     <tr className="border-b border-[#262626] text-neutral-400">
                       <th className="pb-2.5 font-medium">SKU / Código</th>
                       <th className="pb-2.5 font-medium">Designação do Artigo / Serviço</th>
-                      <th className="pb-2.5 font-medium text-center min-w-[140px]">Qtd & Ajuste</th>
+                      <th className="pb-2.5 font-medium text-center min-w-[130px]">Qtd & Ajuste</th>
                       <th className="pb-2.5 font-medium text-right">PVP Unit.</th>
-                      <th className="pb-2.5 font-medium text-center">IVA</th>
+                      <th className="pb-2.5 font-medium text-center min-w-[150px]">
+                        <span className="flex items-center justify-center space-x-1">
+                          <Percent className="w-3 h-3 text-[#c5a47e]" />
+                          <span>IVA % (Editável)</span>
+                        </span>
+                      </th>
                       <th className="pb-2.5 font-medium text-right">Total Linha</th>
                       <th className="pb-2.5 font-medium text-right">Ações</th>
                     </tr>
@@ -1715,13 +1809,49 @@ export const DocumentsModule: React.FC = () => {
                           <td className="py-3 font-mono text-right text-neutral-300">
                             {formatCurrency(item.unitPrice)}
                           </td>
-                          <td className="py-3 text-center">
-                            <span className="px-1.5 py-0.5 rounded bg-[#1f1f1f] text-neutral-300 font-mono text-[10px]">
-                              {item.taxRate}%
-                            </span>
+                          <td className="py-2 text-center">
+                            {/* Manual VAT editing controls */}
+                            <div className="inline-flex items-center space-x-1 bg-[#0d0d0d] border border-[#2e2e2e] focus-within:border-[#c5a47e] rounded-lg px-2 py-1">
+                              <input
+                                type="number"
+                                min="0"
+                                max="100"
+                                step="0.5"
+                                value={item.taxRate ?? 0}
+                                onChange={(e) => handleUpdateItemTaxRate(item.tempId, Number(e.target.value))}
+                                className="w-12 bg-transparent text-center font-mono text-xs font-bold text-white focus:outline-hidden"
+                                title="Editar taxa de IVA manualmente (reflete no total da linha e do documento)"
+                              />
+                              <span className="text-[11px] font-mono text-neutral-400">%</span>
+                              <select
+                                value={[0, 5, 6, 13, 14, 16, 23].includes(item.taxRate) ? item.taxRate : 'custom'}
+                                onChange={(e) => {
+                                  if (e.target.value !== 'custom') {
+                                    handleUpdateItemTaxRate(item.tempId, Number(e.target.value));
+                                  }
+                                }}
+                                className="bg-[#181818] border-none text-[10px] text-neutral-300 rounded px-1 py-0.5 cursor-pointer focus:outline-hidden"
+                                title="Escolha rápida de escalão de IVA regional"
+                              >
+                                <option value="custom" disabled>Manual</option>
+                                <option value="16">16% MZ</option>
+                                <option value="23">23% PT</option>
+                                <option value="14">14% AO</option>
+                                <option value="13">13% PT</option>
+                                <option value="6">6% PT</option>
+                                <option value="5">5% AO</option>
+                                <option value="0">0% Isento</option>
+                              </select>
+                            </div>
+                            {item.taxRate === 0 && (
+                              <div className="text-[9px] text-emerald-400 font-medium mt-0.5">Isenção CIVA</div>
+                            )}
                           </td>
-                          <td className="py-3 font-mono font-bold text-right text-[#c5a47e]">
-                            {formatCurrency(item.total)}
+                          <td className="py-3 font-mono text-right">
+                            <div className="font-bold text-[#c5a47e]">{formatCurrency(item.total)}</div>
+                            <div className="text-[10px] text-neutral-500">
+                              IVA: {formatCurrency(item.taxAmount || 0)}
+                            </div>
                           </td>
                           <td className="py-3 text-right">
                             <button
@@ -1744,19 +1874,25 @@ export const DocumentsModule: React.FC = () => {
               {docItems.length > 0 && (
                 <div className="pt-4 border-t border-[#262626] flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-[#0d0d0d] p-4 rounded-xl">
                   {/* Tax summary breakdown */}
-                  <div className="flex items-center space-x-3 text-[11px] text-neutral-400 font-mono">
-                    <span className="font-sans text-neutral-500 font-semibold uppercase text-[10px]">
-                      Incidências de IVA:
-                    </span>
-                    {Object.entries(taxSummary).map(([rate, val]) => (
-                      <span key={rate} className="bg-[#181818] px-2 py-1 rounded-md border border-[#262626]">
-                        {rate}%: <strong className="text-white">{formatCurrency(val.tax)}</strong>
+                  <div className="flex flex-col space-y-2">
+                    <div className="flex items-center space-x-2 text-[11px] text-neutral-400 font-mono flex-wrap gap-y-1">
+                      <span className="font-sans text-neutral-500 font-semibold uppercase text-[10px]">
+                        Incidências de IVA:
                       </span>
-                    ))}
+                      {Object.entries(taxSummary).map(([rate, val]) => (
+                        <span key={rate} className="bg-[#181818] px-2 py-1 rounded-md border border-[#262626]">
+                          {rate}%: Base <span className="text-neutral-300">{formatCurrency(val.base)}</span> | Imposto <strong className="text-[#c5a47e]">{formatCurrency(val.tax)}</strong>
+                        </span>
+                      ))}
+                    </div>
+                    <div className="flex items-center space-x-4 text-xs font-mono text-neutral-400">
+                      <span>Subtotal Líquido: <strong className="text-white">{formatCurrency(subtotal)}</strong></span>
+                      <span>Total Imposto (IVA): <strong className="text-[#c5a47e]">{formatCurrency(taxTotal)}</strong></span>
+                    </div>
                   </div>
 
                   {/* Grand total */}
-                  <div className="text-right flex items-center space-x-4">
+                  <div className="text-right flex items-center space-x-4 self-end md:self-auto">
                     <div>
                       <span className="text-xs text-neutral-400 block">Total a Pagar (com IVA):</span>
                       <span className="text-2xl font-serif font-bold text-[#c5a47e] font-mono">
@@ -3138,31 +3274,82 @@ export const DocumentsModule: React.FC = () => {
                             />
                           </td>
                           <td className="p-2 text-center">
-                            <select
-                              value={item.taxRate || 23}
-                              onChange={(e) => {
-                                const rate = Number(e.target.value) || 0;
-                                setEditItems((prev) =>
-                                  prev.map((it, i) => {
-                                    if (i === idx) {
-                                      const base = it.total / (1 + rate / 100);
-                                      return { ...it, taxRate: rate, taxAmount: it.total - base };
-                                    }
-                                    return it;
-                                  })
-                                );
-                              }}
-                              className="w-16 px-1 py-1 text-center bg-[#0a0a0a] border border-[#262626] rounded text-neutral-300 font-mono text-xs focus:outline-hidden cursor-pointer"
-                            >
-                              <option value="0">0%</option>
-                              <option value="6">6%</option>
-                              <option value="13">13%</option>
-                              <option value="16">16%</option>
-                              <option value="23">23%</option>
-                            </select>
+                            <div className="inline-flex items-center space-x-1 bg-[#0a0a0a] border border-[#262626] focus-within:border-[#c5a47e] rounded px-1.5 py-0.5">
+                              <input
+                                type="number"
+                                min="0"
+                                max="100"
+                                step="0.5"
+                                value={item.taxRate ?? 0}
+                                onChange={(e) => {
+                                  const rate = Math.max(0, Number(e.target.value) || 0);
+                                  setEditItems((prev) =>
+                                    prev.map((it, i) => {
+                                      if (i === idx) {
+                                        const prevRate = it.taxRate || defaultCompanyTaxRate;
+                                        const baseUnit = (it as any).baseUnitPrice ?? (it.unitPrice / (1 + prevRate / 100));
+                                        const baseTotal = baseUnit * it.quantity * (1 - (it.discount || 0) / 100);
+                                        const taxAmount = Number((baseTotal * (rate / 100)).toFixed(2));
+                                        const total = Number((baseTotal + taxAmount).toFixed(2));
+                                        return {
+                                          ...it,
+                                          taxRate: rate,
+                                          taxAmount,
+                                          total,
+                                          baseUnitPrice: baseUnit,
+                                        };
+                                      }
+                                      return it;
+                                    })
+                                  );
+                                }}
+                                className="w-10 text-center bg-transparent text-white font-mono text-xs focus:outline-hidden"
+                                title="Digitar taxa de IVA manual"
+                              />
+                              <span className="text-[10px] text-neutral-400 font-mono">%</span>
+                              <select
+                                value={[0, 5, 6, 13, 14, 16, 23].includes(item.taxRate) ? item.taxRate : 'custom'}
+                                onChange={(e) => {
+                                  if (e.target.value === 'custom') return;
+                                  const rate = Number(e.target.value) || 0;
+                                  setEditItems((prev) =>
+                                    prev.map((it, i) => {
+                                      if (i === idx) {
+                                        const prevRate = it.taxRate || defaultCompanyTaxRate;
+                                        const baseUnit = (it as any).baseUnitPrice ?? (it.unitPrice / (1 + prevRate / 100));
+                                        const baseTotal = baseUnit * it.quantity * (1 - (it.discount || 0) / 100);
+                                        const taxAmount = Number((baseTotal * (rate / 100)).toFixed(2));
+                                        const total = Number((baseTotal + taxAmount).toFixed(2));
+                                        return {
+                                          ...it,
+                                          taxRate: rate,
+                                          taxAmount,
+                                          total,
+                                          baseUnitPrice: baseUnit,
+                                        };
+                                      }
+                                      return it;
+                                    })
+                                  );
+                                }}
+                                className="bg-[#141414] border-none text-[10px] text-neutral-300 rounded px-1 py-0.5 cursor-pointer focus:outline-hidden"
+                              >
+                                <option value="custom" disabled>Manual</option>
+                                <option value="16">16% MZ</option>
+                                <option value="23">23% PT</option>
+                                <option value="14">14% AO</option>
+                                <option value="13">13%</option>
+                                <option value="6">6%</option>
+                                <option value="5">5%</option>
+                                <option value="0">0%</option>
+                              </select>
+                            </div>
                           </td>
                           <td className="p-2 text-right font-mono font-bold text-amber-400">
-                            {formatCurrency(item.total)}
+                            <div>{formatCurrency(item.total)}</div>
+                            <div className="text-[10px] text-neutral-500 font-normal">
+                              IVA: {formatCurrency(item.taxAmount || 0)}
+                            </div>
                           </td>
                           <td className="p-2 text-center">
                             <button

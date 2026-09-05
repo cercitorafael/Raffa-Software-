@@ -361,6 +361,7 @@ export interface AppContextType {
   registerDocSaleInShift: (amount: number, paymentMethod?: string) => void;
   salesHistory: Sale[];
   setSalesHistory: React.Dispatch<React.SetStateAction<Sale[]>>;
+  addFiscalDocument: (doc: Sale) => Promise<Sale>;
   cancelInvoice: (invoiceId: string, reason: string, restockStock?: boolean) => void;
   updateDocument: (id: string, updates: Partial<Sale>) => void;
   deleteDocument: (id: string, restockStock?: boolean) => void;
@@ -4406,6 +4407,74 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     pushRecordToSupabase('turnos_caixa', 'upsert', updatedShift);
   };
 
+  const addFiscalDocument = async (doc: Sale): Promise<Sale> => {
+    const compId = doc.companyId || currentCompany?.id || 'comp-1';
+    const storeId = doc.storeId || currentStore?.id || 'store-1';
+    const termId = doc.terminalId || currentTerminal?.id || 'term-1';
+
+    const prevSale = salesHistory[0];
+    const prevHash = prevSale ? prevSale.fiscalHash : '0000000000000000';
+    const fiscalHash =
+      doc.fiscalHash && !doc.fiscalHash.startsWith('HASH-')
+        ? doc.fiscalHash
+        : generateFiscalHash(doc.date, doc.invoiceNumber, doc.total, prevHash);
+
+    const fullDoc: Sale = {
+      ...doc,
+      companyId: compId,
+      storeId,
+      terminalId: termId,
+      fiscalHash,
+      previousHash: prevHash,
+      atcud: doc.atcud || `ATCUD-${currentCompany?.taxNumber || '400123987'}-${doc.invoiceNumber}`,
+      isSynced: isOnline,
+    };
+
+    // 1. Atomically persist to salesHistory state & localStorage
+    setSalesHistory((prev) => {
+      const updated = [fullDoc, ...prev.filter((s) => s.id !== fullDoc.id)];
+      saveToStorage('salesHistory', updated);
+      return updated;
+    });
+
+    // 2. Persist to Supabase
+    pushRecordToSupabase('vendas', 'insert', fullDoc);
+
+    // 3. Persist to IndexedDB offline storage
+    try {
+      await offlineDB.saveSale(fullDoc);
+    } catch (e) {
+      console.warn('Could not save to IndexedDB', e);
+    }
+
+    // 4. Enqueue for background sync if offline
+    if (!isOnline) {
+      const syncItem: OfflineSyncQueueItem = {
+        id: `sync-${Date.now()}`,
+        action: 'create_sale',
+        entity: 'Sale',
+        data: fullDoc,
+        timestamp: fullDoc.date,
+        retryCount: 0,
+        status: 'pending',
+      };
+      setSyncQueue((prev) => [...prev, syncItem]);
+      await offlineDB.addSyncQueueItem(syncItem);
+      requestBackgroundSync();
+    }
+
+    // 5. Emit audit event
+    emitEvent('Financeiro', 'document.emitted', {
+      invoiceNumber: fullDoc.invoiceNumber,
+      invoiceType: fullDoc.invoiceType,
+      total: fullDoc.total,
+      customer: fullDoc.customerName,
+      fiscalHash: fullDoc.fiscalHash,
+    });
+
+    return fullDoc;
+  };
+
   const cancelInvoice = (invoiceId: string, reason: string, restockStock: boolean = true) => {
     const inv = salesHistory.find((s) => s.id === invoiceId);
     if (!inv) return;
@@ -5944,6 +6013,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         registerDocSaleInShift,
         salesHistory: scopedSalesHistory,
         setSalesHistory,
+        addFiscalDocument,
         cancelInvoice,
         updateDocument,
         deleteDocument,
