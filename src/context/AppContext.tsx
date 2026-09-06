@@ -451,7 +451,7 @@ export interface AppContextType {
 
   // CRM
   customers: Customer[];
-  addCustomer: (cust: Omit<Customer, 'id' | 'createdAt' | 'ordersCount' | 'totalSpent'>) => void;
+  addCustomer: (cust: Omit<Customer, 'id' | 'createdAt' | 'ordersCount' | 'totalSpent'> & { id?: string }) => Customer;
   updateCustomer: (id: string, cust: Partial<Customer>) => void;
   deleteCustomer: (id: string) => void;
   addLoyaltyPoints: (customerId: string, points: number) => void;
@@ -1529,15 +1529,48 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           }
           if (res.data.products && res.data.products.length > 0) {
             const compProds = res.data.products.filter((p) => p.companyId === compId);
-            setProducts((prev) => [...compProds, ...prev.filter((p) => p.companyId !== compId)]);
+            setProducts((prev) => {
+              const updated = [...prev];
+              compProds.forEach((remoteProd) => {
+                const idx = updated.findIndex((item) => String(item.id) === String(remoteProd.id));
+                if (idx >= 0) {
+                  updated[idx] = { ...updated[idx], ...remoteProd };
+                } else {
+                  updated.unshift(remoteProd);
+                }
+              });
+              return updated;
+            });
           }
           if (res.data.customers && res.data.customers.length > 0) {
             const compCust = res.data.customers.filter((c) => c.companyId === compId);
-            setCustomers((prev) => [...compCust, ...prev.filter((c) => c.companyId !== compId)]);
+            setCustomers((prev) => {
+              const updated = [...prev];
+              compCust.forEach((remoteCust) => {
+                const idx = updated.findIndex((item) => String(item.id) === String(remoteCust.id));
+                if (idx >= 0) {
+                  updated[idx] = { ...updated[idx], ...remoteCust };
+                } else {
+                  updated.unshift(remoteCust);
+                }
+              });
+              return updated;
+            });
           }
           if (res.data.suppliers && res.data.suppliers.length > 0) {
             const compSupp = res.data.suppliers.filter((s) => s.companyId === compId);
-            setSuppliers((prev) => [...compSupp, ...prev.filter((s) => s.companyId !== compId)]);
+            setSuppliers((prev) => {
+              const updated = [...prev];
+              compSupp.forEach((remoteSupp) => {
+                const idx = updated.findIndex((item) => String(item.id) === String(remoteSupp.id));
+                if (idx >= 0) {
+                  updated[idx] = { ...updated[idx], ...remoteSupp };
+                } else {
+                  updated.unshift(remoteSupp);
+                }
+              });
+              return updated;
+            });
           }
           if (res.data.categories && res.data.categories.length > 0) {
             setCategories(res.data.categories);
@@ -2848,31 +2881,47 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setProducts((prev) => sortProductsAlphabetically([...initialIndustryProducts, ...prev]));
         setStock((prev) => [...initialStockItems, ...prev]);
 
-        // Sincronização automática para o Supabase (empresas, lojas, armazens, usuarios, profiles)
-        await registrarEmpresaEUsuarioCliente({
-          company: {
-            id: companyId,
-            name: newComp.name,
-            tradeName: newComp.tradeName,
-            industry: newComp.industry,
-            taxNumber: newComp.taxNumber,
-            address: newComp.address,
-            city: newComp.city,
-            phone: newComp.phone,
-            email: newComp.email,
-            currency: newComp.currency,
-          },
-          adminUser: {
-            id: userId,
-            name: newUser.name,
-            email: newUser.email,
-            username: newUser.username,
-            pin: newUser.pin,
-            phone: newUser.phone,
-            nif: params.adminUser.nif,
-          },
-          storeName: newStore.name,
-        });
+        // Sincronização automática completa para o Supabase (empresas, lojas, armazens, usuarios, profiles, categorias, produtos, stock)
+        try {
+          await registrarEmpresaEUsuarioCliente({
+            company: {
+              id: companyId,
+              name: newComp.name,
+              tradeName: newComp.tradeName,
+              industry: newComp.industry,
+              taxNumber: newComp.taxNumber,
+              address: newComp.address,
+              city: newComp.city,
+              phone: newComp.phone,
+              email: newComp.email,
+              currency: newComp.currency,
+            },
+            adminUser: {
+              id: userId,
+              name: newUser.name,
+              email: newUser.email,
+              username: newUser.username,
+              pin: newUser.pin,
+              phone: newUser.phone,
+              nif: params.adminUser.nif,
+            },
+            storeName: newStore.name,
+            categories: newCategories,
+            products: initialIndustryProducts,
+            stock: initialStockItems,
+          });
+
+          // Garantir enfileiramento e logs para sincronização redundante / offline
+          pushRecordToSupabase('empresas', 'upsert', newComp);
+          pushRecordToSupabase('lojas', 'upsert', newStore);
+          pushRecordToSupabase('armazens', 'upsert', newWarehouse);
+          pushRecordToSupabase('usuarios', 'upsert', newUser);
+          newCategories.forEach((cat) => pushRecordToSupabase('categorias', 'upsert', cat));
+          initialIndustryProducts.forEach((prod) => pushRecordToSupabase('produtos', 'upsert', prod));
+          initialStockItems.forEach((stk) => pushRecordToSupabase('stock', 'upsert', stk));
+        } catch (syncErr) {
+          console.warn('Erro na sincronização de nova empresa para o Supabase:', syncErr);
+        }
 
         emitEvent('POS', 'company.registered', {
           companyId,
@@ -5486,24 +5535,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   // ==================== CRM & CLIENTES CRUD ====================
-  const addCustomer = (cust: Omit<Customer, 'id' | 'createdAt' | 'ordersCount' | 'totalSpent'>) => {
-    const id = `cust-${Date.now()}`;
+  const addCustomer = (cust: Omit<Customer, 'id' | 'createdAt' | 'ordersCount' | 'totalSpent'> & { id?: string }): Customer => {
+    const id = cust.id || `cust-${Date.now()}`;
     const newCust: Customer = {
+      ordersCount: 0,
+      totalSpent: 0,
+      loyaltyPoints: 0,
+      loyaltyTier: 'Bronze',
+      creditLimit: 0,
+      currentCredit: 0,
+      createdAt: new Date().toISOString().split('T')[0],
       ...cust,
       id,
       companyId: cust.companyId || currentCompany.id,
-      ordersCount: 0,
-      totalSpent: 0,
-      loyaltyPoints: cust.loyaltyPoints || 0,
-      loyaltyTier: 'Bronze',
-      creditLimit: cust.creditLimit || 0,
-      currentCredit: 0,
-      createdAt: new Date().toISOString().split('T')[0],
     };
-    setCustomers((prev) => [newCust, ...prev]);
-    pushRecordToSupabase('clientes', 'insert', newCust);
+    setCustomers((prev) => [newCust, ...prev.filter((c) => c.id !== id)]);
+    pushRecordToSupabase('clientes', 'upsert', newCust);
     emitEvent('CRM', 'crm.customer.created', { customerId: id, name: newCust.name });
     sound.playSuccessChime();
+    return newCust;
   };
 
   const updateCustomer = (id: string, updates: Partial<Customer>) => {
@@ -5511,7 +5561,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       prev.map((c) => {
         if (c.id === id) {
           const updated = { ...c, ...updates };
-          pushRecordToSupabase('clientes', 'update', updated);
+          pushRecordToSupabase('clientes', 'upsert', updated);
           return updated;
         }
         return c;
@@ -5534,7 +5584,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         if (c.id === customerId) {
           const newPts = (c.loyaltyPoints || 0) + points;
           const tier = newPts > 1000 ? 'Platina' : newPts > 500 ? 'Ouro' : newPts > 200 ? 'Prata' : 'Bronze';
-          return { ...c, loyaltyPoints: newPts, loyaltyTier: tier };
+          const updated = { ...c, loyaltyPoints: newPts, loyaltyTier: tier };
+          pushRecordToSupabase('clientes', 'upsert', updated);
+          return updated;
         }
         return c;
       })

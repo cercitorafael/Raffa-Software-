@@ -341,10 +341,21 @@ export function mapSupabaseToProduct(row: any): Product {
   };
 }
 
+function getFallbackCompanyId(): string {
+  try {
+    const raw = typeof window !== 'undefined' ? localStorage.getItem('company') : null;
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed?.id) return parsed.id;
+    }
+  } catch {}
+  return 'comp-1';
+}
+
 export function mapCustomerToSupabase(c: Partial<Customer>) {
   return {
-    id: c.id,
-    company_id: c.companyId || 'comp-1',
+    id: c.id || `cust-${Date.now()}`,
+    company_id: c.companyId || getFallbackCompanyId(),
     name: c.name || '',
     tax_number: c.taxNumber || '',
     email: c.email || '',
@@ -358,6 +369,7 @@ export function mapCustomerToSupabase(c: Partial<Customer>) {
     credit_limit: c.creditLimit || 0,
     current_credit: c.currentCredit || 0,
     notes: c.notes || null,
+    created_at: (c as any).createdAt || (c as any).created_at || new Date().toISOString(),
     updated_at: new Date().toISOString(),
   };
 }
@@ -863,6 +875,13 @@ export function stopSupabaseRealtimeSync() {
   }
 }
 
+// Inicialização de sincronizador automático periódico em segundo plano (a cada 15 segundos)
+if (typeof window !== 'undefined') {
+  setInterval(() => {
+    flushPendingSyncQueue().catch(() => {});
+  }, 15000);
+}
+
 function handleRealtimeEvent(tableName: TableSyncName, payload: any) {
   const { eventType, new: newRecord, old: oldRecord } = payload;
   const rawId = (oldRecord && oldRecord.id) || (newRecord && newRecord.id);
@@ -1061,16 +1080,16 @@ export async function pushRecordToSupabaseDirect(
 
     payload = mapLocalRecordToSupabasePayload(table, record);
 
-    if (action === 'insert') {
-      const { error } = await supabase.from(table).insert([payload]);
+    if (action === 'insert' || action === 'upsert') {
+      const { error } = await supabase.from(table).upsert(payload);
       if (error) throw error;
     } else if (action === 'update') {
       const { error } = await supabase.from(table).update(payload).eq('id', payload.id);
-      if (error) throw error;
-    } else {
-      // Upsert
-      const { error } = await supabase.from(table).upsert(payload);
-      if (error) throw error;
+      if (error) {
+        // Fallback to upsert if update fails (e.g. record not yet found in Supabase)
+        const { error: upsertError } = await supabase.from(table).upsert(payload);
+        if (upsertError) throw upsertError;
+      }
     }
 
     addSyncLog({
@@ -1121,13 +1140,9 @@ export async function pushBatchRecordsToSupabase(
 
     for (let i = 0; i < payloads.length; i += CHUNK_SIZE) {
       const chunk = payloads.slice(i, i + CHUNK_SIZE);
-      if (action === 'insert') {
-        const { error } = await supabase.from(table).insert(chunk);
-        if (error) throw error;
-      } else {
-        const { error } = await supabase.from(table).upsert(chunk);
-        if (error) throw error;
-      }
+      // Always prefer upsert to avoid duplicate key or concurrency conflicts
+      const { error } = await supabase.from(table).upsert(chunk);
+      if (error) throw error;
     }
 
     addSyncLog({

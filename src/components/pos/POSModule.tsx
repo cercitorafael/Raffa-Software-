@@ -852,8 +852,8 @@ export const POSModule: React.FC = () => {
                         currentCredit: 0,
                         createdAt: new Date().toISOString().split('T')[0],
                       };
-                      addCustomer(newCust);
-                      setSelectedCustomer(newCust);
+                      const created = addCustomer(newCust);
+                      setSelectedCustomer(created || newCust);
                     }
 
                     setIsTypingCustomer(false);
@@ -1391,7 +1391,7 @@ export const POSModule: React.FC = () => {
                       type="button"
                       onClick={() => {
                         if (!posCustName.trim() || !posCustNif.trim()) return;
-                        addCustomer({
+                        const created = addCustomer({
                           companyId: currentCompany.id,
                           name: posCustName.trim(),
                           taxNumber: posCustNif.trim(),
@@ -1406,6 +1406,7 @@ export const POSModule: React.FC = () => {
                           totalSpent: 0,
                           notes: 'Criado no POS',
                         });
+                        if (created) setSelectedCustomer(created);
                         notify(`Cliente ${posCustName} criado e adicionado à venda!`, 'success');
                         setShowNewCustPosForm(false);
                         setShowCustomerPicker(false);

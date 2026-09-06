@@ -557,6 +557,9 @@ export async function registrarEmpresaEUsuarioCliente(params: {
     nif?: string;
   };
   storeName?: string;
+  categories?: any[];
+  products?: any[];
+  stock?: any[];
 }): Promise<{ success: boolean; companyId: string; error?: any }> {
   try {
     const companyId = params.company.id || 'empresa-cliente-2';
@@ -647,6 +650,51 @@ export async function registrarEmpresaEUsuarioCliente(params: {
     };
     const { error: profError } = await supabase.from('profiles').upsert(profilePayload);
     if (profError) console.warn('Erro ao inserir profile no Supabase:', profError);
+
+    // 6. Cadastrar Categorias se fornecidas
+    if (params.categories && params.categories.length > 0) {
+      const catRows = params.categories.map((c) => ({
+        id: c.id,
+        company_id: companyId,
+        name: c.name,
+        icon: c.icon || null,
+        color: c.color || null,
+        updated_at: new Date().toISOString(),
+      }));
+      await supabase.from('categorias').upsert(catRows);
+    }
+
+    // 7. Cadastrar Produtos se fornecidos
+    if (params.products && params.products.length > 0) {
+      const prodRows = params.products.map((p) => ({
+        id: p.id,
+        company_id: companyId,
+        sku: p.sku || `SKU-${Date.now()}`,
+        barcode: p.barcode || null,
+        name: p.name,
+        category: p.category || null,
+        price: p.price || 0,
+        cost_price: p.costPrice || 0,
+        tax_rate: p.taxRate !== undefined ? p.taxRate : 16,
+        unit: p.unit || 'un',
+        updated_at: new Date().toISOString(),
+      }));
+      await supabase.from('produtos').upsert(prodRows);
+    }
+
+    // 8. Cadastrar Stock se fornecido
+    if (params.stock && params.stock.length > 0) {
+      const stkRows = params.stock.map((s) => ({
+        id: s.id,
+        company_id: companyId,
+        product_id: s.productId,
+        warehouse_id: s.warehouseId || warehouseId,
+        quantity: s.quantity || 0,
+        avg_cost: s.avgCost || 0,
+        updated_at: new Date().toISOString(),
+      }));
+      await supabase.from('stock').upsert(stkRows);
+    }
 
     return { success: true, companyId };
   } catch (err: any) {
