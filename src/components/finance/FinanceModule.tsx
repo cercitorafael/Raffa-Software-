@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { formatDate } from '../../utils/crypto';
-import { calculateNetSalesRevenue, calculateNetTax } from '../../utils/documentUtils';
+import { calculateNetSalesRevenue, calculateNetTax, isQuoteOrEstimate, isTransportDocument } from '../../utils/documentUtils';
 import {
   calculateBalancete,
   exportInvoicesToPDF,
@@ -2149,35 +2149,44 @@ export const FinanceModule: React.FC = () => {
                     </div>
 
                     {/* Payments */}
-                    <div className="space-y-1.5 text-xs bg-[#171717] p-3 rounded-lg border border-[#262626]">
-                      <span className="text-[10px] text-neutral-400 font-semibold uppercase tracking-wider block">
-                        Meio de Pagamento Utilizado
-                      </span>
-                      {selectedSaleForPreview.payments && selectedSaleForPreview.payments.length > 0 ? (
-                        selectedSaleForPreview.payments.map((p, idx) => (
-                          <div key={idx} className="flex justify-between text-xs font-mono">
-                            <span className="text-neutral-300 capitalize">
-                              {p.method === 'cartao'
-                                ? 'Cartão TPA'
-                                : p.method === 'mbway'
-                                ? 'M-Pesa / Móvel'
-                                : p.method}
+                    {!isQuoteOrEstimate(selectedSaleForPreview.invoiceType) && !isTransportDocument(selectedSaleForPreview.invoiceType) ? (
+                      <div className="space-y-1.5 text-xs bg-[#171717] p-3 rounded-lg border border-[#262626]">
+                        <span className="text-[10px] text-neutral-400 font-semibold uppercase tracking-wider block">
+                          Meio de Pagamento Utilizado
+                        </span>
+                        {selectedSaleForPreview.payments && selectedSaleForPreview.payments.length > 0 ? (
+                          selectedSaleForPreview.payments.map((p, idx) => (
+                            <div key={idx} className="flex justify-between text-xs font-mono">
+                              <span className="text-neutral-300 capitalize">
+                                {p.method === 'cartao'
+                                  ? 'Cartão TPA'
+                                  : p.method === 'mbway'
+                                  ? 'M-Pesa / Móvel'
+                                  : p.method}
+                              </span>
+                              <span className="font-semibold text-neutral-200">{formatCurrency(p.amount)}</span>
+                            </div>
+                          ))
+                        ) : (
+                          <div className="text-neutral-500 text-xs font-mono">Pagamento Regular</div>
+                        )}
+                        {selectedSaleForPreview.changeAmount && selectedSaleForPreview.changeAmount > 0 ? (
+                          <div className="flex justify-between text-xs font-mono pt-1 border-t border-[#262626] text-neutral-400">
+                            <span>Troco:</span>
+                            <span className="text-emerald-400 font-bold">
+                              {formatCurrency(selectedSaleForPreview.changeAmount)}
                             </span>
-                            <span className="font-semibold text-neutral-200">{formatCurrency(p.amount)}</span>
                           </div>
-                        ))
-                      ) : (
-                        <div className="text-neutral-500 text-xs font-mono">Pagamento Regular</div>
-                      )}
-                      {selectedSaleForPreview.changeAmount && selectedSaleForPreview.changeAmount > 0 ? (
-                        <div className="flex justify-between text-xs font-mono pt-1 border-t border-[#262626] text-neutral-400">
-                          <span>Troco:</span>
-                          <span className="text-emerald-400 font-bold">
-                            {formatCurrency(selectedSaleForPreview.changeAmount)}
-                          </span>
-                        </div>
-                      ) : null}
-                    </div>
+                        ) : null}
+                      </div>
+                    ) : (
+                      <div className="text-xs bg-[#171717] p-3 rounded-lg border border-[#262626] text-neutral-400 italic">
+                        <span className="text-[10px] text-neutral-500 font-semibold uppercase tracking-wider block not-italic mb-1">
+                          Estado Financeiro
+                        </span>
+                        Documento orçamental / cotação sem liquidação ou meio de pagamento associado.
+                      </div>
+                    )}
                   </div>
 
                   {/* Right Column: Totals summary */}

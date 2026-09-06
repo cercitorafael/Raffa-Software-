@@ -3,6 +3,7 @@ import autoTable from 'jspdf-autotable';
 import { Sale, Company, Store, InvoiceTemplateConfig, CashShift, Terminal, InventoryExtractRow } from '../types';
 import { formatCurrency, formatDate } from './crypto';
 import { defaultInvoiceTemplates } from '../mockData';
+import { isQuoteOrEstimate, isTransportDocument } from './documentUtils';
 
 /**
  * Resolves the strictly active template for a company with fallback support
@@ -424,6 +425,9 @@ export function printThermalReceipt(sale: Sale, company: Company, store: Store):
         </div>
         <div class="double-divider"></div>
 
+        ${
+          !isQuoteOrEstimate(sale.invoiceType) && !isTransportDocument(sale.invoiceType)
+            ? `
         <div style="font-size: 10px; font-weight: bold; margin-top: 4px; margin-bottom: 2px;">FORMA DE PAGAMENTO:</div>
         ${paymentsHtml}
         ${
@@ -433,6 +437,13 @@ export function printThermalReceipt(sale: Sale, company: Company, store: Store):
                  <span>${formatCurrency(sale.changeAmount, company.currency)}</span>
                </div>`
             : ''
+        }
+        `
+            : `
+        <div style="font-size: 9px; color: #555; text-align: center; margin-top: 6px; padding: 4px; border: 1px dashed #777; font-style: italic;">
+          ${isQuoteOrEstimate(sale.invoiceType) ? 'Documento de Cotação / Proforma &bull; Sem Liquidação de Pagamento' : 'Documento de Transporte &bull; Sem Liquidação'}
+        </div>
+        `
         }
 
         <div class="divider"></div>
@@ -625,21 +636,23 @@ export async function downloadReceiptPdf(sale: Sale, company: Company, store: St
   y += 4;
 
   // Payments
-  doc.setFont('courier', 'normal');
-  doc.setFontSize(8);
-  doc.text('PAGAMENTO:', 4, y);
-  y += 3.5;
-  sale.payments.forEach((p) => {
-    doc.text(`- ${p.method.toUpperCase()}:`, 4, y);
-    doc.text(formatCurrency(p.amount, company.currency), pageWidth - 4, y, { align: 'right' });
+  if (!isQuoteOrEstimate(sale.invoiceType) && !isTransportDocument(sale.invoiceType)) {
+    doc.setFont('courier', 'normal');
+    doc.setFontSize(8);
+    doc.text('PAGAMENTO:', 4, y);
     y += 3.5;
-  });
+    sale.payments.forEach((p) => {
+      doc.text(`- ${p.method.toUpperCase()}:`, 4, y);
+      doc.text(formatCurrency(p.amount, company.currency), pageWidth - 4, y, { align: 'right' });
+      y += 3.5;
+    });
 
-  if (sale.changeAmount > 0) {
-    doc.setFont('courier', 'bold');
-    doc.text('Troco:', 4, y);
-    doc.text(formatCurrency(sale.changeAmount, company.currency), pageWidth - 4, y, { align: 'right' });
-    y += 4;
+    if (sale.changeAmount > 0) {
+      doc.setFont('courier', 'bold');
+      doc.text('Troco:', 4, y);
+      doc.text(formatCurrency(sale.changeAmount, company.currency), pageWidth - 4, y, { align: 'right' });
+      y += 4;
+    }
   }
 
   // Footer
@@ -1116,12 +1129,18 @@ export function printInvoiceDocument(
                   ${legalNotice}
                 </div>
 
+                ${
+                  !isQuoteOrEstimate(sale.invoiceType) && !isTransportDocument(sale.invoiceType)
+                    ? `
                 <div style="margin-top: 8px; font-size: 9.5px;">
                   <div style="font-weight: 700; color: #111827; margin-bottom: 2px;">Meio de Pagamento <span style="font-weight: normal; color: #6b7280;">(Payment Method)</span></div>
                   <div style="font-family: monospace; color: #374151;">
                     ${paymentsText}
                   </div>
                 </div>
+                `
+                    : ''
+                }
 
                 ${
                   activeTemplate.showPaymentInfo && (bankIban || bankName)
@@ -1400,25 +1419,34 @@ export async function downloadInvoicePdf(
   doc.setTextColor(107, 114, 128);
   doc.text(activeTemplate.legalNotice || '(1) Não sujeito; não tributado ou similar', 14, taxTableFinalY + 4);
 
-  // Payment method
-  const payStr =
-    sale.payments && sale.payments[0]
-      ? sale.payments[0].method === 'mbway'
-        ? 'M-Pesa / Móvel'
-        : sale.payments[0].method === 'cartao'
-        ? 'Cartão TPA'
-        : 'Numerário'
-      : 'Numerário';
+  // Payment method (Never shown on quotations / proformas or transport documents)
+  const isQuote = isQuoteOrEstimate(sale.invoiceType);
+  const isTransport = isTransportDocument(sale.invoiceType);
+  let currentLeftY = taxTableFinalY + 9;
 
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(7.5);
-  doc.setTextColor(17, 24, 39);
-  doc.text('Meio de Pagamento (Payment Method)', 14, taxTableFinalY + 9);
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(7.5);
-  doc.setTextColor(55, 65, 81);
-  doc.text(payStr, 14, taxTableFinalY + 13);
-  doc.text(formatCurrency(sale.total, company.currency), 60, taxTableFinalY + 13);
+  if (!isQuote && !isTransport) {
+    const payStr =
+      sale.payments && sale.payments[0]
+        ? sale.payments[0].method === 'mbway'
+          ? 'M-Pesa / Móvel'
+          : sale.payments[0].method === 'cartao'
+          ? 'Cartão TPA'
+          : sale.payments[0].method === 'transferencia'
+          ? 'Transferência Bancária'
+          : 'Numerário'
+        : 'Numerário';
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(7.5);
+    doc.setTextColor(17, 24, 39);
+    doc.text('Meio de Pagamento (Payment Method)', 14, currentLeftY);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7.5);
+    doc.setTextColor(55, 65, 81);
+    doc.text(payStr, 14, currentLeftY + 4);
+    doc.text(formatCurrency(sale.total, company.currency), 60, currentLeftY + 4);
+    currentLeftY += 9;
+  }
 
   // Bank Details
   if (activeTemplate.showPaymentInfo) {
@@ -1427,12 +1455,12 @@ export async function downloadInvoicePdf(
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(7.5);
     doc.setTextColor(17, 24, 39);
-    doc.text('Dados Bancários (Bank Details)', 14, taxTableFinalY + 18);
+    doc.text('Dados Bancários (Bank Details)', 14, currentLeftY);
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(7.5);
     doc.setTextColor(55, 65, 81);
-    doc.text(`Banco: ${bName}`, 14, taxTableFinalY + 22);
-    doc.text(`IBAN: ${bIban}`, 14, taxTableFinalY + 26);
+    doc.text(`Banco: ${bName}`, 14, currentLeftY + 4);
+    doc.text(`IBAN: ${bIban}`, 14, currentLeftY + 8);
   }
 
   // Right: Summary & Total

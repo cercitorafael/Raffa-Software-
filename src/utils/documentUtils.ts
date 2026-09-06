@@ -23,14 +23,31 @@ export function isEffectiveSale(sale: Sale | { invoiceType?: string; status?: st
 
 export function isQuoteOrEstimate(invoiceType?: string): boolean {
   if (!invoiceType) return false;
-  const t = invoiceType.toUpperCase();
-  return ['ORC', 'PF', 'FP', 'COT', 'OR'].includes(t);
+  const t = invoiceType.trim().toUpperCase();
+  return (
+    ['ORC', 'PF', 'FP', 'COT', 'OR', 'QUOTATION', 'PROFORMA', 'COTAÇÃO', 'COTACAO', 'ORÇAMENTO', 'ORCAMENTO'].includes(t) ||
+    t.startsWith('PF ') ||
+    t.startsWith('PF/') ||
+    t.startsWith('COT ') ||
+    t.startsWith('ORC ') ||
+    t.includes('PROFORMA') ||
+    t.includes('COTAÇ') ||
+    t.includes('COTAC') ||
+    t.includes('ORÇAM') ||
+    t.includes('ORCAM')
+  );
 }
 
 export function isTransportDocument(invoiceType?: string): boolean {
   if (!invoiceType) return false;
-  const t = invoiceType.toUpperCase();
-  return ['GT', 'GR'].includes(t);
+  const t = invoiceType.trim().toUpperCase();
+  return (
+    ['GT', 'GR'].includes(t) ||
+    t.startsWith('GT ') ||
+    t.startsWith('GR ') ||
+    t.includes('TRANSPORTE') ||
+    t.includes('REMESSA')
+  );
 }
 
 export function isCreditNote(invoiceType?: string): boolean {

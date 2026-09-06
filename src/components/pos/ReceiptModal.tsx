@@ -2,6 +2,7 @@ import React from 'react';
 import { Sale, Company, Store } from '../../types';
 import { formatCurrency, formatDate } from '../../utils/crypto';
 import { printThermalReceipt, downloadReceiptPdf, printInvoiceDocument, downloadInvoicePdf } from '../../utils/print';
+import { isQuoteOrEstimate, isTransportDocument } from '../../utils/documentUtils';
 import { Printer, X, CheckCircle2, Copy, Download, ArrowRight, FileText } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
@@ -175,22 +176,28 @@ Obrigado pela sua preferência!
               </div>
             </div>
 
-            {/* Payment Methods */}
-            <div className="py-2 border-b border-dashed border-[#333333] space-y-0.5 text-[10px]">
-              <span className="font-bold text-neutral-400 block mb-1">PAGAMENTO:</span>
-              {sale.payments.map((p, i) => (
-                <div key={i} className="flex justify-between text-neutral-300">
-                  <span className="capitalize">{p.method === 'cartao' ? 'Cartão TPA' : p.method === 'mbway' ? 'M-Pesa / Móvel' : p.method}</span>
-                  <span className="font-bold text-[#c5a47e]">{formatCurrency(p.amount)}</span>
-                </div>
-              ))}
-              {sale.changeAmount > 0 && (
-                <div className="flex justify-between font-bold text-emerald-400 pt-0.5">
-                  <span>Troco Entregue:</span>
-                  <span>{formatCurrency(sale.changeAmount)}</span>
-                </div>
-              )}
-            </div>
+            {/* Payment Methods (Hidden on Quotations and Transport Documents) */}
+            {!isQuoteOrEstimate(sale.invoiceType) && !isTransportDocument(sale.invoiceType) ? (
+              <div className="py-2 border-b border-dashed border-[#333333] space-y-0.5 text-[10px]">
+                <span className="font-bold text-neutral-400 block mb-1">PAGAMENTO:</span>
+                {sale.payments.map((p, i) => (
+                  <div key={i} className="flex justify-between text-neutral-300">
+                    <span className="capitalize">{p.method === 'cartao' ? 'Cartão TPA' : p.method === 'mbway' ? 'M-Pesa / Móvel' : p.method}</span>
+                    <span className="font-bold text-[#c5a47e]">{formatCurrency(p.amount)}</span>
+                  </div>
+                ))}
+                {sale.changeAmount > 0 && (
+                  <div className="flex justify-between font-bold text-emerald-400 pt-0.5">
+                    <span>Troco Entregue:</span>
+                    <span>{formatCurrency(sale.changeAmount)}</span>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="py-2 border-b border-dashed border-[#333333] text-[9.5px] text-center text-neutral-400 italic">
+                {isQuoteOrEstimate(sale.invoiceType) ? 'Documento de Cotação • Sem liquidação de pagamento' : 'Documento de Transporte'}
+              </div>
+            )}
 
             {/* Digital Signature Block */}
             <div className="pt-3 text-center text-[9px] text-neutral-400 space-y-1">

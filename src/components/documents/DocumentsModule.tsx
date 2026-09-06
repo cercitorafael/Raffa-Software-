@@ -62,7 +62,14 @@ import {
   getActiveInvoiceTemplate,
   getDocumentTitle,
 } from '../../utils/print';
-import { calculateNetSalesRevenue, isEffectiveSale, canEditDocument, canDeleteDocument } from '../../utils/documentUtils';
+import {
+  calculateNetSalesRevenue,
+  isEffectiveSale,
+  canEditDocument,
+  canDeleteDocument,
+  isQuoteOrEstimate,
+  isTransportDocument,
+} from '../../utils/documentUtils';
 import { defaultInvoiceTemplates } from '../../mockData';
 import { generateFiscalHash } from '../../utils/crypto';
 
@@ -800,14 +807,17 @@ export const DocumentsModule: React.FC = () => {
       total,
       status: initialStatus,
       validityDate: docType === 'ORC' || docType === 'PF' ? orcValidity : undefined,
-      payments: [
-        {
-          id: `pay-${Date.now()}`,
-          method: selectedPaymentMethod,
-          amount: total,
-          status: 'concluido',
-        },
-      ],
+      payments:
+        isQuoteOrEstimate(docType) || isTransportDocument(docType)
+          ? []
+          : [
+              {
+                id: `pay-${Date.now()}`,
+                method: selectedPaymentMethod,
+                amount: total,
+                status: 'concluido',
+              },
+            ],
       operatorId: currentUser.id,
       operatorName: currentUser.name,
       shiftId: activeShift ? activeShift.id : 'shift-doc',
@@ -1521,20 +1531,27 @@ export const DocumentsModule: React.FC = () => {
                       </select>
                     </div>
 
-                    <div>
-                      <label className="text-neutral-400 block mb-1 font-semibold">Meio de Liquidação</label>
-                      <select
-                        value={selectedPaymentMethod}
-                        onChange={(e) => setSelectedPaymentMethod(e.target.value as any)}
-                        className="w-full px-3 py-2 bg-[#0c0c0c] border border-[#262626] rounded-xl text-white focus:outline-hidden focus:border-[#c5a47e] cursor-pointer"
-                      >
-                        <option value="cartao">Cartão de Débito / Crédito (TPA)</option>
-                        <option value="dinheiro">Numerário / Dinheiro</option>
-                        <option value="mbway">MB WAY</option>
-                        <option value="transferencia">Transferência Bancária</option>
-                        <option value="vale">Vale / Crédito Comercial</option>
-                      </select>
-                    </div>
+                    {!isQuoteOrEstimate(docType) && !isTransportDocument(docType) ? (
+                      <div>
+                        <label className="text-neutral-400 block mb-1 font-semibold">Meio de Liquidação</label>
+                        <select
+                          value={selectedPaymentMethod}
+                          onChange={(e) => setSelectedPaymentMethod(e.target.value as any)}
+                          className="w-full px-3 py-2 bg-[#0c0c0c] border border-[#262626] rounded-xl text-white focus:outline-hidden focus:border-[#c5a47e] cursor-pointer"
+                        >
+                          <option value="cartao">Cartão de Débito / Crédito (TPA)</option>
+                          <option value="dinheiro">Numerário / Dinheiro</option>
+                          <option value="mbway">MB WAY</option>
+                          <option value="transferencia">Transferência Bancária</option>
+                          <option value="vale">Vale / Crédito Comercial</option>
+                        </select>
+                      </div>
+                    ) : (
+                      <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-300">
+                        <span className="font-semibold block mb-0.5">Sem Meio de Pagamento</span>
+                        Por norma legal e fiscal, cotações e orçamentos não têm meio de liquidação associado, funcionando exclusivamente como proposta de preços.
+                      </div>
+                    )}
 
                     <div>
                       <label className="text-neutral-400 block mb-1 font-semibold">Observações / Menções Fiscais</label>
@@ -2702,11 +2719,13 @@ export const DocumentsModule: React.FC = () => {
                           {previewTmpl.legalNotice || '(1) Não sujeito; não tributado ou similar'}
                         </div>
 
-                        {/* Payment method */}
-                        <div className="pt-0.5">
-                          <span className="font-bold text-neutral-800">Modo Pagamento: </span>
-                          <span className="font-mono uppercase">{selectedDocForPreview.payments?.[0]?.method || 'Numerário / Pronto'}</span>
-                        </div>
+                        {/* Payment method (Hidden for Quotations and Transport) */}
+                        {!isQuoteOrEstimate(selectedDocForPreview.invoiceType) && !isTransportDocument(selectedDocForPreview.invoiceType) && (
+                          <div className="pt-0.5">
+                            <span className="font-bold text-neutral-800">Modo Pagamento: </span>
+                            <span className="font-mono uppercase">{selectedDocForPreview.payments?.[0]?.method || 'Numerário / Pronto'}</span>
+                          </div>
+                        )}
 
                         {/* Bank info */}
                         {(previewTmpl.bankIban || previewTmpl.bankName) && (
