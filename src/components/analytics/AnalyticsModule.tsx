@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import { useApp } from '../../context/AppContext';
 import { isEffectiveSale } from '../../utils/documentUtils';
 import {
@@ -8,11 +8,14 @@ import {
   getMonthBounds,
   getDaysAgoStr,
   getMonthNamePT,
+  getWeekInfo,
 } from '../../utils/dateUtils';
 import {
   TrendingUp,
+  TrendingDown,
   BarChart3,
   Calendar,
+  CalendarRange,
   Filter,
   Download,
   Printer,
@@ -30,9 +33,14 @@ import {
   RefreshCw,
   FileSpreadsheet,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   PieChart as PieIcon,
   CheckCircle2,
   ShieldAlert,
+  Percent,
+  Target,
+  DollarSign,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -51,6 +59,7 @@ import {
   ComposedChart,
   Line,
 } from 'recharts';
+import { AnalyticsMarginsTab } from './AnalyticsMarginsTab';
 
 // Chart Color Palette tailored for dark theme with crisp contrast
 const COLORS = [
@@ -132,10 +141,32 @@ export const AnalyticsModule: React.FC = () => {
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<string>('all');
 
   // View States
-  const [chartMetric, setChartMetric] = useState<'both' | 'revenue' | 'volume'>('both');
+  const [chartMetric, setChartMetric] = useState<'both' | 'revenue' | 'volume' | 'margin'>('both');
   const [topProductsMetric, setTopProductsMetric] = useState<'revenue' | 'quantity'>('revenue');
-  const [activeTab, setActiveTab] = useState<'overview' | 'daily' | 'products' | 'payments' | 'hours'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'margins' | 'daily' | 'products' | 'payments' | 'hours'>('overview');
+  const [marginViewMode, setMarginViewMode] = useState<'summary' | 'weekly' | 'monthly' | 'yearly' | 'categories'>('summary');
   const [productSearch, setProductSearch] = useState<string>('');
+
+  // Horizontal scroll controller for report section tabs
+  const tabsContainerRef = useRef<HTMLDivElement>(null);
+
+  const scrollTabs = (direction: 'left' | 'right') => {
+    if (tabsContainerRef.current) {
+      const scrollAmount = 260;
+      tabsContainerRef.current.scrollBy({
+        left: direction === 'left' ? -scrollAmount : scrollAmount,
+        behavior: 'smooth',
+      });
+    }
+  };
+
+  const handleTabSelect = (tabId: any) => {
+    setActiveTab(tabId);
+    const tabEl = document.getElementById(`analytics-tab-${tabId}`);
+    if (tabEl && tabsContainerRef.current) {
+      tabEl.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+    }
+  };
 
   // Extract distinct available months from sales history
   const availableMonths = useMemo(() => {
@@ -213,8 +244,8 @@ export const AnalyticsModule: React.FC = () => {
     }
   };
 
-  // Filter Sales according to date range, store, and payment method
-  // EXCLUDES quotations (ORC), proformas (PF), transport guides (GT/GR) from sales revenue
+  // Filter Sales according to date range, store, payment method, and product category
+  // EXCLUDES quotations (ORC), proformas (PF), transport guides (GT/GR) from commercial revenue
   const filteredSales = useMemo(() => {
     return salesHistory.filter((sale) => {
       // Must be an effective commercial sale / invoice
@@ -235,27 +266,62 @@ export const AnalyticsModule: React.FC = () => {
         if (!hasMethod) return false;
       }
 
+      // Category filtering
+      if (selectedCategory !== 'all') {
+        const hasCategory = sale.items?.some((item) => {
+          const prod = products.find((p) => p.id === item.productId || p.sku === item.sku);
+          return (prod?.category === selectedCategory) || (item.category === selectedCategory);
+        });
+        if (!hasCategory) return false;
+      }
+
       return true;
     });
-  }, [salesHistory, customStartDate, customEndDate, selectedStoreId, selectedPaymentMethod]);
+  }, [salesHistory, customStartDate, customEndDate, selectedStoreId, selectedPaymentMethod, selectedCategory, products]);
 
-  // Aggregate KPI summary metrics
+  // Helper to calculate revenue, units, and estimated product cost for any sale
+  // Uses product costPrice or estimates 50% of unit price if not defined
+  const getSaleFinancials = (sale: any) => {
+    let rev = 0;
+    let cost = 0;
+    let units = 0;
+    sale.items?.forEach((item: any) => {
+      const prod = products.find((p) => p.id === item.productId || p.sku === item.sku);
+      if (selectedCategory !== 'all' && prod?.category !== selectedCategory && item.category !== selectedCategory) {
+        return;
+      }
+      const qty = item.quantity || 0;
+      const itemRev = item.total || ((item.unitPrice || 0) * qty);
+      const unitCost = prod?.costPrice ?? (item.unitPrice ? item.unitPrice * 0.5 : 0);
+      const itemCost = unitCost * qty;
+
+      rev += itemRev;
+      cost += itemCost;
+      units += qty;
+    });
+    return { rev, cost, margin: rev - cost, units };
+  };
+
+  // Aggregate KPI summary metrics including Costs & Profit Margin
   const summaryMetrics = useMemo(() => {
     let totalRevenue = 0;
     let totalTax = 0;
     let totalSubtotal = 0;
     let totalUnitsSold = 0;
+    let totalCost = 0;
     let totalTransactions = filteredSales.length;
 
     filteredSales.forEach((sale) => {
-      totalRevenue += sale.total || 0;
-      totalTax += sale.taxTotal || 0;
-      totalSubtotal += sale.subtotal || 0;
-      sale.items?.forEach((item) => {
-        totalUnitsSold += item.quantity || 0;
-      });
+      const fin = getSaleFinancials(sale);
+      totalRevenue += selectedCategory === 'all' ? (sale.total || 0) : fin.rev;
+      totalTax += selectedCategory === 'all' ? (sale.taxTotal || 0) : 0;
+      totalSubtotal += selectedCategory === 'all' ? (sale.subtotal || 0) : (fin.rev * 0.84);
+      totalUnitsSold += fin.units;
+      totalCost += fin.cost;
     });
 
+    const totalMargin = totalRevenue - totalCost;
+    const totalMarginPercent = totalRevenue > 0 ? (totalMargin / totalRevenue) * 100 : 0;
     const averageTicket = totalTransactions > 0 ? totalRevenue / totalTransactions : 0;
     const itemsPerSale = totalTransactions > 0 ? totalUnitsSold / totalTransactions : 0;
 
@@ -264,13 +330,16 @@ export const AnalyticsModule: React.FC = () => {
       totalTax,
       totalSubtotal,
       totalUnitsSold,
+      totalCost,
+      totalMargin,
+      totalMarginPercent,
       totalTransactions,
       averageTicket,
       itemsPerSale,
     };
-  }, [filteredSales]);
+  }, [filteredSales, selectedCategory, products]);
 
-  // 1. Daily Sales Volume Dataset for Recharts
+  // 1. Daily Sales Volume Dataset with Cost and Margin for Recharts and Table
   const dailySalesData = useMemo(() => {
     const dayMap = new Map<
       string,
@@ -282,6 +351,9 @@ export const AnalyticsModule: React.FC = () => {
         units: number;
         subtotal: number;
         tax: number;
+        cost: number;
+        margin: number;
+        marginPercent: number;
       }
     >();
 
@@ -312,6 +384,9 @@ export const AnalyticsModule: React.FC = () => {
           units: 0,
           subtotal: 0,
           tax: 0,
+          cost: 0,
+          margin: 0,
+          marginPercent: 0,
         });
         curr.setDate(curr.getDate() + 1);
       }
@@ -332,18 +407,23 @@ export const AnalyticsModule: React.FC = () => {
           units: 0,
           subtotal: 0,
           tax: 0,
+          cost: 0,
+          margin: 0,
+          marginPercent: 0,
         };
         dayMap.set(isoDate, entry);
       }
 
-      entry.revenue += Number((sale.total || 0).toFixed(2));
+      const fin = getSaleFinancials(sale);
+      const rev = selectedCategory === 'all' ? (sale.total || 0) : fin.rev;
+      entry.revenue += Number(rev.toFixed(2));
       entry.transactions += 1;
-      entry.subtotal += Number((sale.subtotal || 0).toFixed(2));
-      entry.tax += Number((sale.taxTotal || 0).toFixed(2));
-
-      sale.items?.forEach((item) => {
-        entry!.units += item.quantity || 0;
-      });
+      entry.subtotal += Number((selectedCategory === 'all' ? (sale.subtotal || 0) : rev * 0.84).toFixed(2));
+      entry.tax += Number((selectedCategory === 'all' ? (sale.taxTotal || 0) : 0).toFixed(2));
+      entry.units += fin.units;
+      entry.cost += Number(fin.cost.toFixed(2));
+      entry.margin = Number((entry.revenue - entry.cost).toFixed(2));
+      entry.marginPercent = entry.revenue > 0 ? Number(((entry.margin / entry.revenue) * 100).toFixed(1)) : 0;
     });
 
     const sortedArray = Array.from(dayMap.values()).sort((a, b) => a.date.localeCompare(b.date));
@@ -358,7 +438,447 @@ export const AnalyticsModule: React.FC = () => {
         movingAvgRevenue: Number(avgRevenue.toFixed(2)),
       };
     });
-  }, [filteredSales, customStartDate, customEndDate]);
+  }, [filteredSales, customStartDate, customEndDate, selectedCategory, products]);
+
+  // =========================================================================
+  // MARGEM SEMANAL, MENSAL E ANUAL DE ACORDO COM O FILTRO ESCOLHIDO
+  // =========================================================================
+
+  // Vendas elegíveis respeitando loja, forma de pagamento e categoria
+  const eligibleSalesForMargins = useMemo(() => {
+    return salesHistory.filter((sale) => {
+      if (!isEffectiveSale(sale)) return false;
+      if (selectedStoreId !== 'all' && sale.storeId !== selectedStoreId) return false;
+      if (selectedPaymentMethod !== 'all') {
+        const hasMethod = sale.payments?.some((p) => p.method === selectedPaymentMethod);
+        if (!hasMethod) return false;
+      }
+      if (selectedCategory !== 'all') {
+        const hasCategory = sale.items?.some((item) => {
+          const prod = products.find((p) => p.id === item.productId || p.sku === item.sku);
+          return (prod?.category === selectedCategory) || (item.category === selectedCategory);
+        });
+        if (!hasCategory) return false;
+      }
+      return true;
+    });
+  }, [salesHistory, selectedStoreId, selectedPaymentMethod, selectedCategory, products]);
+
+  // 1. Margem do Período Filtrado Ativo
+  const periodMarginMetrics = useMemo(() => {
+    let revenue = 0;
+    let cost = 0;
+    let units = 0;
+    let transactions = filteredSales.length;
+
+    filteredSales.forEach((sale) => {
+      const fin = getSaleFinancials(sale);
+      revenue += selectedCategory === 'all' ? (sale.total || 0) : fin.rev;
+      cost += fin.cost;
+      units += fin.units;
+    });
+
+    const margin = revenue - cost;
+    const marginPercent = revenue > 0 ? (margin / revenue) * 100 : 0;
+
+    return {
+      revenue: Number(revenue.toFixed(2)),
+      cost: Number(cost.toFixed(2)),
+      margin: Number(margin.toFixed(2)),
+      marginPercent: Number(marginPercent.toFixed(1)),
+      units,
+      transactions,
+    };
+  }, [filteredSales, selectedCategory, products]);
+
+  // 2. Margem Semanal (Semana Atual / Filtrada e Série Semana a Semana)
+  const weeklyMarginMetrics = useMemo(() => {
+    const weekMap = new Map<
+      string,
+      {
+        weekKey: string;
+        weekNumber: number;
+        year: number;
+        label: string;
+        startDate: string;
+        endDate: string;
+        revenue: number;
+        cost: number;
+        margin: number;
+        marginPercent: number;
+        units: number;
+        transactions: number;
+      }
+    >();
+
+    // Consider all weeks in the filtered scope
+    const minDate = customStartDate || '2026-01-01';
+    const maxDate = customEndDate || '2026-12-31';
+
+    eligibleSalesForMargins.forEach((sale) => {
+      const saleDate = sale.date ? sale.date.substring(0, 10) : '';
+      if (!saleDate) return;
+      if (saleDate < minDate || saleDate > maxDate) return;
+
+      const wInfo = getWeekInfo(saleDate);
+      let entry = weekMap.get(wInfo.weekKey);
+      if (!entry) {
+        entry = {
+          weekKey: wInfo.weekKey,
+          weekNumber: wInfo.weekNumber,
+          year: wInfo.year,
+          label: wInfo.label,
+          startDate: wInfo.startDate,
+          endDate: wInfo.endDate,
+          revenue: 0,
+          cost: 0,
+          margin: 0,
+          marginPercent: 0,
+          units: 0,
+          transactions: 0,
+        };
+        weekMap.set(wInfo.weekKey, entry);
+      }
+
+      const fin = getSaleFinancials(sale);
+      entry.revenue += selectedCategory === 'all' ? (sale.total || 0) : fin.rev;
+      entry.cost += fin.cost;
+      entry.units += fin.units;
+      entry.transactions += 1;
+    });
+
+    const series = Array.from(weekMap.values())
+      .map((w) => {
+        const mrg = w.revenue - w.cost;
+        return {
+          ...w,
+          revenue: Number(w.revenue.toFixed(2)),
+          cost: Number(w.cost.toFixed(2)),
+          margin: Number(mrg.toFixed(2)),
+          marginPercent: w.revenue > 0 ? Number(((mrg / w.revenue) * 100).toFixed(1)) : 0,
+        };
+      })
+      .sort((a, b) => a.weekKey.localeCompare(b.weekKey));
+
+    // Determine target week to feature (latest week in filter, or today's week)
+    const targetDateForWeek = customEndDate || initialTodayStr;
+    const currentWeekInfo = getWeekInfo(targetDateForWeek);
+
+    // Sales in current active week
+    const currentWeekSales = eligibleSalesForMargins.filter((s) => {
+      const d = s.date ? s.date.substring(0, 10) : '';
+      return d >= currentWeekInfo.startDate && d <= currentWeekInfo.endDate;
+    });
+
+    // Previous week bounds
+    const [cy, cm, cd] = currentWeekInfo.startDate.split('-').map(Number);
+    const prevMon = new Date(cy, (cm || 1) - 1, (cd || 1) - 7);
+    const prevSun = new Date(cy, (cm || 1) - 1, (cd || 1) - 1);
+    const prevStartStr = `${prevMon.getFullYear()}-${String(prevMon.getMonth() + 1).padStart(2, '0')}-${String(prevMon.getDate()).padStart(2, '0')}`;
+    const prevEndStr = `${prevSun.getFullYear()}-${String(prevSun.getMonth() + 1).padStart(2, '0')}-${String(prevSun.getDate()).padStart(2, '0')}`;
+
+    const prevWeekSales = eligibleSalesForMargins.filter((s) => {
+      const d = s.date ? s.date.substring(0, 10) : '';
+      return d >= prevStartStr && d <= prevEndStr;
+    });
+
+    const calcWeekTotals = (salesList: any[]) => {
+      let rev = 0, cst = 0, un = 0;
+      salesList.forEach((s) => {
+        const fin = getSaleFinancials(s);
+        rev += selectedCategory === 'all' ? (s.total || 0) : fin.rev;
+        cst += fin.cost;
+        un += fin.units;
+      });
+      const mrg = rev - cst;
+      return {
+        revenue: Number(rev.toFixed(2)),
+        cost: Number(cst.toFixed(2)),
+        margin: Number(mrg.toFixed(2)),
+        marginPercent: rev > 0 ? Number(((mrg / rev) * 100).toFixed(1)) : 0,
+        units: un,
+        transactions: salesList.length,
+      };
+    };
+
+    const currentWeekStats = calcWeekTotals(currentWeekSales);
+    const prevWeekStats = calcWeekTotals(prevWeekSales);
+
+    const growthPercent = prevWeekStats.margin > 0
+      ? Number((((currentWeekStats.margin - prevWeekStats.margin) / prevWeekStats.margin) * 100).toFixed(1))
+      : currentWeekStats.margin > 0 ? 100 : 0;
+
+    // Best week in series
+    const bestWeek = series.length > 0 ? [...series].sort((a, b) => b.margin - a.margin)[0] : null;
+
+    // Average weekly margin
+    const totalWeeklyMargin = series.reduce((acc, curr) => acc + curr.margin, 0);
+    const avgWeeklyMargin = series.length > 0 ? Number((totalWeeklyMargin / series.length).toFixed(2)) : 0;
+
+    return {
+      current: {
+        ...currentWeekStats,
+        label: currentWeekInfo.label,
+        weekNumber: currentWeekInfo.weekNumber,
+        startDate: currentWeekInfo.startDate,
+        endDate: currentWeekInfo.endDate,
+        growthPercent,
+      },
+      series,
+      bestWeek,
+      avgWeeklyMargin,
+    };
+  }, [eligibleSalesForMargins, customStartDate, customEndDate, selectedCategory, products]);
+
+  // 3. Margem Mensal (Mês Selecionado / Atual e Série Mensal Mês a Mês)
+  const monthlyMarginMetrics = useMemo(() => {
+    const monthMap = new Map<
+      string,
+      {
+        monthKey: string;
+        label: string;
+        revenue: number;
+        cost: number;
+        margin: number;
+        marginPercent: number;
+        units: number;
+        transactions: number;
+      }
+    >();
+
+    // Active Month key from filter or today
+    const activeMonthKey = (selectedMonth !== 'all' ? selectedMonth : '') || (customEndDate ? customEndDate.substring(0, 7) : getCurrentMonthStr());
+    const activeYear = activeMonthKey.substring(0, 4) || '2026';
+
+    // Populate all 12 months for that year
+    for (let m = 1; m <= 12; m++) {
+      const mStr = String(m).padStart(2, '0');
+      const mKey = `${activeYear}-${mStr}`;
+      monthMap.set(mKey, {
+        monthKey: mKey,
+        label: getMonthNamePT(mKey),
+        revenue: 0,
+        cost: 0,
+        margin: 0,
+        marginPercent: 0,
+        units: 0,
+        transactions: 0,
+      });
+    }
+
+    eligibleSalesForMargins.forEach((sale) => {
+      const saleDate = sale.date ? sale.date.substring(0, 10) : '';
+      if (!saleDate) return;
+      const mKey = saleDate.substring(0, 7);
+      const entry = monthMap.get(mKey);
+      if (!entry) return;
+
+      const fin = getSaleFinancials(sale);
+      entry.revenue += selectedCategory === 'all' ? (sale.total || 0) : fin.rev;
+      entry.cost += fin.cost;
+      entry.units += fin.units;
+      entry.transactions += 1;
+    });
+
+    const series = Array.from(monthMap.values())
+      .map((m) => {
+        const mrg = m.revenue - m.cost;
+        return {
+          ...m,
+          revenue: Number(m.revenue.toFixed(2)),
+          cost: Number(m.cost.toFixed(2)),
+          margin: Number(mrg.toFixed(2)),
+          marginPercent: m.revenue > 0 ? Number(((mrg / m.revenue) * 100).toFixed(1)) : 0,
+        };
+      })
+      .sort((a, b) => a.monthKey.localeCompare(b.monthKey));
+
+    const currMonthEntry = monthMap.get(activeMonthKey) || {
+      monthKey: activeMonthKey,
+      label: getMonthNamePT(activeMonthKey),
+      revenue: 0,
+      cost: 0,
+      margin: 0,
+      marginPercent: 0,
+      units: 0,
+      transactions: 0,
+    };
+
+    // Calculate previous month for growth
+    const [ay, am] = activeMonthKey.split('-').map(Number);
+    const prevMonthDate = new Date(ay, (am || 1) - 2, 1);
+    const prevMonthKey = `${prevMonthDate.getFullYear()}-${String(prevMonthDate.getMonth() + 1).padStart(2, '0')}`;
+    const prevMonthEntry = monthMap.get(prevMonthKey);
+
+    const currMargin = currMonthEntry.revenue - currMonthEntry.cost;
+    const prevMargin = prevMonthEntry ? (prevMonthEntry.revenue - prevMonthEntry.cost) : 0;
+    const growthPercent = prevMargin > 0
+      ? Number((((currMargin - prevMargin) / prevMargin) * 100).toFixed(1))
+      : currMargin > 0 ? 100 : 0;
+
+    // Best month in series
+    const bestMonth = series.length > 0 ? [...series].sort((a, b) => b.margin - a.margin)[0] : null;
+
+    // Average monthly margin of active months
+    const activeMonthsWithSales = series.filter((m) => m.transactions > 0);
+    const totalMonthlyMargin = activeMonthsWithSales.reduce((acc, curr) => acc + curr.margin, 0);
+    const avgMonthlyMargin = activeMonthsWithSales.length > 0 ? Number((totalMonthlyMargin / activeMonthsWithSales.length).toFixed(2)) : 0;
+
+    return {
+      current: {
+        ...currMonthEntry,
+        revenue: Number(currMonthEntry.revenue.toFixed(2)),
+        cost: Number(currMonthEntry.cost.toFixed(2)),
+        margin: Number(currMargin.toFixed(2)),
+        marginPercent: currMonthEntry.revenue > 0 ? Number(((currMargin / currMonthEntry.revenue) * 100).toFixed(1)) : 0,
+        growthPercent,
+      },
+      series,
+      bestMonth,
+      avgMonthlyMargin,
+    };
+  }, [eligibleSalesForMargins, selectedMonth, customEndDate, selectedCategory, products]);
+
+  // 4. Margem Anual (Ano Vigente / Filtrado e Série Anual)
+  const yearlyMarginMetrics = useMemo(() => {
+    const yearMap = new Map<
+      number,
+      {
+        year: number;
+        revenue: number;
+        cost: number;
+        margin: number;
+        marginPercent: number;
+        units: number;
+        transactions: number;
+      }
+    >();
+
+    const activeYear = Number((customEndDate || initialTodayStr).substring(0, 4)) || 2026;
+
+    // Initialize current and previous year
+    yearMap.set(activeYear, { year: activeYear, revenue: 0, cost: 0, margin: 0, marginPercent: 0, units: 0, transactions: 0 });
+    yearMap.set(activeYear - 1, { year: activeYear - 1, revenue: 0, cost: 0, margin: 0, marginPercent: 0, units: 0, transactions: 0 });
+
+    eligibleSalesForMargins.forEach((sale) => {
+      const saleDate = sale.date ? sale.date.substring(0, 10) : '';
+      if (!saleDate) return;
+      const y = Number(saleDate.substring(0, 4));
+      let entry = yearMap.get(y);
+      if (!entry) {
+        entry = { year: y, revenue: 0, cost: 0, margin: 0, marginPercent: 0, units: 0, transactions: 0 };
+        yearMap.set(y, entry);
+      }
+
+      const fin = getSaleFinancials(sale);
+      entry.revenue += selectedCategory === 'all' ? (sale.total || 0) : fin.rev;
+      entry.cost += fin.cost;
+      entry.units += fin.units;
+      entry.transactions += 1;
+    });
+
+    const series = Array.from(yearMap.values())
+      .map((y) => {
+        const mrg = y.revenue - y.cost;
+        return {
+          ...y,
+          revenue: Number(y.revenue.toFixed(2)),
+          cost: Number(y.cost.toFixed(2)),
+          margin: Number(mrg.toFixed(2)),
+          marginPercent: y.revenue > 0 ? Number(((mrg / y.revenue) * 100).toFixed(1)) : 0,
+        };
+      })
+      .sort((a, b) => b.year - a.year);
+
+    const currYearEntry = yearMap.get(activeYear)!;
+    const prevYearEntry = yearMap.get(activeYear - 1);
+
+    const currMargin = currYearEntry.revenue - currYearEntry.cost;
+    const prevMargin = prevYearEntry ? (prevYearEntry.revenue - prevYearEntry.cost) : 0;
+    const growthPercent = prevMargin > 0
+      ? Number((((currMargin - prevMargin) / prevMargin) * 100).toFixed(1))
+      : currMargin > 0 ? 100 : 0;
+
+    return {
+      current: {
+        ...currYearEntry,
+        year: activeYear,
+        revenue: Number(currYearEntry.revenue.toFixed(2)),
+        cost: Number(currYearEntry.cost.toFixed(2)),
+        margin: Number(currMargin.toFixed(2)),
+        marginPercent: currYearEntry.revenue > 0 ? Number(((currMargin / currYearEntry.revenue) * 100).toFixed(1)) : 0,
+        growthPercent,
+      },
+      series,
+    };
+  }, [eligibleSalesForMargins, customEndDate, selectedCategory, products]);
+
+  // 5. Margem Agrupada por Categoria de Produtos
+  const categoryMarginMetrics = useMemo(() => {
+    const catMap = new Map<
+      string,
+      {
+        category: string;
+        name: string;
+        revenue: number;
+        cost: number;
+        margin: number;
+        marginPercent: number;
+        units: number;
+        salesCount: number;
+      }
+    >();
+
+    filteredSales.forEach((sale) => {
+      sale.items?.forEach((item: any) => {
+        const prod = products.find((p) => p.id === item.productId || p.sku === item.sku);
+        const catKey = prod?.category || item.category || 'Geral';
+        if (selectedCategory !== 'all' && catKey !== selectedCategory) return;
+
+        let entry = catMap.get(catKey);
+        if (!entry) {
+          const catObj = categories.find((c) => c.id === catKey || c.name === catKey);
+          entry = {
+            category: catKey,
+            name: catObj?.name || catKey,
+            revenue: 0,
+            cost: 0,
+            margin: 0,
+            marginPercent: 0,
+            units: 0,
+            salesCount: 0,
+          };
+          catMap.set(catKey, entry);
+        }
+
+        const qty = item.quantity || 0;
+        const rev = item.total || ((item.unitPrice || 0) * qty);
+        const unitCost = prod?.costPrice ?? (item.unitPrice ? item.unitPrice * 0.5 : 0);
+        const cost = unitCost * qty;
+
+        entry.revenue += rev;
+        entry.cost += cost;
+        entry.units += qty;
+        entry.salesCount += 1;
+      });
+    });
+
+    const totalPeriodMargin = periodMarginMetrics.margin || 1;
+
+    return Array.from(catMap.values())
+      .map((c) => {
+        const mrg = c.revenue - c.cost;
+        return {
+          ...c,
+          revenue: Number(c.revenue.toFixed(2)),
+          cost: Number(c.cost.toFixed(2)),
+          margin: Number(mrg.toFixed(2)),
+          marginPercent: c.revenue > 0 ? Number(((mrg / c.revenue) * 100).toFixed(1)) : 0,
+          shareOfMargin: Number(((mrg / totalPeriodMargin) * 100).toFixed(1)),
+        };
+      })
+      .sort((a, b) => b.margin - a.margin);
+  }, [filteredSales, products, categories, selectedCategory, periodMarginMetrics.margin]);
 
   // Peak sales day calculation
   const peakSalesDay = useMemo(() => {
@@ -542,13 +1062,26 @@ export const AnalyticsModule: React.FC = () => {
   // Export to CSV Function
   const exportToCSV = () => {
     try {
-      const headers = ['Data', 'Transações', 'Faturação Total', 'Subtotal', 'IVA', 'Unidades Vendidas'];
+      const headers = [
+        'Data',
+        'Transações',
+        'Faturação Total',
+        'Subtotal',
+        'IVA',
+        'Custo Estimado (CPV)',
+        'Margem Bruta (MT)',
+        'Margem %',
+        'Unidades Vendidas',
+      ];
       const rows = dailySalesData.map((d) => [
         d.date,
         d.transactions,
         d.revenue.toFixed(2),
         d.subtotal.toFixed(2),
         d.tax.toFixed(2),
+        d.cost.toFixed(2),
+        d.margin.toFixed(2),
+        `${d.marginPercent}%`,
         d.units,
       ]);
 
@@ -564,7 +1097,37 @@ export const AnalyticsModule: React.FC = () => {
       ]);
 
       let csvContent = 'data:text/csv;charset=utf-8,';
-      csvContent += 'RELATORIO DE VOLUME DIARIO DE VENDAS\n';
+      csvContent += 'RELATORIO ANALITICO DE VENDAS E MARGENS\n';
+      csvContent += `Periodo: ${customStartDate} a ${customEndDate}\n\n`;
+
+      csvContent += 'RESUMO DE MARGENS DO FILTRO ATIVO\n';
+      csvContent += ['Faturacao Total', 'Custo Estimado (CPV)', 'Margem Bruta (MT)', 'Margem (%)'].join(';') + '\n';
+      csvContent += [
+        periodMarginMetrics.revenue.toFixed(2),
+        periodMarginMetrics.cost.toFixed(2),
+        periodMarginMetrics.margin.toFixed(2),
+        `${periodMarginMetrics.marginPercent}%`,
+      ].join(';') + '\n\n';
+
+      csvContent += 'MARGEM SEMANAL (SEMANA A SEMANA)\n';
+      csvContent += ['Semana', 'Intervalo', 'Faturacao Total', 'Custo Estimado (CPV)', 'Margem Bruta (MT)', 'Margem %', 'Vendas'].join(';') + '\n';
+      weeklyMarginMetrics.series.forEach((w) => {
+        csvContent += [w.label, `"${w.startDate} a ${w.endDate}"`, w.revenue.toFixed(2), w.cost.toFixed(2), w.margin.toFixed(2), `${w.marginPercent}%`, w.transactions].join(';') + '\n';
+      });
+
+      csvContent += '\n\nMARGEM MENSAL (MES A MES)\n';
+      csvContent += ['Mes', 'Faturacao Total', 'Custo Estimado (CPV)', 'Margem Bruta (MT)', 'Margem %', 'Vendas'].join(';') + '\n';
+      monthlyMarginMetrics.series.forEach((m) => {
+        csvContent += [m.label, m.revenue.toFixed(2), m.cost.toFixed(2), m.margin.toFixed(2), `${m.marginPercent}%`, m.transactions].join(';') + '\n';
+      });
+
+      csvContent += '\n\nMARGEM ANUAL (ANO A ANO)\n';
+      csvContent += ['Ano', 'Faturacao Total', 'Custo Estimado (CPV)', 'Margem Bruta (MT)', 'Margem %', 'Vendas'].join(';') + '\n';
+      yearlyMarginMetrics.series.forEach((y) => {
+        csvContent += [y.year, y.revenue.toFixed(2), y.cost.toFixed(2), y.margin.toFixed(2), `${y.marginPercent}%`, y.transactions].join(';') + '\n';
+      });
+
+      csvContent += '\n\nVOLUME DIARIO DE VENDAS E MARGENS\n';
       csvContent += headers.join(';') + '\n';
       rows.forEach((r) => {
         csvContent += r.join(';') + '\n';
@@ -581,13 +1144,13 @@ export const AnalyticsModule: React.FC = () => {
       link.setAttribute('href', encodedUri);
       link.setAttribute(
         'download',
-        `relatorio_vendas_${customStartDate}_a_${customEndDate}.csv`
+        `relatorio_vendas_e_margens_${customStartDate}_a_${customEndDate}.csv`
       );
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
 
-      notify('Relatório exportado com sucesso em CSV!', 'success');
+      notify('Relatório de vendas e margens exportado com sucesso em CSV!', 'success');
     } catch (err) {
       notify('Erro ao gerar exportação CSV.', 'error');
     }
@@ -653,7 +1216,7 @@ export const AnalyticsModule: React.FC = () => {
         </div>
 
         {/* Filters Grid */}
-        <div className="pt-3 border-t border-[#262626] grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+        <div className="pt-3 border-t border-[#262626] grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3">
           {/* Month Quick Selector */}
           <div>
             <label className="block text-[11px] font-medium text-neutral-400 mb-1 flex items-center space-x-1">
@@ -754,6 +1317,30 @@ export const AnalyticsModule: React.FC = () => {
                 <option value="cartao">Cartão / TPA</option>
                 <option value="mbway">MB WAY</option>
                 <option value="transferencia">Transferência Bancária</option>
+              </select>
+              <ChevronDown className="w-4 h-4 text-neutral-500 absolute right-2.5 top-2.5 pointer-events-none" />
+            </div>
+          </div>
+
+          {/* Category Filter */}
+          <div>
+            <label className="block text-[11px] font-medium text-neutral-400 mb-1 flex items-center space-x-1">
+              <Tag className="w-3 h-3 text-[#c5a47e]" />
+              <span>Categoria de Artigo</span>
+            </label>
+            <div className="relative">
+              <select
+                id="analytics-category-filter"
+                value={selectedCategory}
+                onChange={(e) => setSelectedCategory(e.target.value)}
+                className="w-full bg-[#1c1c1c] border border-[#2e2e2e] focus:border-[#c5a47e] rounded-lg px-3 py-2 text-xs text-neutral-200 focus:outline-none transition-colors cursor-pointer appearance-none pr-8"
+              >
+                <option value="all">Todas as Categorias ({categories.length})</option>
+                {categories.map((cat) => (
+                  <option key={cat.id} value={cat.id}>
+                    {cat.name}
+                  </option>
+                ))}
               </select>
               <ChevronDown className="w-4 h-4 text-neutral-500 absolute right-2.5 top-2.5 pointer-events-none" />
             </div>
@@ -877,81 +1464,315 @@ export const AnalyticsModule: React.FC = () => {
         </div>
       </div>
 
-      {/* 3. Section Tabs Navigation Bar */}
-      <div
-        id="analytics-section-tabs-bar"
-        className="bg-[#141414] border border-[#262626] rounded-xl p-2.5 shadow-md shrink-0"
-      >
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
-          <div className="flex items-center space-x-2 text-xs text-neutral-400 shrink-0 px-1">
-            <Layers className="w-4 h-4 text-[#c5a47e]" />
-            <span className="font-semibold text-neutral-200">Vistas do Relatório:</span>
+      {/* 2.1 Key Profitability & Margin Metrics (Weekly, Monthly, Annual, Filtered Period) */}
+      <div className="bg-[#141414] border border-[#262626] rounded-xl p-4 shadow-sm space-y-3">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-[#262626]/80 pb-3">
+          <div className="flex items-center space-x-2.5">
+            <div className="p-1.5 rounded-lg bg-emerald-500/15 text-emerald-400">
+              <Percent className="w-4 h-4" />
+            </div>
+            <div>
+              <div className="flex items-center space-x-2">
+                <h3 className="text-xs font-bold text-neutral-100 uppercase tracking-wider">
+                  Rentabilidade & Margens de Lucro Comerciais
+                </h3>
+                <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                  Semanal • Mensal • Anual
+                </span>
+              </div>
+              <p className="text-[11px] text-neutral-400 mt-0.5">
+                Calculadas com base no Custo dos Produtos Vendidos (CPV) e preço de venda, respeitando os filtros de loja, forma de pagamento e categoria.
+              </p>
+            </div>
+          </div>
+          {activeTab !== 'margins' && (
+            <button
+              onClick={() => setActiveTab('margins')}
+              className="text-xs text-[#c5a47e] hover:text-[#d8b892] font-semibold flex items-center space-x-1 transition-colors self-start sm:self-auto cursor-pointer"
+            >
+              <span>Ver painel analítico de margens</span>
+              <ArrowUpRight className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 pt-1">
+          {/* 1. Margem Semanal */}
+          <div className="bg-[#181818] border border-[#2a2a2a] hover:border-emerald-500/40 rounded-lg p-3 transition-colors">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium text-neutral-400 flex items-center space-x-1">
+                <CalendarRange className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Margem Semanal</span>
+              </span>
+              <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-300 font-mono">
+                {weeklyMarginMetrics.current.label}
+              </span>
+            </div>
+            <div className="mt-2 flex items-baseline justify-between">
+              <div className="text-xl font-bold text-emerald-400 tracking-tight">
+                +{formatCurrency(weeklyMarginMetrics.current.margin)}
+              </div>
+              <span className={`text-xs font-bold px-1.5 py-0.5 rounded ${
+                weeklyMarginMetrics.current.marginPercent >= 30 ? 'bg-emerald-500/20 text-emerald-300' : 'bg-amber-500/20 text-amber-300'
+              }`}>
+                {weeklyMarginMetrics.current.marginPercent}%
+              </span>
+            </div>
+            <div className="mt-2 pt-2 border-t border-[#2a2a2a] space-y-1 text-[11px] text-neutral-400">
+              <div className="flex justify-between">
+                <span>Faturação da Semana:</span>
+                <span className="text-neutral-200 font-medium">{formatCurrency(weeklyMarginMetrics.current.revenue)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Custo (CPV):</span>
+                <span className="text-neutral-300">{formatCurrency(weeklyMarginMetrics.current.cost)}</span>
+              </div>
+              <div className="flex justify-between items-center pt-0.5">
+                <span className="text-neutral-400">vs. Semana Anterior:</span>
+                <span className={`font-semibold flex items-center text-[10px] ${
+                  weeklyMarginMetrics.current.growthPercent >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                }`}>
+                  {weeklyMarginMetrics.current.growthPercent >= 0 ? '+' : ''}{weeklyMarginMetrics.current.growthPercent}%
+                </span>
+              </div>
+            </div>
           </div>
 
-          <div className="flex items-center gap-2 overflow-x-auto no-scrollbar py-0.5 scroll-smooth flex-wrap sm:flex-nowrap">
-            {[
-              {
-                id: 'overview',
-                label: 'Visão Geral & Volume Diário',
-                badge: 'Completo',
-                icon: BarChart3,
-              },
-              {
-                id: 'products',
-                label: 'Produtos Mais Vendidos',
-                badge: 'Ranking',
-                icon: Award,
-              },
-              {
-                id: 'daily',
-                label: 'Tabela de Desempenho Diário',
-                badge: `${dailySalesData.length} dias`,
-                icon: Calendar,
-              },
-              {
-                id: 'payments',
-                label: 'Formas de Pagamento',
-                badge: `${paymentMethodsData.length} métodos`,
-                icon: CreditCard,
-              },
-              {
-                id: 'hours',
-                label: 'Horários de Pico',
-                badge: '24 Horas',
-                icon: Clock,
-              },
-            ].map((tab) => {
-              const Icon = tab.icon;
-              const isActive = activeTab === tab.id;
-              return (
-                <button
-                  key={tab.id}
-                  id={`analytics-tab-${tab.id}`}
-                  onClick={() => setActiveTab(tab.id as any)}
-                  className={`flex items-center space-x-2 px-3.5 py-2 text-xs font-semibold rounded-lg transition-all cursor-pointer whitespace-nowrap border shrink-0 ${
-                    isActive
-                      ? 'bg-[#c5a47e] text-neutral-950 border-[#c5a47e] shadow-sm font-bold'
-                      : 'bg-[#1c1c1c] text-neutral-300 hover:text-white hover:bg-[#252525] border-[#2c2c2c]'
-                  }`}
-                  title={`Alternar visualização para: ${tab.label}`}
-                >
-                  <Icon className={`w-3.5 h-3.5 ${isActive ? 'text-neutral-950' : 'text-[#c5a47e]'}`} />
-                  <span>{tab.label}</span>
-                  {tab.badge && (
-                    <span
-                      className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono font-medium ${
-                        isActive
-                          ? 'bg-neutral-950/25 text-neutral-900 border border-neutral-950/20'
-                          : 'bg-[#141414] text-neutral-400 border border-[#2e2e2e]'
-                      }`}
-                    >
-                      {tab.badge}
-                    </span>
-                  )}
-                </button>
-              );
-            })}
+          {/* 2. Margem Mensal */}
+          <div className="bg-[#181818] border border-[#2a2a2a] hover:border-emerald-500/40 rounded-lg p-3 transition-colors">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium text-neutral-400 flex items-center space-x-1">
+                <Calendar className="w-3.5 h-3.5 text-blue-400" />
+                <span>Margem Mensal</span>
+              </span>
+              <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-blue-500/15 text-blue-300 font-mono truncate max-w-[110px]">
+                {monthlyMarginMetrics.current.label}
+              </span>
+            </div>
+            <div className="mt-2 flex items-baseline justify-between">
+              <div className="text-xl font-bold text-emerald-400 tracking-tight">
+                +{formatCurrency(monthlyMarginMetrics.current.margin)}
+              </div>
+              <span className={`text-xs font-bold px-1.5 py-0.5 rounded ${
+                monthlyMarginMetrics.current.marginPercent >= 30 ? 'bg-emerald-500/20 text-emerald-300' : 'bg-amber-500/20 text-amber-300'
+              }`}>
+                {monthlyMarginMetrics.current.marginPercent}%
+              </span>
+            </div>
+            <div className="mt-2 pt-2 border-t border-[#2a2a2a] space-y-1 text-[11px] text-neutral-400">
+              <div className="flex justify-between">
+                <span>Faturação do Mês:</span>
+                <span className="text-neutral-200 font-medium">{formatCurrency(monthlyMarginMetrics.current.revenue)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Custo (CPV):</span>
+                <span className="text-neutral-300">{formatCurrency(monthlyMarginMetrics.current.cost)}</span>
+              </div>
+              <div className="flex justify-between items-center pt-0.5">
+                <span className="text-neutral-400">vs. Mês Anterior:</span>
+                <span className={`font-semibold flex items-center text-[10px] ${
+                  monthlyMarginMetrics.current.growthPercent >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                }`}>
+                  {monthlyMarginMetrics.current.growthPercent >= 0 ? '+' : ''}{monthlyMarginMetrics.current.growthPercent}%
+                </span>
+              </div>
+            </div>
           </div>
+
+          {/* 3. Margem Anual */}
+          <div className="bg-[#181818] border border-[#2a2a2a] hover:border-emerald-500/40 rounded-lg p-3 transition-colors">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium text-neutral-400 flex items-center space-x-1">
+                <TrendingUp className="w-3.5 h-3.5 text-purple-400" />
+                <span>Margem Anual</span>
+              </span>
+              <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-purple-500/15 text-purple-300 font-mono">
+                Ano {yearlyMarginMetrics.current.year}
+              </span>
+            </div>
+            <div className="mt-2 flex items-baseline justify-between">
+              <div className="text-xl font-bold text-emerald-400 tracking-tight">
+                +{formatCurrency(yearlyMarginMetrics.current.margin)}
+              </div>
+              <span className={`text-xs font-bold px-1.5 py-0.5 rounded ${
+                yearlyMarginMetrics.current.marginPercent >= 30 ? 'bg-emerald-500/20 text-emerald-300' : 'bg-amber-500/20 text-amber-300'
+              }`}>
+                {yearlyMarginMetrics.current.marginPercent}%
+              </span>
+            </div>
+            <div className="mt-2 pt-2 border-t border-[#2a2a2a] space-y-1 text-[11px] text-neutral-400">
+              <div className="flex justify-between">
+                <span>Faturação do Ano:</span>
+                <span className="text-neutral-200 font-medium">{formatCurrency(yearlyMarginMetrics.current.revenue)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Custo Anual (CPV):</span>
+                <span className="text-neutral-300">{formatCurrency(yearlyMarginMetrics.current.cost)}</span>
+              </div>
+              <div className="flex justify-between items-center pt-0.5">
+                <span className="text-neutral-400">Total Transações:</span>
+                <span className="font-semibold text-neutral-200 text-[10px]">
+                  {yearlyMarginMetrics.current.transactions} vendas
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* 4. Margem do Filtro Ativo */}
+          <div className="bg-[#181818] border border-[#2a2a2a] hover:border-[#c5a47e]/50 rounded-lg p-3 transition-colors">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium text-neutral-400 flex items-center space-x-1">
+                <Target className="w-3.5 h-3.5 text-[#c5a47e]" />
+                <span>Margem no Filtro Ativo</span>
+              </span>
+              <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-[#c5a47e]/20 text-[#c5a47e]">
+                {periodMarginMetrics.transactions} docs
+              </span>
+            </div>
+            <div className="mt-2 flex items-baseline justify-between">
+              <div className="text-xl font-bold text-emerald-400 tracking-tight">
+                +{formatCurrency(periodMarginMetrics.margin)}
+              </div>
+              <span className="text-xs font-bold px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300">
+                {periodMarginMetrics.marginPercent}%
+              </span>
+            </div>
+            <div className="mt-2 pt-2 border-t border-[#2a2a2a] space-y-1 text-[11px] text-neutral-400">
+              <div className="flex justify-between">
+                <span>Faturação Filtrada:</span>
+                <span className="text-neutral-200 font-medium">{formatCurrency(periodMarginMetrics.revenue)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Custo Mercadoria:</span>
+                <span className="text-neutral-300">{formatCurrency(periodMarginMetrics.cost)}</span>
+              </div>
+              <div className="flex justify-between items-center pt-0.5">
+                <span>Unidades Vendidas:</span>
+                <span className="font-semibold text-neutral-200 text-[10px]">{periodMarginMetrics.units} artigos</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* 3. Section Tabs Navigation Bar with Horizontal Scrollbar & Scroll Controls */}
+      <div
+        id="analytics-section-tabs-bar"
+        className="bg-[#141414] border border-[#262626] rounded-xl p-3 shadow-md shrink-0 space-y-2.5"
+      >
+        <div className="flex items-center justify-between gap-3 border-b border-[#262626]/70 pb-2 px-0.5">
+          <div className="flex items-center space-x-2 text-xs text-neutral-400 shrink-0">
+            <div className="p-1 rounded bg-[#c5a47e]/15 text-[#c5a47e]">
+              <Layers className="w-3.5 h-3.5" />
+            </div>
+            <span className="font-semibold text-neutral-100 text-xs">Vistas do Relatório:</span>
+            <span className="text-[10px] text-neutral-400 bg-[#1c1c1c] px-2 py-0.5 rounded-full border border-[#2d2d2d] font-mono">
+              6 menus disponíveis
+            </span>
+          </div>
+
+          {/* Quick Scroll Controls & Roll Bar Indicator */}
+          <div className="flex items-center space-x-1.5 shrink-0">
+            <span className="text-[11px] text-neutral-400 hidden sm:inline mr-1">
+              Rolar menus:
+            </span>
+            <button
+              type="button"
+              id="analytics-scroll-tabs-left"
+              onClick={() => scrollTabs('left')}
+              className="p-1.5 rounded-lg bg-[#1c1c1c] hover:bg-[#282828] text-neutral-300 hover:text-white border border-[#2c2c2c] transition-colors cursor-pointer shadow-sm active:scale-95"
+              title="Rolar menus para a esquerda"
+              aria-label="Rolar menus para a esquerda"
+            >
+              <ChevronLeft className="w-4 h-4 text-[#c5a47e]" />
+            </button>
+            <button
+              type="button"
+              id="analytics-scroll-tabs-right"
+              onClick={() => scrollTabs('right')}
+              className="p-1.5 rounded-lg bg-[#1c1c1c] hover:bg-[#282828] text-neutral-300 hover:text-white border border-[#2c2c2c] transition-colors cursor-pointer shadow-sm active:scale-95"
+              title="Rolar menus para a direita"
+              aria-label="Rolar menus para a direita"
+            >
+              <ChevronRight className="w-4 h-4 text-[#c5a47e]" />
+            </button>
+          </div>
+        </div>
+
+        {/* Scrollable Container with Visible Barra de Rolamento (Draggable & Accessible) */}
+        <div
+          ref={tabsContainerRef}
+          id="analytics-tabs-scroll-container"
+          className="custom-horizontal-scrollbar flex items-center gap-2 overflow-x-auto pb-2.5 pt-0.5 scroll-smooth whitespace-nowrap"
+        >
+          {[
+            {
+              id: 'overview',
+              label: 'Visão Geral & Volume Diário',
+              badge: 'Completo',
+              icon: BarChart3,
+            },
+            {
+              id: 'margins',
+              label: 'Margens & Rentabilidade',
+              badge: 'Semana / Mês / Ano',
+              icon: TrendingUp,
+            },
+            {
+              id: 'products',
+              label: 'Produtos Mais Vendidos',
+              badge: 'Ranking',
+              icon: Award,
+            },
+            {
+              id: 'daily',
+              label: 'Tabela de Desempenho Diário',
+              badge: `${dailySalesData.length} dias`,
+              icon: Calendar,
+            },
+            {
+              id: 'payments',
+              label: 'Formas de Pagamento',
+              badge: `${paymentMethodsData.length} métodos`,
+              icon: CreditCard,
+            },
+            {
+              id: 'hours',
+              label: 'Horários de Pico',
+              badge: '24 Horas',
+              icon: Clock,
+            },
+          ].map((tab) => {
+            const Icon = tab.icon;
+            const isActive = activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                id={`analytics-tab-${tab.id}`}
+                onClick={() => handleTabSelect(tab.id as any)}
+                className={`flex items-center space-x-2 px-3.5 py-2 text-xs font-semibold rounded-lg transition-all cursor-pointer whitespace-nowrap border shrink-0 ${
+                  isActive
+                    ? 'bg-[#c5a47e] text-neutral-950 border-[#c5a47e] shadow-sm font-bold'
+                    : 'bg-[#1c1c1c] text-neutral-300 hover:text-white hover:bg-[#252525] border-[#2c2c2c]'
+                }`}
+                title={`Alternar visualização para: ${tab.label}`}
+              >
+                <Icon className={`w-3.5 h-3.5 ${isActive ? 'text-neutral-950' : 'text-[#c5a47e]'}`} />
+                <span>{tab.label}</span>
+                {tab.badge && (
+                  <span
+                    className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono font-medium ${
+                      isActive
+                        ? 'bg-neutral-950/25 text-neutral-900 border border-neutral-950/20'
+                        : 'bg-[#141414] text-neutral-400 border border-[#2e2e2e]'
+                    }`}
+                  >
+                    {tab.badge}
+                  </span>
+                )}
+              </button>
+            );
+          })}
         </div>
       </div>
 
@@ -972,7 +1793,7 @@ export const AnalyticsModule: React.FC = () => {
               </div>
 
               {/* Metric Toggle */}
-              <div className="flex items-center space-x-1 bg-[#1a1a1a] p-1 rounded-lg border border-[#2a2a2a] self-start sm:self-auto">
+              <div className="flex items-center space-x-1 bg-[#1a1a1a] p-1 rounded-lg border border-[#2a2a2a] self-start sm:self-auto flex-wrap gap-1 sm:gap-0">
                 <button
                   onClick={() => setChartMetric('both')}
                   className={`px-3 py-1 text-xs rounded font-medium transition-all cursor-pointer ${
@@ -1003,6 +1824,16 @@ export const AnalyticsModule: React.FC = () => {
                 >
                   Apenas Transações
                 </button>
+                <button
+                  onClick={() => setChartMetric('margin')}
+                  className={`px-3 py-1 text-xs rounded font-medium transition-all cursor-pointer ${
+                    chartMetric === 'margin'
+                      ? 'bg-emerald-500 text-neutral-950 font-bold'
+                      : 'text-emerald-400 hover:text-emerald-300'
+                  }`}
+                >
+                  Lucro & Margem %
+                </button>
               </div>
             </div>
 
@@ -1023,6 +1854,10 @@ export const AnalyticsModule: React.FC = () => {
                       <linearGradient id="revenueGradient" x1="0" y1="0" x2="0" y2="1">
                         <stop offset="5%" stopColor="#c5a47e" stopOpacity={0.4} />
                         <stop offset="95%" stopColor="#c5a47e" stopOpacity={0.0} />
+                      </linearGradient>
+                      <linearGradient id="marginGradient" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#10b981" stopOpacity={0.5} />
+                        <stop offset="95%" stopColor="#10b981" stopOpacity={0.0} />
                       </linearGradient>
                       <linearGradient id="barGradient" x1="0" y1="0" x2="0" y2="1">
                         <stop offset="0%" stopColor="#3b82f6" stopOpacity={0.8} />
@@ -1054,6 +1889,16 @@ export const AnalyticsModule: React.FC = () => {
                         tickFormatter={(val) => `${val} v.`}
                       />
                     )}
+                    {chartMetric === 'margin' && (
+                      <YAxis
+                        yAxisId="right"
+                        orientation="right"
+                        stroke="#38bdf8"
+                        fontSize={11}
+                        tickLine={false}
+                        tickFormatter={(val) => `${val}%`}
+                      />
+                    )}
                     <Tooltip
                       contentStyle={{
                         backgroundColor: '#171717',
@@ -1070,6 +1915,15 @@ export const AnalyticsModule: React.FC = () => {
                         if (name === 'movingAvgRevenue' || name === 'Média Móvel') {
                           return [formatCurrency(Number(value)), 'Média Móvel'];
                         }
+                        if (name === 'cost' || name === 'Custo (CPV)') {
+                          return [formatCurrency(Number(value)), 'Custo CPV'];
+                        }
+                        if (name === 'margin' || name === 'Margem Bruta') {
+                          return [formatCurrency(Number(value)), 'Margem Bruta (MT)'];
+                        }
+                        if (name === 'marginPercent' || name === 'Margem %') {
+                          return [`${value}%`, 'Margem (%)'];
+                        }
                         if (name === 'transactions' || name === 'Transações') {
                           return [`${value} vendas`, 'Transações'];
                         }
@@ -1082,6 +1936,9 @@ export const AnalyticsModule: React.FC = () => {
                       height={36}
                       formatter={(value) => {
                         if (value === 'revenue') return 'Faturação Diária';
+                        if (value === 'cost') return 'Custo Estimado (CPV)';
+                        if (value === 'margin') return 'Margem Bruta (MT)';
+                        if (value === 'marginPercent') return 'Margem Rentabilidade (%)';
                         if (value === 'transactions') return 'Número de Vendas';
                         if (value === 'movingAvgRevenue') return 'Tendência (Média Móvel)';
                         return value;
@@ -1100,6 +1957,40 @@ export const AnalyticsModule: React.FC = () => {
                         fillOpacity={1}
                         fill="url(#revenueGradient)"
                       />
+                    )}
+
+                    {/* Margin Metric View */}
+                    {chartMetric === 'margin' && (
+                      <>
+                        <Area
+                          yAxisId="left"
+                          type="monotone"
+                          dataKey="margin"
+                          name="margin"
+                          stroke="#10b981"
+                          strokeWidth={2.5}
+                          fillOpacity={1}
+                          fill="url(#marginGradient)"
+                        />
+                        <Bar
+                          yAxisId="left"
+                          dataKey="cost"
+                          name="cost"
+                          fill="#ef4444"
+                          opacity={0.65}
+                          radius={[4, 4, 0, 0]}
+                          maxBarSize={24}
+                        />
+                        <Line
+                          yAxisId="right"
+                          type="monotone"
+                          dataKey="marginPercent"
+                          name="marginPercent"
+                          stroke="#38bdf8"
+                          strokeWidth={2}
+                          dot={{ r: 3, fill: '#38bdf8' }}
+                        />
+                      </>
                     )}
 
                     {/* Moving average line */}
@@ -1159,6 +2050,9 @@ export const AnalyticsModule: React.FC = () => {
                     <th className="py-3 px-4 text-right">Líquido (Subtotal)</th>
                     <th className="py-3 px-4 text-right">IVA</th>
                     <th className="py-3 px-4 text-right">Faturação Total</th>
+                    <th className="py-3 px-4 text-right">Custo (CPV)</th>
+                    <th className="py-3 px-4 text-right">Margem Bruta</th>
+                    <th className="py-3 px-4 text-right">Margem %</th>
                     <th className="py-3 px-4 text-right">Ticket Médio</th>
                   </tr>
                 </thead>
@@ -1196,6 +2090,19 @@ export const AnalyticsModule: React.FC = () => {
                           <td className="py-3 px-4 text-right font-bold text-neutral-100">
                             {formatCurrency(day.revenue)}
                           </td>
+                          <td className="py-3 px-4 text-right text-neutral-400 font-mono">
+                            {formatCurrency(day.cost)}
+                          </td>
+                          <td className="py-3 px-4 text-right font-bold text-emerald-400 font-mono">
+                            +{formatCurrency(day.margin)}
+                          </td>
+                          <td className="py-3 px-4 text-right">
+                            <span className={`px-1.5 py-0.5 rounded font-bold text-[10px] ${
+                              day.marginPercent >= 30 ? 'bg-emerald-500/20 text-emerald-300' : 'bg-amber-500/20 text-amber-300'
+                            }`}>
+                              {day.marginPercent}%
+                            </span>
+                          </td>
                           <td className="py-3 px-4 text-right text-[#c5a47e] font-medium">
                             {formatCurrency(avg)}
                           </td>
@@ -1207,6 +2114,23 @@ export const AnalyticsModule: React.FC = () => {
             </div>
           </div>
         </div>
+      )}
+
+      {/* 4.1 TAB: PROFITABILITY & MARGINS (Weekly, Monthly, Annual, Categories) */}
+      {activeTab === 'margins' && (
+        <AnalyticsMarginsTab
+          weeklyMarginMetrics={weeklyMarginMetrics}
+          monthlyMarginMetrics={monthlyMarginMetrics}
+          yearlyMarginMetrics={yearlyMarginMetrics}
+          periodMarginMetrics={periodMarginMetrics}
+          categoryMarginMetrics={categoryMarginMetrics}
+          marginViewMode={marginViewMode}
+          setMarginViewMode={setMarginViewMode}
+          currencySymbol={currentCompany.currencySymbol}
+          formatCurrency={formatCurrency}
+          customStartDate={customStartDate}
+          customEndDate={customEndDate}
+        />
       )}
 
       {/* 5. TAB 2: Top Selling Products & Category Breakdown */}

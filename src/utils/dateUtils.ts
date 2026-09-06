@@ -139,3 +139,61 @@ export const getMonthNamePT = (monthStr: string): string => {
   const monthName = monthsNames[mIndex] || month;
   return `${monthName} de ${year}`;
 };
+
+export interface WeekInfo {
+  weekKey: string;
+  weekNumber: number;
+  year: number;
+  label: string;
+  startDate: string;
+  endDate: string;
+}
+
+export const getWeekInfo = (dateStr: string): WeekInfo => {
+  if (!dateStr) {
+    const today = getTodayDateStr();
+    return getWeekInfo(today);
+  }
+  const cleanStr = dateStr.substring(0, 10);
+  const [y, m, d] = cleanStr.split('-').map(Number);
+  const date = new Date(y, (m || 1) - 1, d || 1);
+
+  // ISO 8601 week calculation
+  const target = new Date(date.valueOf());
+  const dayNr = (date.getDay() + 6) % 7; // Segunda = 0, Domingo = 6
+  target.setDate(target.getDate() - dayNr + 3); // Quinta-feira
+  const firstThursday = target.valueOf();
+  target.setMonth(0, 1);
+  if (target.getDay() !== 4) {
+    target.setMonth(0, 1 + ((4 - target.getDay()) + 7) % 7);
+  }
+  const weekNumber = 1 + Math.ceil((firstThursday - target.valueOf()) / 604800000);
+  const isoYear = new Date(firstThursday).getFullYear();
+
+  // Início (Segunda) e Fim (Domingo)
+  const monday = new Date(date);
+  monday.setDate(date.getDate() - dayNr);
+  const sunday = new Date(monday);
+  sunday.setDate(monday.getDate() + 6);
+
+  const fmt = (dt: Date) => {
+    const yr = dt.getFullYear();
+    const mo = String(dt.getMonth() + 1).padStart(2, '0');
+    const da = String(dt.getDate()).padStart(2, '0');
+    return `${yr}-${mo}-${da}`;
+  };
+
+  const startStr = fmt(monday);
+  const endStr = fmt(sunday);
+  const startDayMo = `${String(monday.getDate()).padStart(2, '0')}/${String(monday.getMonth() + 1).padStart(2, '0')}`;
+  const endDayMo = `${String(sunday.getDate()).padStart(2, '0')}/${String(sunday.getMonth() + 1).padStart(2, '0')}`;
+
+  return {
+    weekKey: `${isoYear}-W${String(weekNumber).padStart(2, '0')}`,
+    weekNumber,
+    year: isoYear,
+    label: `Semana ${weekNumber} (${startDayMo} a ${endDayMo})`,
+    startDate: startStr,
+    endDate: endStr,
+  };
+};
