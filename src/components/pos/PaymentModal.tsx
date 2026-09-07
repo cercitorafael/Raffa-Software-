@@ -81,10 +81,22 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ onClose, onSuccess }
 
   const handleAddSplitPayment = () => {
     if (remaining <= 0) return;
-    const amount = selectedMethod === 'dinheiro' ? Math.min(cashTendered, remaining) : remaining;
+    const isCash = selectedMethod === 'dinheiro';
+    const amount = isCash ? Math.min(cashTendered || remaining, remaining) : remaining;
     if (amount <= 0) return;
 
-    setPayments((prev) => [...prev, { method: selectedMethod, amount }]);
+    const tendered = isCash && cashTendered > 0 ? cashTendered : amount;
+    const changeAmt = isCash && tendered > amount ? Number((tendered - amount).toFixed(2)) : 0;
+
+    setPayments((prev) => [
+      ...prev,
+      {
+        method: selectedMethod,
+        amount,
+        tenderedAmount: tendered,
+        changeAmount: changeAmt,
+      },
+    ]);
   };
 
   const handleRemovePayment = (idx: number) => {
@@ -101,13 +113,15 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ onClose, onSuccess }
 
   const calculateChange = () => {
     if (payments.length > 0) {
-      const cashPayments = payments.filter((p) => p.method === 'dinheiro').reduce((s, p) => s + p.amount, 0);
-      const otherPayments = payments.filter((p) => p.method !== 'dinheiro').reduce((s, p) => s + p.amount, 0);
-      const totalCovered = cashPayments + otherPayments;
-      return Math.max(0, totalCovered - totalToPay);
+      const totalTendered = payments.reduce(
+        (s, p) => s + (p.tenderedAmount !== undefined ? p.tenderedAmount : p.amount),
+        0
+      );
+      const totalPaid = payments.reduce((s, p) => s + p.amount, 0);
+      return Math.max(0, totalTendered - totalToPay, totalPaid - totalToPay);
     } else {
       if (selectedMethod === 'dinheiro') {
-        return Math.max(0, (cashTendered || 0) - totalToPay);
+        return Math.max(0, Number(((cashTendered || 0) - totalToPay).toFixed(2)));
       }
       return 0;
     }
@@ -123,14 +137,18 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ onClose, onSuccess }
       if (payments.length > 0) {
         finalPayments = payments;
       } else {
-        // Single payment method
+        // Single payment method - Ensure amount is strictly totalToPay (e.g. 300 MT)
+        // while recording cashTendered (e.g. 500 MT) for change tracking without inflating sale total
+        const isCash = selectedMethod === 'dinheiro';
+        const tendered = isCash && cashTendered > 0 ? cashTendered : totalToPay;
+        const changeAmt = isCash ? Math.max(0, Number((tendered - totalToPay).toFixed(2))) : 0;
+
         finalPayments = [
           {
             method: selectedMethod,
-            amount:
-              selectedMethod === 'dinheiro'
-                ? Math.max(cashTendered || totalToPay, totalToPay)
-                : totalToPay,
+            amount: totalToPay,
+            tenderedAmount: tendered,
+            changeAmount: changeAmt,
           },
         ];
       }

@@ -353,7 +353,9 @@ export type PaymentMethod = 'dinheiro' | 'cartao' | 'mbway' | 'transferencia' | 
 export interface PaymentRecord {
   id?: string;
   method: PaymentMethod;
-  amount: number;
+  amount: number; // Valor liquidado da venda imputado a este meio (ex: 300 MT)
+  tenderedAmount?: number; // Valor entregue pelo cliente em numerário (ex: 500 MT)
+  changeAmount?: number; // Troco devolvido ao cliente (ex: 200 MT)
   reference?: string; // TPA Auth or MB Way transaction ref
   status?: string;
 }

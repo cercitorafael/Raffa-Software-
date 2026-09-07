@@ -57,8 +57,8 @@ IVA Incluído: ${formatCurrency(sale.taxTotal)}
 TOTAL: ${formatCurrency(sale.total)}
 ------------------------------------------------
 Meios de Pagamento:
-${sale.payments.map((p) => `- ${p.method.toUpperCase()}: ${formatCurrency(p.amount)}`).join('\n')}
-${sale.changeAmount > 0 ? `Troco: ${formatCurrency(sale.changeAmount)}` : ''}
+${sale.payments.map((p) => `- ${p.method.toUpperCase()}: ${formatCurrency(p.amount)}${p.tenderedAmount && p.tenderedAmount > p.amount ? ` (Entregue: ${formatCurrency(p.tenderedAmount)})` : ''}`).join('\n')}
+${sale.changeAmount && sale.changeAmount > 0 ? `Troco Entregue: ${formatCurrency(sale.changeAmount)}` : ''}
 ------------------------------------------------
 Hash Fiscal: ${sale.fiscalHash || ''}
 ------------------------------------------------
@@ -181,12 +181,19 @@ Obrigado pela sua preferência!
               <div className="py-2 border-b border-dashed border-[#333333] space-y-0.5 text-[10px]">
                 <span className="font-bold text-neutral-400 block mb-1">PAGAMENTO:</span>
                 {sale.payments.map((p, i) => (
-                  <div key={i} className="flex justify-between text-neutral-300">
+                  <div key={i} className="flex justify-between items-center text-neutral-300">
                     <span className="capitalize">{p.method === 'cartao' ? 'Cartão TPA' : p.method === 'mbway' ? 'M-Pesa / Móvel' : p.method}</span>
-                    <span className="font-bold text-[#c5a47e]">{formatCurrency(p.amount)}</span>
+                    <div className="text-right">
+                      <span className="font-bold text-[#c5a47e]">{formatCurrency(p.amount)}</span>
+                      {p.tenderedAmount && p.tenderedAmount > p.amount && (
+                        <span className="text-[9px] text-neutral-400 font-mono ml-1.5">
+                          (Entregue: {formatCurrency(p.tenderedAmount)})
+                        </span>
+                      )}
+                    </div>
                   </div>
                 ))}
-                {sale.changeAmount > 0 && (
+                {sale.changeAmount !== undefined && sale.changeAmount > 0 && (
                   <div className="flex justify-between font-bold text-emerald-400 pt-0.5">
                     <span>Troco Entregue:</span>
                     <span>{formatCurrency(sale.changeAmount)}</span>

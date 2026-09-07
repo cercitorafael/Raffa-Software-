@@ -2,9 +2,21 @@ import express from 'express';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI, Type } from '@google/genai';
+import { z } from 'zod';
 import 'dotenv/config';
 
 const PORT = 3000;
+
+// Zod Schema para validação rigorosa de entrada no backend (POS/ERP Architecture)
+const SalesGoalsInputSchema = z.object({
+  anoReferencia: z.coerce.number().int().min(2000).max(2100).default(2027),
+  metaAnualTotal: z.coerce.number().min(0, 'A meta anual não pode ser negativa').default(1200000),
+  estrategia: z.enum(['HISTORICO', 'MANUAL', 'LINEAR', 'CRESCIMENTO']).default('HISTORICO'),
+  historicoAnoAnterior: z.array(z.coerce.number().min(0)).max(12).optional(),
+  valoresManuais: z.array(z.coerce.number().min(0)).max(12).optional(),
+  valoresMensais: z.array(z.coerce.number().min(0)).max(12).optional(),
+  taxaCrescimentoPercentual: z.coerce.number().min(-100).max(1000).default(10),
+});
 
 // Lazy initialize GoogleGenAI client to avoid crash on startup if GEMINI_API_KEY is missing
 let aiClient: GoogleGenAI | null = null;
@@ -14,12 +26,91 @@ function getGenAI(): GoogleGenAI | null {
     return null;
   }
   if (!aiClient) {
-    aiClient = new GoogleGenAI({ apiKey: key });
+    aiClient = new GoogleGenAI({
+      apiKey: key,
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build',
+        },
+      },
+    });
   }
   return aiClient;
 }
 
-// Deterministic calculation engine based on mathematical rules (serves as fallback or offline engine)
+const MONTH_NAMES = [
+  'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
+  'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'
+];
+
+/**
+ * Converte valor numérico em centavos inteiros para aritmética sem ruído IEEE 754
+ */
+function toCents(val: number): number {
+  if (isNaN(val) || !isFinite(val)) return 0;
+  return Math.round(Math.max(0, val) * 100);
+}
+
+function fromCents(cents: number): number {
+  return Number((cents / 100).toFixed(2));
+}
+
+/**
+ * Algoritmo de Conciliação Contábil ao Centavo (Largest Remainder Method)
+ * Garante com exatidão matemática que sum(metasMensais) === metaAnualTotal
+ */
+function reconciliarCentavos(
+  itens: { mes: number; nomeMes: string; pesoPercentual: number; valorMeta: number }[],
+  metaAnualTotal: number
+) {
+  const metaAnualCents = toCents(metaAnualTotal);
+  if (metaAnualCents === 0) {
+    return itens.map((item) => ({
+      ...item,
+      valorMeta: 0,
+      pesoPercentual: 0,
+    }));
+  }
+
+  const itensCents = itens.map((it) => toCents(it.valorMeta));
+  const somaCents = itensCents.reduce((acc, c) => acc + c, 0);
+  let diferencaCents = metaAnualCents - somaCents;
+
+  const resultadoCents = [...itensCents];
+
+  if (diferencaCents !== 0) {
+    const indicesOrdenados = resultadoCents
+      .map((cents, idx) => ({ cents, idx }))
+      .sort((a, b) => b.cents - a.cents)
+      .map((obj) => obj.idx);
+
+    let step = diferencaCents > 0 ? 1 : -1;
+    let pointer = 0;
+    while (diferencaCents !== 0 && pointer < indicesOrdenados.length * 5) {
+      const idx = indicesOrdenados[pointer % indicesOrdenados.length];
+      if (step < 0 && resultadoCents[idx] <= 0) {
+        pointer++;
+        continue;
+      }
+      resultadoCents[idx] += step;
+      diferencaCents -= step;
+      pointer++;
+    }
+  }
+
+  return itens.map((it, idx) => {
+    const valorMeta = fromCents(resultadoCents[idx]);
+    const pesoPercentual = Number(((resultadoCents[idx] / metaAnualCents) * 100).toFixed(2));
+    return {
+      mes: it.mes,
+      nomeMes: it.nomeMes,
+      pesoPercentual,
+      valorMeta,
+    };
+  });
+}
+
+// Motor determinístico resiliente baseado em regras matemáticas estritas (ERP/POS compliant)
 function calcularMetasDeterministicamente({
   anoReferencia,
   metaAnualTotal,
@@ -35,91 +126,129 @@ function calcularMetasDeterministicamente({
   valoresManuais?: number[];
   taxaCrescimentoPercentual?: number;
 }) {
-  const monthNames = [
-    'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
-    'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'
-  ];
-
-  let totalMeta = metaAnualTotal;
-  const metasMensais = [];
+  let totalMeta = Math.max(0, metaAnualTotal);
+  let metasMensais: { mes: number; nomeMes: string; pesoPercentual: number; valorMeta: number }[] = [];
 
   if (estrategia === 'MANUAL') {
-    // "MANUAL": Aceita os valores definidos diretamente pelo operador para cada mês e apenas consolida a meta anual total.
+    // "MANUAL": Aceita valores definidos pelo operador e consolida o total
     const valores = Array.isArray(valoresManuais) && valoresManuais.length === 12
-      ? valoresManuais.map((v) => Number(v) || 0)
+      ? valoresManuais.map((v) => Math.max(0, Number(v) || 0))
       : (Array.isArray(historicoAnoAnterior) && historicoAnoAnterior.length === 12
-          ? historicoAnoAnterior.map((v) => Number(v) || 0)
-          : new Array(12).fill(Number((totalMeta / 12).toFixed(2))));
+          ? historicoAnoAnterior.map((v) => Math.max(0, Number(v) || 0))
+          : new Array(12).fill(fromCents(Math.floor(toCents(totalMeta) / 12))));
 
-    totalMeta = valores.reduce((acc, v) => acc + v, 0);
+    const totalCents = valores.reduce((acc, v) => acc + toCents(v), 0);
+    totalMeta = fromCents(totalCents);
 
-    for (let i = 0; i < 12; i++) {
-      const valor = Number((valores[i] || 0).toFixed(2));
-      const peso = totalMeta > 0 ? Number(((valor / totalMeta) * 100).toFixed(2)) : Number((100 / 12).toFixed(2));
-      metasMensais.push({
+    metasMensais = MONTH_NAMES.map((nomeMes, i) => {
+      const valor = valores[i] || 0;
+      const peso = totalMeta > 0 ? Number(((valor / totalMeta) * 100).toFixed(2)) : 0;
+      return {
         mes: i + 1,
-        nomeMes: monthNames[i],
+        nomeMes,
         pesoPercentual: peso,
         valorMeta: valor,
-      });
-    }
+      };
+    });
   } else if (estrategia === 'HISTORICO') {
-    // "HISTORICO": Puxa o array de vendas reais passadas e projeta proporcionalmente sobre a nova meta.
-    // REGRA: Se a empresa não tiver histórico (valores zerados ou inexistentes), deve ficar ZERO.
+    // "HISTORICO": Projeta proporcionalmente sobre histórico. Se histórico = 0, meta = 0.
     const hist = Array.isArray(historicoAnoAnterior) && historicoAnoAnterior.length === 12
-      ? historicoAnoAnterior.map((v) => Number(v) || 0)
+      ? historicoAnoAnterior.map((v) => Math.max(0, Number(v) || 0))
       : new Array(12).fill(0);
-    const somaHistorico = hist.reduce((acc, v) => acc + (Number(v) || 0), 0);
+    const somaHistCents = hist.reduce((acc, v) => acc + toCents(v), 0);
 
-    if (somaHistorico === 0) {
-      // Empresa sem histórico: todas as metas mensais e a meta anual projetada ficam a ZERO.
+    if (somaHistCents === 0 || totalMeta === 0) {
       totalMeta = 0;
-      for (let i = 0; i < 12; i++) {
-        metasMensais.push({
-          mes: i + 1,
-          nomeMes: monthNames[i],
-          pesoPercentual: 0,
-          valorMeta: 0,
-        });
-      }
+      metasMensais = MONTH_NAMES.map((nomeMes, i) => ({
+        mes: i + 1,
+        nomeMes,
+        pesoPercentual: 0,
+        valorMeta: 0,
+      }));
     } else {
-      for (let i = 0; i < 12; i++) {
-        const vHist = hist[i] || 0;
-        const peso = Number(((vHist / somaHistorico) * 100).toFixed(2));
-        const valor = Number(((vHist / somaHistorico) * totalMeta).toFixed(2));
-        metasMensais.push({
+      const totalCents = toCents(totalMeta);
+      let centsAlocados = 0;
+      const calculados = MONTH_NAMES.map((nomeMes, i) => {
+        const hCents = toCents(hist[i] || 0);
+        const prop = hCents / somaHistCents;
+        const exato = totalCents * prop;
+        const base = Math.floor(exato);
+        centsAlocados += base;
+        return {
           mes: i + 1,
-          nomeMes: monthNames[i],
-          pesoPercentual: peso,
-          valorMeta: valor,
-        });
+          nomeMes,
+          base,
+          resto: exato - base,
+        };
+      });
+
+      let restoCents = totalCents - centsAlocados;
+      const ordenados = [...calculados].sort((a, b) => b.resto - a.resto);
+      for (let i = 0; i < restoCents && i < ordenados.length; i++) {
+        ordenados[i].base += 1;
       }
+
+      metasMensais = calculados.map((c) => ({
+        mes: c.mes,
+        nomeMes: c.nomeMes,
+        pesoPercentual: Number(((c.base / totalCents) * 100).toFixed(2)),
+        valorMeta: fromCents(c.base),
+      }));
+
+      metasMensais = reconciliarCentavos(metasMensais, totalMeta);
     }
   } else if (estrategia === 'CRESCIMENTO' && historicoAnoAnterior && historicoAnoAnterior.length === 12) {
-    const taxa = (taxaCrescimentoPercentual || 10) / 100;
-    const valoresComCrescimento = historicoAnoAnterior.map((v) => v * (1 + taxa));
-    totalMeta = valoresComCrescimento.reduce((acc, v) => acc + v, 0);
+    const taxa = 1 + Math.max(-1, (taxaCrescimentoPercentual || 10) / 100);
+    const histSanitizado = historicoAnoAnterior.map((v) => Math.max(0, Number(v) || 0));
+    const somaHist = histSanitizado.reduce((acc, v) => acc + v, 0);
 
-    for (let i = 0; i < 12; i++) {
-      const valor = Number(valoresComCrescimento[i].toFixed(2));
-      const peso = totalMeta > 0 ? Number(((valor / totalMeta) * 100).toFixed(2)) : 8.33;
-      metasMensais.push({
+    if (somaHist === 0) {
+      totalMeta = 0;
+      metasMensais = MONTH_NAMES.map((nomeMes, i) => ({
         mes: i + 1,
-        nomeMes: monthNames[i],
-        pesoPercentual: peso,
-        valorMeta: valor,
-      });
+        nomeMes,
+        pesoPercentual: 0,
+        valorMeta: 0,
+      }));
+    } else {
+      const mesesCents = histSanitizado.map((v) => Math.round(toCents(v) * taxa));
+      const totalCents = mesesCents.reduce((acc, c) => acc + c, 0);
+      totalMeta = fromCents(totalCents);
+
+      metasMensais = MONTH_NAMES.map((nomeMes, i) => ({
+        mes: i + 1,
+        nomeMes,
+        pesoPercentual: totalCents > 0 ? Number(((mesesCents[i] / totalCents) * 100).toFixed(2)) : 8.33,
+        valorMeta: fromCents(mesesCents[i]),
+      }));
+
+      metasMensais = reconciliarCentavos(metasMensais, totalMeta);
     }
   } else {
-    // "LINEAR": Divide a meta anual igualmente por 12.
-    const valorMes = Number((totalMeta / 12).toFixed(2));
-    for (let i = 0; i < 12; i++) {
-      metasMensais.push({
+    // "LINEAR": Divisão rigorosa em 12 meses com rateio de centavos perfeitamente equilibrado
+    const totalCents = toCents(totalMeta);
+    if (totalCents === 0) {
+      metasMensais = MONTH_NAMES.map((nomeMes, i) => ({
         mes: i + 1,
-        nomeMes: monthNames[i],
-        pesoPercentual: Number((100 / 12).toFixed(2)),
-        valorMeta: valorMes,
+        nomeMes,
+        pesoPercentual: 0,
+        valorMeta: 0,
+      }));
+    } else {
+      const baseCents = Math.floor(totalCents / 12);
+      const remainderCents = totalCents % 12;
+
+      metasMensais = MONTH_NAMES.map((nomeMes, i) => {
+        const itemCents = baseCents + (i < remainderCents ? 1 : 0);
+        return {
+          mes: i + 1,
+          nomeMes,
+          pesoPercentual: Number(((itemCents / totalCents) * 100).toFixed(2)),
+          valorMeta: fromCents(itemCents),
+        };
       });
+
+      metasMensais = reconciliarCentavos(metasMensais, totalMeta);
     }
   }
 
@@ -143,23 +272,38 @@ async function startServer() {
     });
   });
 
-  // Commercial Targets (Metas Comerciais) Engine with Gemini 2.5 Flash
+  // Commercial Targets (Metas Comerciais) Engine with Gemini 3.8 / 3.6 Flash
   app.post('/api/metas/gerar', async (req, res) => {
     try {
-      const body = req.body || {};
-      const anoReferencia = Number(body.anoReferencia) || 2027;
-      const metaAnualTotal = Number(body.metaAnualTotal) || 1200000;
-      const estrategia: 'HISTORICO' | 'MANUAL' | 'LINEAR' | 'CRESCIMENTO' = body.estrategia || 'HISTORICO';
-      const historicoAnoAnterior: number[] = Array.isArray(body.historicoAnoAnterior) && body.historicoAnoAnterior.length === 12
-        ? body.historicoAnoAnterior.map(Number)
+      // 1. Validação estrita de schema de entrada com Zod
+      const parseResult = SalesGoalsInputSchema.safeParse(req.body || {});
+      if (!parseResult.success) {
+        return res.status(400).json({
+          error: 'Parâmetros de cálculo inválidos',
+          detalhes: parseResult.error.format(),
+        });
+      }
+
+      const {
+        anoReferencia,
+        metaAnualTotal,
+        estrategia,
+        historicoAnoAnterior: rawHist,
+        valoresManuais: rawManuais,
+        valoresMensais: rawMensais,
+        taxaCrescimentoPercentual,
+      } = parseResult.data;
+
+      const historicoAnoAnterior: number[] = Array.isArray(rawHist) && rawHist.length === 12
+        ? rawHist.map((v) => Math.max(0, Number(v) || 0))
         : new Array(12).fill(0);
       const somaHist = historicoAnoAnterior.reduce((acc, v) => acc + (Number(v) || 0), 0);
-      const valoresManuais: number[] | undefined = Array.isArray(body.valoresManuais) && body.valoresManuais.length === 12
-        ? body.valoresManuais.map(Number)
-        : (Array.isArray(body.valoresMensais) && body.valoresMensais.length === 12
-            ? body.valoresMensais.map(Number)
+
+      const valoresManuais: number[] | undefined = Array.isArray(rawManuais) && rawManuais.length === 12
+        ? rawManuais.map((v) => Math.max(0, Number(v) || 0))
+        : (Array.isArray(rawMensais) && rawMensais.length === 12
+            ? rawMensais.map((v) => Math.max(0, Number(v) || 0))
             : undefined);
-      const taxaCrescimentoPercentual = body.taxaCrescimentoPercentual ? Number(body.taxaCrescimentoPercentual) : undefined;
 
       const ai = getGenAI();
 
@@ -184,7 +328,8 @@ Instrução: Aceite os valores definidos diretamente pelo operador para cada mê
             contentsPrompt += `\nInstrução: Divida a meta anual desejada (${metaAnualTotal}) igualmente por 12 meses (peso percentual de 8,33% por mês).`;
           }
 
-          const modelsToTry = ['gemini-2.5-flash', 'gemini-3.6-flash', 'gemini-flash-latest', 'gemini-3.8-flash', 'gemini-3.1-flash-lite'];
+          // Prioritize stable general release flash models; handle temporary high demand (503) gracefully
+          const modelsToTry = ['gemini-flash-latest', 'gemini-3.6-flash', 'gemini-3.8-flash', 'gemini-3.1-flash-lite'];
           let rawText = '';
           let modelUsed = '';
           let lastErr: any = null;
@@ -228,7 +373,12 @@ Instrução: Aceite os valores definidos diretamente pelo operador para cada mê
               }
             } catch (err: any) {
               lastErr = err;
-              console.warn(`Model ${modelName} failed, trying next model:`, err?.message || err);
+              const isHighDemand = err?.status === 'UNAVAILABLE' || err?.code === 503 || err?.message?.includes('high demand') || err?.message?.includes('503');
+              if (isHighDemand) {
+                console.log(`[Gemini Engine] Model ${modelName} is temporarily experiencing high demand (503). Gracefully switching to next model in pool...`);
+              } else {
+                console.log(`[Gemini Engine] Model ${modelName} unavailable (${err?.status || err?.code || 'error'}), trying next model in pool...`);
+              }
             }
           }
 
@@ -243,7 +393,19 @@ Instrução: Aceite os valores definidos diretamente pelo operador para cada mê
                   m.pesoPercentual = 0;
                 });
               }
+            } else if (Array.isArray(dadosMetas.metasMensais) && dadosMetas.metasMensais.length === 12) {
+              // Conciliação contábil de centavos mesmo no retorno da IA
+              dadosMetas.metasMensais = reconciliarCentavos(
+                dadosMetas.metasMensais.map((m: any, idx: number) => ({
+                  mes: idx + 1,
+                  nomeMes: MONTH_NAMES[idx],
+                  pesoPercentual: Number(m.pesoPercentual) || 0,
+                  valorMeta: Math.max(0, Number(m.valorMeta) || 0),
+                })),
+                dadosMetas.metaAnualTotal || metaAnualTotal
+              );
             }
+
             return res.json({
               ...dadosMetas,
               anoReferencia: dadosMetas.anoReferencia || anoReferencia,
@@ -252,9 +414,9 @@ Instrução: Aceite os valores definidos diretamente pelo operador para cada mê
             });
           }
 
-          throw lastErr || new Error('No Gemini model available');
+          throw lastErr || new Error('All Gemini model endpoints busy');
         } catch (geminiError: any) {
-          console.warn('Gemini generateContent error, falling back to deterministic calculation:', geminiError?.message || geminiError);
+          console.log('[Gemini Engine] AI endpoints temporarily unavailable, seamlessly resolving via mathematical deterministic calculation:', geminiError?.message || geminiError);
           // Fallback to local calculation engine
           const fallbackData = calcularMetasDeterministicamente({
             anoReferencia,
@@ -266,7 +428,7 @@ Instrução: Aceite os valores definidos diretamente pelo operador para cada mê
           });
           return res.json({
             ...fallbackData,
-            sourceFallbackReason: geminiError?.message || 'API key limit or network error',
+            sourceFallbackReason: geminiError?.message || 'High demand or network status',
           });
         }
       }
@@ -284,7 +446,7 @@ Instrução: Aceite os valores definidos diretamente pelo operador para cada mê
       return res.json({
         ...localResult,
         source: 'engine_matematico_local',
-        note: 'Calculado via motor matemático local (configure GEMINI_API_KEY no menu Settings para ativação direta do Gemini 2.5 Flash)',
+        note: 'Calculado via motor matemático local conciliado ao centavo (configure GEMINI_API_KEY no menu Settings para ativação direta do Gemini 3.8 / 3.6 Flash)',
       });
     } catch (err: any) {
       console.error('Error generating commercial targets:', err);
@@ -295,7 +457,10 @@ Instrução: Aceite os valores definidos diretamente pelo operador para cada mê
   // Vite middleware for development vs static build in production
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        hmr: false,
+      },
       appType: 'spa',
     });
     app.use(vite.middlewares);

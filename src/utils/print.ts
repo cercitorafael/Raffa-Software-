@@ -310,8 +310,12 @@ export function printThermalReceipt(sale: Sale, company: Company, store: Store):
           : p.method === 'mbway'
           ? 'M-Pesa / Móvel'
           : p.method
+      }:</span>
+      <span style="font-weight: bold;">${formatCurrency(p.amount, company.currency)}${
+        p.tenderedAmount && p.tenderedAmount > p.amount
+          ? ` <span style="font-weight: normal; font-size: 9px; color: #444;">(Entregue: ${formatCurrency(p.tenderedAmount, company.currency)})</span>`
+          : ''
       }</span>
-      <span style="font-weight: bold;">${formatCurrency(p.amount, company.currency)}</span>
     </div>
   `
     )
@@ -642,8 +646,12 @@ export async function downloadReceiptPdf(sale: Sale, company: Company, store: St
     doc.text('PAGAMENTO:', 4, y);
     y += 3.5;
     sale.payments.forEach((p) => {
-      doc.text(`- ${p.method.toUpperCase()}:`, 4, y);
-      doc.text(formatCurrency(p.amount, company.currency), pageWidth - 4, y, { align: 'right' });
+      const pLabel = `- ${p.method.toUpperCase()}:`;
+      doc.text(pLabel, 4, y);
+      const payStr = p.tenderedAmount && p.tenderedAmount > p.amount
+        ? `${formatCurrency(p.amount, company.currency)} (Entr: ${formatCurrency(p.tenderedAmount, company.currency)})`
+        : formatCurrency(p.amount, company.currency);
+      doc.text(payStr, pageWidth - 4, y, { align: 'right' });
       y += 3.5;
     });
 

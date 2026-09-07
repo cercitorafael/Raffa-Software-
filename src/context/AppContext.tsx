@@ -353,7 +353,7 @@ export interface AppContextType {
   setSelectedCustomer: (c: Customer | null) => void;
   clearCart: () => void;
   completeSale: (
-    paymentMethods: { method: string; amount: number; reference?: string }[],
+    paymentMethods: PaymentRecord[],
     invoiceType?: InvoiceType,
     customerTaxNumber?: string,
     customerName?: string
@@ -805,7 +805,32 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [salesHistory, setSalesHistory] = useState<Sale[]>(() => {
     const stored = loadFromStorage<Sale[]>('salesHistory', initialSales);
-    return Array.isArray(stored) ? stored : initialSales;
+    const rawSales = Array.isArray(stored) ? stored : initialSales;
+    // Auto-heal any sales where payments recorded the cash tendered instead of invoice amount
+    return rawSales.map((s) => {
+      if (!Array.isArray(s.payments) || s.payments.length === 0) return s;
+      let hasFixedPayment = false;
+      const healedPayments = s.payments.map((p) => {
+        if (s.total > 0 && Number(p.amount) > s.total && p.method === 'dinheiro') {
+          hasFixedPayment = true;
+          return {
+            ...p,
+            tenderedAmount: p.tenderedAmount || Number(p.amount),
+            changeAmount: p.changeAmount !== undefined ? p.changeAmount : Number((Number(p.amount) - s.total).toFixed(2)),
+            amount: s.total,
+          };
+        }
+        return p;
+      });
+      if (hasFixedPayment) {
+        return {
+          ...s,
+          changeAmount: s.changeAmount !== undefined ? s.changeAmount : Number((Number(s.payments[0].amount) - s.total).toFixed(2)),
+          payments: healedPayments,
+        };
+      }
+      return s;
+    });
   });
   const [lastCompletedSale, setLastCompletedSale] = useState<Sale | null>(null);
 
@@ -4083,7 +4108,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       // Pagamentos
       if (Array.isArray(s.payments) && s.payments.length > 0) {
         s.payments.forEach((p) => {
-          const amt = mult * (Number(p.amount) || 0);
+          // If a payment was recorded with amount > s.total, cap it to s.total to prevent shift cash inflation
+          const rawAmt = Number(p.amount) || 0;
+          const safeAmt = s.total > 0 && rawAmt > s.total ? s.total : rawAmt;
+          const amt = mult * safeAmt;
           const method = (p.method || '').toLowerCase();
           if (method === 'dinheiro' || method === 'numerario') {
             totalCash += amt;
@@ -4320,7 +4348,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const completeSale = async (
-    paymentMethods: { method: string; amount: number; reference?: string }[],
+    paymentMethods: PaymentRecord[],
     invoiceType: InvoiceType = 'FS',
     customerTaxNumber?: string,
     customerName?: string
@@ -4354,7 +4382,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     const taxTotal = Object.values(taxSummary).reduce((acc, t) => acc + t.tax, 0);
     const totalPaid = paymentMethods.reduce((sum, p) => sum + Number(p.amount || 0), 0);
-    const changeAmount = Math.max(0, totalPaid - finalTotal);
+    const totalTendered = paymentMethods.reduce(
+      (sum, p) => sum + Number(p.tenderedAmount !== undefined ? p.tenderedAmount : p.amount || 0),
+      0
+    );
+    const explicitChange = paymentMethods.reduce((sum, p) => sum + Number(p.changeAmount || 0), 0);
+    const changeAmount = Math.max(0, explicitChange || Number((totalTendered - finalTotal).toFixed(2)) || Number((totalPaid - finalTotal).toFixed(2)));
 
     const compId = currentCompany?.id || 'comp-1';
     const storeId = currentStore?.id || 'store-1';
@@ -4381,13 +4414,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       taxTotal,
       total: finalTotal,
       changeAmount,
-      payments: paymentMethods.map((p) => ({
-        id: `pay-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
-        method: p.method as any,
-        amount: Number(p.amount || 0),
-        reference: p.reference,
-        status: 'concluido',
-      })),
+      payments: paymentMethods.map((p) => {
+        const rawAmount = Number(p.amount || 0);
+        // Ensure applied amount strictly matches invoice value, never inflated by tendered cash
+        const safeAmount = finalTotal > 0 ? Math.min(rawAmount, finalTotal) : rawAmount;
+        const pTendered = p.tenderedAmount !== undefined ? Number(p.tenderedAmount) : (p.method === 'dinheiro' && rawAmount > finalTotal ? rawAmount : safeAmount);
+        const pChange = p.changeAmount !== undefined ? Number(p.changeAmount) : Math.max(0, Number((pTendered - safeAmount).toFixed(2)));
+
+        return {
+          id: p.id || `pay-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+          method: p.method as any,
+          amount: safeAmount,
+          tenderedAmount: pTendered,
+          changeAmount: pChange,
+          reference: p.reference,
+          status: 'concluido',
+        };
+      }),
       customerNif: customerTaxNumber || selectedCustomer?.taxNumber || '999999990',
       customerTaxNumber: customerTaxNumber || selectedCustomer?.taxNumber || '999999990',
       customerName: customerName || selectedCustomer?.name || 'Consumidor Final',
@@ -4411,14 +4454,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     // 2. Update Active Shift stats
     if (activeShift) {
+      // For cash in drawer, add net cash that stays in drawer for this sale (capped at finalTotal)
       const cashAmt = paymentMethods
-        .filter((p) => p.method === 'dinheiro')
-        .reduce((sum, p) => sum + Number(p.amount || 0), 0);
+        .filter((p) => (p.method as string) === 'dinheiro' || (p.method as string) === 'numerario')
+        .reduce((sum, p) => sum + Math.min(Number(p.amount || 0), finalTotal), 0);
       const cardAmt = paymentMethods
-        .filter((p) => p.method === 'cartao')
+        .filter((p) => (p.method as string) === 'cartao' || (p.method as string) === 'tpa')
         .reduce((sum, p) => sum + Number(p.amount || 0), 0);
       const mbwayAmt = paymentMethods
-        .filter((p) => p.method === 'mbway' || p.method === 'mpesa' || p.method === 'emola')
+        .filter((p) => (p.method as string) === 'mbway' || (p.method as string) === 'mpesa' || (p.method as string) === 'emola')
+        .reduce((sum, p) => sum + Number(p.amount || 0), 0);
+      const transferAmt = paymentMethods
+        .filter((p) => (p.method as string) === 'transferencia')
+        .reduce((sum, p) => sum + Number(p.amount || 0), 0);
+      const voucherAmt = paymentMethods
+        .filter((p) => (p.method as string) === 'vale' || (p.method as string) === 'voucher')
         .reduce((sum, p) => sum + Number(p.amount || 0), 0);
 
       const updatedShift: CashShift = {
@@ -4427,6 +4477,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         totalCash: Number(activeShift.totalCash || 0) + cashAmt,
         totalCards: Number(activeShift.totalCards || 0) + cardAmt,
         totalMbway: Number(activeShift.totalMbway || 0) + mbwayAmt,
+        totalTransfers: Number(activeShift.totalTransfers || 0) + transferAmt,
+        totalVouchers: Number(activeShift.totalVouchers || 0) + voucherAmt,
       };
 
       setActiveShift(updatedShift);

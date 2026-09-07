@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import {
   Target,
   Sparkles,
@@ -26,6 +26,12 @@ import {
   BarChart3,
   CheckSquare,
   Activity,
+  Save,
+  Edit3,
+  Sliders,
+  Eye,
+  RefreshCw,
+  ShieldAlert,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -39,6 +45,14 @@ import {
   CartesianGrid,
 } from 'recharts';
 import * as XLSX from 'xlsx';
+import {
+  distribuirMetaLinear,
+  distribuirMetaSazonal,
+  distribuirMetaManual,
+  reconciliarCentavos,
+  toCents,
+  fromCents,
+} from '../../utils/goalCalculations';
 
 export interface MonthlyGoalItem {
   mes: number;
@@ -129,6 +143,262 @@ export const AnalyticsSalesGoalsTab: React.FC<AnalyticsSalesGoalsTabProps> = ({
   const [showDartModal, setShowDartModal] = useState<boolean>(false);
   const [copiedDart, setCopiedDart] = useState<boolean>(false);
 
+  // Persistence and view mode state
+  const STORAGE_KEY_PREFIX = 'agro_sales_goals_v2_';
+  const BACKUP_KEY_PREFIX = 'agro_sales_goals_backup_';
+
+  const [lastSavedTimestamp, setLastSavedTimestamp] = useState<string | null>(null);
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
+  const [isManuallyCustomized, setIsManuallyCustomized] = useState<boolean>(false);
+  const [chartViewMode, setChartViewMode] = useState<'acompanhamento' | 'planeamento'>('acompanhamento');
+
+  // Proteção contra sobrescrita acidental
+  const [hasManualBackup, setHasManualBackup] = useState<boolean>(false);
+  const [showOverwriteModal, setShowOverwriteModal] = useState<boolean>(false);
+  const [pendingAction, setPendingAction] = useState<{
+    titulo: string;
+    descricao: string;
+    executar: () => void;
+  } | null>(null);
+
+  const saveDebounceTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Hydrate persisted goals on mount or when anoReferencia changes
+  useEffect(() => {
+    try {
+      // Verifica se existe backup manual salvo para este ano
+      const hasBackup = Boolean(localStorage.getItem(`${BACKUP_KEY_PREFIX}${anoReferencia}`));
+      setHasManualBackup(hasBackup);
+
+      const raw = localStorage.getItem(`${STORAGE_KEY_PREFIX}${anoReferencia}`);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && Array.isArray(parsed.metasMensais) && parsed.metasMensais.length === 12) {
+          setMetaAnualTotal(parsed.metaAnualTotal || 1200000);
+          if (parsed.estrategia) setEstrategia(parsed.estrategia);
+          if (Array.isArray(parsed.valoresManuais)) setValoresManuais(parsed.valoresManuais);
+          if (Array.isArray(parsed.historicoValores)) setHistoricoValores(parsed.historicoValores);
+          if (Array.isArray(parsed.vendasRealizadas)) setVendasRealizadas(parsed.vendasRealizadas);
+          setResultado({
+            anoReferencia,
+            metaAnualTotal: parsed.metaAnualTotal,
+            metasMensais: parsed.metasMensais,
+            source: parsed.source || 'Ajuste Manual Salvo',
+            estrategia: parsed.estrategia || 'MANUAL',
+          });
+          setLastSavedTimestamp(parsed.savedAt || null);
+          setLastExecutionTime(`Metas salvas carregadas (${parsed.savedAt || 'local'})`);
+          setIsManuallyCustomized(Boolean(parsed.isManuallyEdited || parsed.estrategia === 'MANUAL'));
+        }
+      }
+    } catch (e) {
+      console.error('Erro ao ler metas do localStorage:', e);
+    }
+  }, [anoReferencia]);
+
+  // Limpa o timer de debounce se o componente for desmontado
+  useEffect(() => {
+    return () => {
+      if (saveDebounceTimerRef.current) {
+        clearTimeout(saveDebounceTimerRef.current);
+      }
+    };
+  }, []);
+
+  // Cria backup de segurança das edições manuais
+  const criarBackupManual = () => {
+    try {
+      const agora = new Date();
+      const dataHoraStr = agora.toLocaleDateString('pt-PT') + ' às ' + agora.toLocaleTimeString('pt-PT');
+      const backupData = {
+        anoReferencia,
+        metaAnualTotal,
+        estrategia,
+        valoresManuais: [...valoresManuais],
+        vendasRealizadas: [...vendasRealizadas],
+        historicoValores: [...historicoValores],
+        resultado,
+        savedAt: dataHoraStr,
+      };
+      localStorage.setItem(`${BACKUP_KEY_PREFIX}${anoReferencia}`, JSON.stringify(backupData));
+      setHasManualBackup(true);
+    } catch (e) {
+      console.error('Erro ao criar backup manual:', e);
+    }
+  };
+
+  // Restaura o backup manual gravado
+  const restaurarBackupManual = () => {
+    try {
+      const raw = localStorage.getItem(`${BACKUP_KEY_PREFIX}${anoReferencia}`);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (parsed) {
+        if (Array.isArray(parsed.valoresManuais)) setValoresManuais(parsed.valoresManuais);
+        if (Array.isArray(parsed.vendasRealizadas)) setVendasRealizadas(parsed.vendasRealizadas);
+        if (Array.isArray(parsed.historicoValores)) setHistoricoValores(parsed.historicoValores);
+        if (parsed.resultado) setResultado(parsed.resultado);
+        if (parsed.metaAnualTotal) setMetaAnualTotal(parsed.metaAnualTotal);
+        setEstrategia('MANUAL');
+        setIsManuallyCustomized(true);
+
+        salvarMetasLocalmenteSincrono(
+          parsed.resultado,
+          parsed.valoresManuais,
+          parsed.vendasRealizadas,
+          parsed.historicoValores,
+          anoReferencia,
+          'MANUAL',
+          `Rascunho manual restaurado com sucesso (${parsed.savedAt || 'backup'}).`
+        );
+      }
+    } catch (e) {
+      console.error('Erro ao restaurar backup:', e);
+    }
+  };
+
+  // Gravação síncrona imediata (botão explícito ou restauração)
+  const salvarMetasLocalmenteSincrono = (
+    resAtual: GeneratedGoalsResponse | null,
+    manuais: number[],
+    realizadas: number[],
+    hist: number[],
+    ano: number,
+    strat: SalesGoalStrategy,
+    msgNotif?: string
+  ) => {
+    if (saveDebounceTimerRef.current) {
+      clearTimeout(saveDebounceTimerRef.current);
+    }
+    try {
+      setSaveStatus('saving');
+      const agora = new Date();
+      const dataHoraStr = agora.toLocaleDateString('pt-PT') + ' às ' + agora.toLocaleTimeString('pt-PT');
+      const dados = {
+        anoReferencia: ano,
+        metaAnualTotal: resAtual?.metaAnualTotal || metaAnualTotal,
+        estrategia: strat,
+        metasMensais: resAtual?.metasMensais || [],
+        valoresManuais: manuais,
+        historicoValores: hist,
+        vendasRealizadas: realizadas,
+        savedAt: dataHoraStr,
+        source: resAtual?.source || 'Manual / Ajuste Local',
+        isManuallyEdited: true,
+      };
+      localStorage.setItem(`${STORAGE_KEY_PREFIX}${ano}`, JSON.stringify(dados));
+      setLastSavedTimestamp(dataHoraStr);
+      setSaveStatus('saved');
+      setIsManuallyCustomized(true);
+      if (msgNotif && notify) {
+        notify(msgNotif, 'success');
+      }
+    } catch (e) {
+      console.error('Erro ao salvar metas no localStorage:', e);
+      setSaveStatus('idle');
+    }
+  };
+
+  // Gravação com debounce de 400ms para evitar microbloqueios em inputs rápidos (POS/ERP Architecture)
+  const salvarMetasLocalmenteDebounced = (
+    resAtual: GeneratedGoalsResponse | null,
+    manuais: number[],
+    realizadas: number[],
+    hist: number[],
+    ano: number,
+    strat: SalesGoalStrategy
+  ) => {
+    setSaveStatus('saving');
+    if (saveDebounceTimerRef.current) {
+      clearTimeout(saveDebounceTimerRef.current);
+    }
+
+    saveDebounceTimerRef.current = setTimeout(() => {
+      try {
+        const agora = new Date();
+        const dataHoraStr = agora.toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        const dados = {
+          anoReferencia: ano,
+          metaAnualTotal: resAtual?.metaAnualTotal || metaAnualTotal,
+          estrategia: strat,
+          metasMensais: resAtual?.metasMensais || [],
+          valoresManuais: manuais,
+          historicoValores: hist,
+          vendasRealizadas: realizadas,
+          savedAt: dataHoraStr,
+          source: resAtual?.source || 'Manual / Ajuste Local',
+          isManuallyEdited: true,
+        };
+        localStorage.setItem(`${STORAGE_KEY_PREFIX}${ano}`, JSON.stringify(dados));
+        setLastSavedTimestamp(dataHoraStr);
+        setSaveStatus('saved');
+        setIsManuallyCustomized(true);
+      } catch (e) {
+        console.error('Erro ao persistir debounced no localStorage:', e);
+        setSaveStatus('idle');
+      }
+    }, 400);
+  };
+
+  // Edição direta de meta mensal com aritmética rigorosa ao centavo (Zero Penny Discrepancy)
+  const handleAlterarMetaMes = (idx: number, novoValor: number) => {
+    const val = Math.max(0, novoValor);
+    const nextValoresManuais = [...valoresManuais];
+    nextValoresManuais[idx] = val;
+    setValoresManuais(nextValoresManuais);
+
+    // Motor de cálculo de domínio puro com reconciliação contábil
+    const { totalMetaAnual, metasMensais } = distribuirMetaManual(nextValoresManuais);
+
+    const novoResultado: GeneratedGoalsResponse = {
+      anoReferencia,
+      metaAnualTotal,
+      metasMensais,
+      source: 'Ajuste Manual Salvo',
+      estrategia: 'MANUAL',
+    };
+
+    setResultado(novoResultado);
+    setMetaAnualTotal(totalMetaAnual);
+    setEstrategia('MANUAL');
+    setIsManuallyCustomized(true);
+
+    salvarMetasLocalmenteDebounced(novoResultado, nextValoresManuais, vendasRealizadas, historicoValores, anoReferencia, 'MANUAL');
+  };
+
+  // Edição direta de vendas realizadas com debounce
+  const handleAlterarRealizadoMes = (idx: number, novoValor: number) => {
+    const val = Math.max(0, novoValor);
+    const nextRealizadas = [...vendasRealizadas];
+    nextRealizadas[idx] = val;
+    setVendasRealizadas(nextRealizadas);
+    salvarMetasLocalmenteDebounced(resultado, valoresManuais, nextRealizadas, historicoValores, anoReferencia, estrategia);
+  };
+
+  const handleSalvarManualExplicit = () => {
+    salvarMetasLocalmenteSincrono(
+      resultado,
+      valoresManuais,
+      vendasRealizadas,
+      historicoValores,
+      anoReferencia,
+      estrategia,
+      `Metas de ${anoReferencia} guardadas permanentemente com sucesso!`
+    );
+  };
+
+  const resetarParaPadrao = () => {
+    try {
+      localStorage.removeItem(`${STORAGE_KEY_PREFIX}${anoReferencia}`);
+      setLastSavedTimestamp(null);
+      setIsManuallyCustomized(false);
+      carregarExemploPadrao();
+      if (notify) notify('Metas restauradas para a configuração padrão.', 'info');
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
   // Sum of current historical inputs
   const totalHistorico = useMemo(() => {
     return historicoValores.reduce((acc, v) => acc + (Number(v) || 0), 0);
@@ -168,6 +438,26 @@ export const AnalyticsSalesGoalsTab: React.FC<AnalyticsSalesGoalsTabProps> = ({
   const superavitTotal = useMemo(() => {
     return Math.max(0, totalRealizado - metaAnualEfetiva);
   }, [totalRealizado, metaAnualEfetiva]);
+
+  const { mesesAtingidos, mesesEmFalta, mesesSemVendas } = useMemo(() => {
+    if (!resultado?.metasMensais) return { mesesAtingidos: 0, mesesEmFalta: 0, mesesSemVendas: 0 };
+    let atingidos = 0;
+    let emFalta = 0;
+    let semVendas = 0;
+    resultado.metasMensais.forEach((m, idx) => {
+      const real = vendasRealizadas[idx] || 0;
+      if (m.valorMeta <= 0) return;
+      if (real === 0) {
+        semVendas++;
+        emFalta++;
+      } else if (real >= m.valorMeta) {
+        atingidos++;
+      } else {
+        emFalta++;
+      }
+    });
+    return { mesesAtingidos: atingidos, mesesEmFalta: emFalta, mesesSemVendas: semVendas };
+  }, [resultado, vendasRealizadas]);
 
   // Realized Sales Actions
   const puxarVendasReaisERPParaRealizado = () => {
@@ -259,8 +549,8 @@ export const AnalyticsSalesGoalsTab: React.FC<AnalyticsSalesGoalsTabProps> = ({
     }
   };
 
-  // Call the server API endpoint that integrates GoogleGenAI / Gemini
-  const handleGerarMetas = async () => {
+  // Executa o cálculo via API com o Gemini AI ou fallback seguro do backend
+  const executarGerarMetas = async () => {
     setLoading(true);
     try {
       const effectiveMetaAnual = estrategia === 'MANUAL' ? totalManual : metaAnualTotal;
@@ -309,6 +599,46 @@ export const AnalyticsSalesGoalsTab: React.FC<AnalyticsSalesGoalsTabProps> = ({
       }
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Intercepta a geração para proteger alterações manuais salvas
+  const handleGerarMetas = () => {
+    if (isManuallyCustomized && estrategia === 'MANUAL') {
+      setPendingAction({
+        titulo: 'Substituir metas manuais pela projeção da IA?',
+        descricao: `Você possui metas mensais editadas manualmente para ${anoReferencia}. Recalcular agora substituirá esses valores pela projeção automática. Um backup de segurança será gravado automaticamente e poderá ser restaurado a qualquer momento.`,
+        executar: () => {
+          criarBackupManual();
+          executarGerarMetas();
+        },
+      });
+      setShowOverwriteModal(true);
+    } else {
+      executarGerarMetas();
+    }
+  };
+
+  // Intercepta a troca de estratégia para alertar sobre perdas de dados manuais
+  const solicitarMudancaEstrategia = (novaEstrategia: SalesGoalStrategy) => {
+    if (novaEstrategia === estrategia) return;
+
+    if (isManuallyCustomized && estrategia === 'MANUAL') {
+      setPendingAction({
+        titulo: `Mudar estratégia de distribuição para "${novaEstrategia}"?`,
+        descricao: `Você possui metas mensais personalizadas manualmente. Ao mudar para a estratégia "${novaEstrategia}", os valores serão recalculados de acordo com essa regra. Um backup dos seus valores manuais será mantido para restauração.`,
+        executar: () => {
+          criarBackupManual();
+          setEstrategia(novaEstrategia);
+          setIsManuallyCustomized(false);
+        },
+      });
+      setShowOverwriteModal(true);
+    } else {
+      setEstrategia(novaEstrategia);
+      if (novaEstrategia === 'MANUAL') {
+        setShowEditManual(true);
+      }
     }
   };
 
@@ -423,6 +753,38 @@ export const AnalyticsSalesGoalsTab: React.FC<AnalyticsSalesGoalsTabProps> = ({
           </div>
 
           <div className="flex flex-wrap items-center gap-2 self-start md:self-center">
+            {saveStatus === 'saving' && (
+              <span className="flex items-center space-x-1.5 px-2.5 py-1.5 bg-amber-500/15 text-amber-300 border border-amber-500/30 rounded-lg text-xs font-mono animate-pulse">
+                <Hourglass className="w-3.5 h-3.5 text-amber-400 animate-spin" />
+                <span>A gravar...</span>
+              </span>
+            )}
+            {saveStatus !== 'saving' && lastSavedTimestamp && (
+              <span className="flex items-center space-x-1.5 px-2.5 py-1.5 bg-emerald-500/10 text-emerald-300 border border-emerald-500/25 rounded-lg text-xs font-mono">
+                <Check className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Salvo: {lastSavedTimestamp}</span>
+              </span>
+            )}
+            {hasManualBackup && (
+              <button
+                type="button"
+                onClick={restaurarBackupManual}
+                className="flex items-center space-x-1.5 px-3 py-2 bg-amber-950/40 hover:bg-amber-900/60 text-amber-300 border border-amber-600/40 rounded-lg text-xs font-semibold transition-all shadow cursor-pointer"
+                title="Restaurar backup anterior das metas manuais"
+              >
+                <RotateCcw className="w-3.5 h-3.5 text-amber-400" />
+                <span>Restaurar Rascunho Manual</span>
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={handleSalvarManualExplicit}
+              className="flex items-center space-x-1.5 px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold transition-all shadow cursor-pointer"
+              title="Salvar metas e vendas realizadas permanentemente no navegador"
+            >
+              <Save className="w-3.5 h-3.5" />
+              <span>Guardar Metas</span>
+            </button>
             <button
               onClick={() => {
                 const el = document.getElementById('painel-meta-anual');
@@ -443,12 +805,12 @@ export const AnalyticsSalesGoalsTab: React.FC<AnalyticsSalesGoalsTabProps> = ({
               <span>Código Dart (Flutter)</span>
             </button>
             <button
-              onClick={carregarExemploPadrao}
+              onClick={resetarParaPadrao}
               className="flex items-center space-x-1.5 px-3 py-2 bg-[#262626] hover:bg-[#303030] text-neutral-300 hover:text-white rounded-lg border border-[#3a3a3a] text-xs font-semibold transition-all cursor-pointer"
-              title="Recarregar parâmetros do exemplo: 2027, 1.200.000 MT, Histórico"
+              title="Restaurar parâmetros padrão e limpar alterações locais"
             >
               <RotateCcw className="w-3.5 h-3.5 text-[#c5a47e]" />
-              <span>Exemplo Padrão</span>
+              <span>Restaurar Padrão</span>
             </button>
             <button
               onClick={exportarParaExcel}
@@ -465,7 +827,7 @@ export const AnalyticsSalesGoalsTab: React.FC<AnalyticsSalesGoalsTabProps> = ({
         {/* Engine Calculation Rules summary */}
         <div className="mt-4 pt-4 border-t border-[#2d2822] grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
           <div
-            onClick={() => setEstrategia('HISTORICO')}
+            onClick={() => solicitarMudancaEstrategia('HISTORICO')}
             className={`p-3 rounded-xl border transition-all cursor-pointer ${
               estrategia === 'HISTORICO'
                 ? 'bg-[#c5a47e]/15 border-[#c5a47e]/50 ring-1 ring-[#c5a47e]/30'
@@ -487,10 +849,7 @@ export const AnalyticsSalesGoalsTab: React.FC<AnalyticsSalesGoalsTabProps> = ({
           </div>
 
           <div
-            onClick={() => {
-              setEstrategia('MANUAL');
-              setShowEditManual(true);
-            }}
+            onClick={() => solicitarMudancaEstrategia('MANUAL')}
             className={`p-3 rounded-xl border transition-all cursor-pointer ${
               estrategia === 'MANUAL'
                 ? 'bg-[#c5a47e]/15 border-[#c5a47e]/50 ring-1 ring-[#c5a47e]/30'
@@ -512,7 +871,7 @@ export const AnalyticsSalesGoalsTab: React.FC<AnalyticsSalesGoalsTabProps> = ({
           </div>
 
           <div
-            onClick={() => setEstrategia('LINEAR')}
+            onClick={() => solicitarMudancaEstrategia('LINEAR')}
             className={`p-3 rounded-xl border transition-all cursor-pointer ${
               estrategia === 'LINEAR'
                 ? 'bg-[#c5a47e]/15 border-[#c5a47e]/50 ring-1 ring-[#c5a47e]/30'
@@ -668,12 +1027,12 @@ export const AnalyticsSalesGoalsTab: React.FC<AnalyticsSalesGoalsTabProps> = ({
                 <button
                   type="button"
                   onClick={() => {
-                    const equalPart = Math.round(metaAnualTotal / 12);
-                    setValoresManuais(new Array(12).fill(equalPart));
-                    if (notify) notify(`Meta anual de ${formatCurrency(metaAnualTotal)} dividida igualmente nos 12 meses (${formatCurrency(equalPart)}/mês).`, 'success');
+                    const parcelas = distribuirMetaLinear(metaAnualTotal);
+                    setValoresManuais(parcelas.map((p) => p.valorMeta));
+                    if (notify) notify(`Meta anual de ${formatCurrency(metaAnualTotal)} dividida igualmente nos 12 meses com reconciliação contábil ao centavo.`, 'success');
                   }}
                   className="px-3 py-1.5 bg-emerald-950/60 hover:bg-emerald-900/80 text-emerald-200 border border-emerald-700/60 rounded-lg text-xs font-semibold transition-colors cursor-pointer"
-                  title="Dividir a meta anual total igualmente nos 12 meses"
+                  title="Dividir a meta anual total igualmente nos 12 meses com balanceamento exato de centavos"
                 >
                   Distribuir nos 12 Meses (1/12)
                 </button>
@@ -751,10 +1110,7 @@ export const AnalyticsSalesGoalsTab: React.FC<AnalyticsSalesGoalsTabProps> = ({
               value={estrategia}
               onChange={(e) => {
                 const next = e.target.value as SalesGoalStrategy;
-                setEstrategia(next);
-                if (next === 'MANUAL') {
-                  setShowEditManual(true);
-                }
+                solicitarMudancaEstrategia(next);
               }}
               className="w-full px-3 py-2 bg-[#1c1c1c] border border-[#333] rounded-lg text-white text-sm focus:border-[#c5a47e] focus:outline-none transition-colors cursor-pointer"
             >
@@ -851,12 +1207,12 @@ export const AnalyticsSalesGoalsTab: React.FC<AnalyticsSalesGoalsTabProps> = ({
                 <button
                   type="button"
                   onClick={() => {
-                    const equalVal = Math.round(metaAnualTotal / 12);
-                    setValoresManuais(new Array(12).fill(equalVal));
-                    if (notify) notify(`Meta anual de ${formatCurrency(metaAnualTotal)} dividida igualmente nos 12 meses (${formatCurrency(equalVal)}/mês).`, 'success');
+                    const parcelas = distribuirMetaLinear(metaAnualTotal);
+                    setValoresManuais(parcelas.map((p) => p.valorMeta));
+                    if (notify) notify(`Meta anual de ${formatCurrency(metaAnualTotal)} dividida igualmente nos 12 meses (${formatCurrency(metaAnualTotal / 12)}/mês) sem discrepâncias de centavos.`, 'success');
                   }}
                   className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold transition-all shadow cursor-pointer"
-                  title="Dividir a meta anual em 12 parcelas iguais"
+                  title="Dividir a meta anual em 12 parcelas com distribuição balanceada de centavos"
                 >
                   Aplicar nos 12 Meses (1/12)
                 </button>
@@ -865,17 +1221,15 @@ export const AnalyticsSalesGoalsTab: React.FC<AnalyticsSalesGoalsTabProps> = ({
                   type="button"
                   onClick={() => {
                     if (totalManual === 0) return;
-                    const next = valoresManuais.map((v) => Math.round((v / totalManual) * metaAnualTotal));
-                    const diff = metaAnualTotal - next.reduce((a, b) => a + b, 0);
-                    next[11] += diff;
-                    setValoresManuais(next);
-                    if (notify) notify(`Meta anual de ${formatCurrency(metaAnualTotal)} distribuída mantendo as proporções mensais.`, 'success');
+                    const parcelas = distribuirMetaSazonal(metaAnualTotal, valoresManuais);
+                    setValoresManuais(parcelas.map((p) => p.valorMeta));
+                    if (notify) notify(`Meta anual de ${formatCurrency(metaAnualTotal)} distribuída proporcionalmente via Método dos Maiores Restos (sem resíduo no último mês).`, 'success');
                   }}
                   disabled={totalManual === 0}
                   className="px-2.5 py-1.5 bg-[#252525] hover:bg-[#303030] text-neutral-200 border border-[#444] rounded-lg text-xs font-medium transition-colors cursor-pointer disabled:opacity-40"
-                  title="Distribuir mantendo as proporções relativas entre os meses"
+                  title="Distribuir proporcionalmente com o Método dos Maiores Restos (accounting standard)"
                 >
-                  Distribuir Proporcional
+                  Distribuir Proporcional (Reconciliado)
                 </button>
               </div>
             </div>
@@ -931,9 +1285,7 @@ export const AnalyticsSalesGoalsTab: React.FC<AnalyticsSalesGoalsTabProps> = ({
                     step={1000}
                     value={valoresManuais[idx] || 0}
                     onChange={(e) => {
-                      const next = [...valoresManuais];
-                      next[idx] = Number(e.target.value) || 0;
-                      setValoresManuais(next);
+                      handleAlterarMetaMes(idx, Number(e.target.value) || 0);
                     }}
                     className="w-full px-2 py-1 bg-[#121212] border border-[#333] rounded text-white font-mono text-xs focus:border-emerald-500 focus:outline-none"
                   />
@@ -1033,33 +1385,61 @@ export const AnalyticsSalesGoalsTab: React.FC<AnalyticsSalesGoalsTabProps> = ({
 
         {/* Generate Button Action Bar */}
         <div className="mt-5 pt-4 border-t border-[#262626] flex flex-col sm:flex-row items-center justify-between gap-3">
-          <div className="flex items-center space-x-2 text-xs text-neutral-400">
-            <Cpu className="w-4 h-4 text-[#c5a47e]" />
-            <span>
-              Motor ativo:{' '}
-              <strong className="text-white font-mono">{resultado?.source || 'gemini-3.8-flash'}</strong>{' '}
-              ({lastExecutionTime})
-            </span>
+          <div className="flex flex-wrap items-center gap-2 text-xs text-neutral-400">
+            <div className="flex items-center space-x-2">
+              <Cpu className="w-4 h-4 text-[#c5a47e]" />
+              <span>
+                Motor ativo:{' '}
+                <strong className="text-white font-mono">{resultado?.source || 'gemini-3.8-flash'}</strong>
+              </span>
+            </div>
+            {saveStatus === 'saving' ? (
+              <span className="px-2.5 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30 text-[11px] font-mono flex items-center space-x-1 animate-pulse">
+                <Hourglass className="w-3 h-3 text-amber-400 animate-spin" />
+                <span>A gravar alterações...</span>
+              </span>
+            ) : lastSavedTimestamp ? (
+              <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/25 text-[11px] font-mono flex items-center space-x-1">
+                <Check className="w-3 h-3 text-emerald-400" />
+                <span>Salvo em {lastSavedTimestamp}</span>
+              </span>
+            ) : (
+              <span className="px-2 py-0.5 rounded-full bg-[#202020] text-neutral-400 border border-[#333] text-[11px]">
+                Salvamento automático ativo
+              </span>
+            )}
           </div>
 
-          <button
-            type="button"
-            onClick={handleGerarMetas}
-            disabled={loading}
-            className="w-full sm:w-auto px-6 py-2.5 bg-gradient-to-r from-[#c5a47e] to-[#ab875e] hover:from-[#d6b793] hover:to-[#be986c] text-neutral-950 font-bold rounded-xl text-sm shadow-md flex items-center justify-center space-x-2 transition-all cursor-pointer disabled:opacity-50"
-          >
-            {loading ? (
-              <>
-                <div className="w-4 h-4 border-2 border-neutral-950 border-t-transparent rounded-full animate-spin" />
-                <span>Calculando com Gemini AI...</span>
-              </>
-            ) : (
-              <>
-                <Sparkles className="w-4 h-4 text-neutral-950" />
-                <span>Calcular Metas com Gemini AI</span>
-              </>
-            )}
-          </button>
+          <div className="flex items-center space-x-2 w-full sm:w-auto">
+            <button
+              type="button"
+              onClick={handleSalvarManualExplicit}
+              className="px-4 py-2.5 bg-[#222] hover:bg-[#2c2c2c] text-neutral-200 border border-[#444] font-semibold rounded-xl text-xs flex items-center justify-center space-x-1.5 transition-all cursor-pointer shadow-sm"
+              title="Guardar alterações das metas e vendas permanentemente"
+            >
+              <Save className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Guardar Alterações</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleGerarMetas}
+              disabled={loading}
+              className="w-full sm:w-auto px-5 py-2.5 bg-gradient-to-r from-[#c5a47e] to-[#ab875e] hover:from-[#d6b793] hover:to-[#be986c] text-neutral-950 font-bold rounded-xl text-xs shadow-md flex items-center justify-center space-x-2 transition-all cursor-pointer disabled:opacity-50"
+            >
+              {loading ? (
+                <>
+                  <div className="w-3.5 h-3.5 border-2 border-neutral-950 border-t-transparent rounded-full animate-spin" />
+                  <span>Calculando...</span>
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-3.5 h-3.5 text-neutral-950" />
+                  <span>Calcular Metas com Gemini AI</span>
+                </>
+              )}
+            </button>
+          </div>
         </div>
       </div>
 
@@ -1089,118 +1469,247 @@ export const AnalyticsSalesGoalsTab: React.FC<AnalyticsSalesGoalsTabProps> = ({
         </div>
       )}
 
-      {/* 3. Executive KPI Cards: Results Summary */}
+      {/* 3. Executive KPI Cards: Results Summary & Tracking */}
       {resultado && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          {/* Total Anual */}
-          <div className="bg-[#141414] border border-[#262626] rounded-xl p-4 shadow-sm hover:border-[#383838] transition-colors">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-semibold text-neutral-400">Meta Anual Consolidada</span>
-              <span className="px-2 py-0.5 rounded-full text-[10px] font-mono bg-[#c5a47e]/15 text-[#c5a47e] border border-[#c5a47e]/30">
-                {resultado.anoReferencia}
-              </span>
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3.5">
+            {/* 1. Meta Anual Consolidada */}
+            <div className="bg-[#141414] border border-[#262626] rounded-xl p-4 shadow-sm hover:border-[#383838] transition-colors">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold text-neutral-400">Meta Anual Estabelecida</span>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-mono bg-[#c5a47e]/15 text-[#c5a47e] border border-[#c5a47e]/30">
+                  {resultado.anoReferencia}
+                </span>
+              </div>
+              <div className="mt-2 text-2xl font-black text-white tracking-tight font-mono">
+                {formatCurrency(resultado.metaAnualTotal)}
+              </div>
+              <div className="mt-1 flex items-center justify-between text-xs">
+                <span className="text-neutral-400">Média Mensal:</span>
+                <span className="text-[#c5a47e] font-semibold font-mono">
+                  {formatCurrency(Number((resultado.metaAnualTotal / 12).toFixed(2)))}
+                </span>
+              </div>
             </div>
-            <div className="mt-2 text-2xl font-black text-white tracking-tight font-mono">
-              {formatCurrency(resultado.metaAnualTotal)}
+
+            {/* 2. Vendas Realizadas (Faturamento) */}
+            <div className="bg-[#141414] border border-[#262626] rounded-xl p-4 shadow-sm hover:border-[#383838] transition-colors">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold text-neutral-400">Vendas Realizadas</span>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                  Faturado
+                </span>
+              </div>
+              <div className="mt-2 text-2xl font-black text-emerald-400 tracking-tight font-mono">
+                {formatCurrency(totalRealizado)}
+              </div>
+              <div className="mt-1 flex items-center justify-between text-xs">
+                <span className="text-neutral-400">Atingimento Global:</span>
+                <span className="text-emerald-400 font-bold font-mono">
+                  {percentualRealizadoTotal.toFixed(1)}%
+                </span>
+              </div>
             </div>
-            <div className="mt-1 flex items-center justify-between text-xs">
-              <span className="text-neutral-400">Média Mensal:</span>
-              <span className="text-[#c5a47e] font-semibold font-mono">
-                {formatCurrency(Number((resultado.metaAnualTotal / 12).toFixed(2)))}
-              </span>
+
+            {/* 3. META EM FALTA / POR REALIZAR (DESTAQUE PRINCIPAL) */}
+            <div className="bg-gradient-to-br from-[#1a1610] to-[#141414] border-2 border-amber-500/40 rounded-xl p-4 shadow-md relative overflow-hidden">
+              <div className="absolute top-0 right-0 w-24 h-24 bg-amber-500/10 rounded-full blur-xl pointer-events-none" />
+              <div className="flex items-center justify-between relative z-10">
+                <span className="text-xs font-bold text-amber-300 flex items-center space-x-1.5">
+                  <Hourglass className="w-3.5 h-3.5 text-amber-400 animate-pulse" />
+                  <span>Meta em Falta / Por Realizar</span>
+                </span>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                  {percentualEmFaltaTotal.toFixed(1)}% Pendente
+                </span>
+              </div>
+              <div className="mt-2 text-2xl font-black text-amber-300 tracking-tight font-mono relative z-10">
+                {formatCurrency(metaEmFaltaTotal)}
+              </div>
+              <div className="mt-1 flex items-center justify-between text-xs relative z-10">
+                <span className="text-neutral-400">Média p/ bater:</span>
+                <span className="text-amber-300 font-medium font-mono">
+                  {metaEmFaltaTotal === 0 ? '✓ Meta 100% Batida!' : `~${formatCurrency(Math.round(metaEmFaltaTotal / 365))}/dia`}
+                </span>
+              </div>
+            </div>
+
+            {/* 4. Progresso & Taxa de Conclusão */}
+            <div className="bg-[#141414] border border-[#262626] rounded-xl p-4 shadow-sm hover:border-[#383838] transition-colors">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold text-neutral-400">Taxa de Conclusão</span>
+                <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                  percentualRealizadoTotal >= 100
+                    ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                    : 'bg-blue-500/15 text-blue-300 border border-blue-500/30'
+                }`}>
+                  {percentualRealizadoTotal >= 100 ? 'Superada' : 'Em Curso'}
+                </span>
+              </div>
+              <div className="mt-2 text-2xl font-black text-blue-300 tracking-tight font-mono">
+                {percentualRealizadoTotal.toFixed(1)}%
+              </div>
+              <div className="mt-1.5 w-full bg-[#202020] h-1.5 rounded-full overflow-hidden">
+                <div
+                  className="bg-blue-400 h-full rounded-full transition-all duration-500"
+                  style={{ width: `${Math.min(100, percentualRealizadoTotal)}%` }}
+                />
+              </div>
+              <div className="mt-1 flex items-center justify-between text-[11px] text-neutral-400">
+                <span>Saldo vs Meta:</span>
+                <span className={`font-mono font-bold ${totalRealizado >= resultado.metaAnualTotal ? 'text-emerald-400' : 'text-amber-400'}`}>
+                  {totalRealizado >= resultado.metaAnualTotal ? '+' : '-'}{formatCurrency(Math.abs(totalRealizado - resultado.metaAnualTotal))}
+                </span>
+              </div>
+            </div>
+
+            {/* 5. Meses Concluídos / Em Falta */}
+            <div className="bg-[#141414] border border-[#262626] rounded-xl p-4 shadow-sm hover:border-[#383838] transition-colors">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold text-neutral-400">Status por Meses</span>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-mono bg-neutral-800 text-neutral-300 border border-[#333]">
+                  12 Meses
+                </span>
+              </div>
+              <div className="mt-2 text-xl font-black text-white tracking-tight font-mono flex items-center space-x-2">
+                <span className="text-emerald-400">{mesesAtingidos} Batidos</span>
+                <span className="text-neutral-500 text-sm">/</span>
+                <span className="text-amber-300">{mesesEmFalta} Falta</span>
+              </div>
+              <div className="mt-1 flex items-center justify-between text-xs">
+                <span className="text-neutral-400">Mês de Pico:</span>
+                <span className="text-[#c5a47e] font-semibold">
+                  {mesMaior?.nomeMes || '-'} ({mesMaior ? `${mesMaior.pesoPercentual.toFixed(1)}%` : '0%'})
+                </span>
+              </div>
             </div>
           </div>
 
-          {/* Mês de Pico / Maior Meta */}
-          <div className="bg-[#141414] border border-[#262626] rounded-xl p-4 shadow-sm hover:border-[#383838] transition-colors">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-semibold text-neutral-400">Mês de Maior Meta</span>
-              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
-                Pico
-              </span>
+          {/* Barra de Progresso Executiva de Acompanhamento (Meta vs Realizado vs Em Falta) */}
+          <div className="bg-[#171717] border border-[#2b2b2b] rounded-xl p-4 shadow-sm">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-2.5">
+              <div className="flex items-center space-x-2 text-xs">
+                <BarChart3 className="w-4 h-4 text-[#c5a47e]" />
+                <span className="font-bold text-white">Progresso Acumulado da Meta Anual</span>
+                <span className="text-neutral-400">
+                  ({formatCurrency(totalRealizado)} realizado de {formatCurrency(resultado.metaAnualTotal)})
+                </span>
+              </div>
+              <div className="flex flex-wrap items-center gap-3 text-xs">
+                <span className="flex items-center space-x-1.5 text-emerald-400 font-mono">
+                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
+                  <span>Realizado: {percentualRealizadoTotal.toFixed(1)}%</span>
+                </span>
+                <span className="flex items-center space-x-1.5 text-amber-300 font-mono">
+                  <span className="w-2.5 h-2.5 rounded-full bg-amber-500" />
+                  <span>Em Falta: {percentualEmFaltaTotal.toFixed(1)}% ({formatCurrency(metaEmFaltaTotal)})</span>
+                </span>
+                {lastSavedTimestamp && (
+                  <span className="text-[11px] text-neutral-400 flex items-center space-x-1">
+                    <Check className="w-3 h-3 text-emerald-400" />
+                    <span>Valores mantidos localmente</span>
+                  </span>
+                )}
+              </div>
             </div>
-            <div className="mt-2 text-2xl font-black text-emerald-400 tracking-tight font-mono">
-              {mesMaior ? formatCurrency(mesMaior.valorMeta) : '-'}
-            </div>
-            <div className="mt-1 flex items-center justify-between text-xs">
-              <span className="text-neutral-300 font-medium">
-                {resultado.metaAnualTotal === 0 ? 'Sem metas ativas' : (mesMaior?.nomeMes || '-')}
-              </span>
-              <span className="text-emerald-400 font-bold font-mono">
-                {mesMaior && resultado.metaAnualTotal > 0 ? `${mesMaior.pesoPercentual.toFixed(2)}%` : '0%'}
-              </span>
-            </div>
-          </div>
 
-          {/* Mês Mais Conservador */}
-          <div className="bg-[#141414] border border-[#262626] rounded-xl p-4 shadow-sm hover:border-[#383838] transition-colors">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-semibold text-neutral-400">Mês Mais Conservador</span>
-              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/15 text-amber-300 border border-amber-500/30">
-                Mínimo
-              </span>
-            </div>
-            <div className="mt-2 text-2xl font-black text-amber-300 tracking-tight font-mono">
-              {mesMenor ? formatCurrency(mesMenor.valorMeta) : '-'}
-            </div>
-            <div className="mt-1 flex items-center justify-between text-xs">
-              <span className="text-neutral-300 font-medium">
-                {resultado.metaAnualTotal === 0 ? 'Sem metas ativas' : (mesMenor?.nomeMes || '-')}
-              </span>
-              <span className="text-amber-300 font-bold font-mono">
-                {mesMenor && resultado.metaAnualTotal > 0 ? `${mesMenor.pesoPercentual.toFixed(2)}%` : '0%'}
-              </span>
-            </div>
-          </div>
-
-          {/* Média Diária Geral */}
-          <div className="bg-[#141414] border border-[#262626] rounded-xl p-4 shadow-sm hover:border-[#383838] transition-colors">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-semibold text-neutral-400">Média Diária Recomendada</span>
-              <span className="px-2 py-0.5 rounded-full text-[10px] font-mono bg-blue-500/15 text-blue-300 border border-blue-500/30">
-                365 dias
-              </span>
-            </div>
-            <div className="mt-2 text-2xl font-black text-blue-300 tracking-tight font-mono">
-              {formatCurrency(Number((resultado.metaAnualTotal / 365).toFixed(2)))}
-            </div>
-            <div className="mt-1 flex items-center justify-between text-xs">
-              <span className="text-neutral-400">Base comercial 30d/mês:</span>
-              <span className="text-neutral-200 font-medium font-mono">
-                ~{formatCurrency(Number((resultado.metaAnualTotal / 360).toFixed(2)))}/dia
-              </span>
+            {/* Barra Visual Proporcional Bicolor */}
+            <div className="w-full bg-[#111] h-3.5 rounded-full overflow-hidden flex border border-[#333]">
+              <div
+                className="bg-emerald-500 h-full transition-all duration-500"
+                style={{ width: `${Math.min(100, percentualRealizadoTotal)}%` }}
+                title={`Vendas Realizadas: ${formatCurrency(totalRealizado)} (${percentualRealizadoTotal.toFixed(1)}%)`}
+              />
+              <div
+                className="bg-amber-500/80 h-full transition-all duration-500"
+                style={{ width: `${Math.min(100, percentualEmFaltaTotal)}%` }}
+                title={`Meta em Falta / Por Realizar: ${formatCurrency(metaEmFaltaTotal)} (${percentualEmFaltaTotal.toFixed(1)}%)`}
+              />
             </div>
           </div>
         </div>
       )}
 
-      {/* 4. Visual Chart: Monthly Distribution vs History */}
+      {/* 4. Visual Chart: Monthly Tracking and Planning */}
       {resultado && (
         <div className="bg-[#141414] border border-[#262626] rounded-xl p-5 shadow-lg">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-5">
             <div>
               <h3 className="text-sm lg:text-base font-bold text-white flex items-center space-x-2">
-                <BarChart3Icon className="w-4 h-4 text-[#c5a47e]" />
-                <span>Distribuição Mensal das Metas ({resultado.anoReferencia}) vs Histórico</span>
+                <BarChart3 className="w-4 h-4 text-[#c5a47e]" />
+                <span>
+                  {chartViewMode === 'acompanhamento'
+                    ? `Acompanhamento Comercial: Meta vs Vendas Realizadas vs Em Falta (${resultado.anoReferencia})`
+                    : `Distribuição Sazonal das Metas (${resultado.anoReferencia}) vs Histórico Base`}
+                </span>
               </h3>
               <p className="text-xs text-neutral-400 mt-0.5">
-                Valores em Meticais (MT) nas barras e peso sazonal (%) na linha
+                {chartViewMode === 'acompanhamento'
+                  ? 'Comparação direta mês a mês: Meta estabelecida, faturamento realizado e meta em falta por realizar'
+                  : 'Valores em Meticais (MT) nas barras e peso percentual de sazonalidade (%) na linha'}
               </p>
             </div>
-            <div className="flex items-center space-x-4 text-xs font-medium">
-              <div className="flex items-center space-x-1.5">
-                <span className="w-3 h-3 rounded bg-[#c5a47e]" />
-                <span className="text-neutral-300">Meta {resultado.anoReferencia} (MT)</span>
-              </div>
-              <div className="flex items-center space-x-1.5">
-                <span className="w-3 h-3 rounded bg-[#404040]" />
-                <span className="text-neutral-400">Histórico Base (MT)</span>
-              </div>
-              <div className="flex items-center space-x-1.5">
-                <span className="w-3 h-1 bg-emerald-400" />
-                <span className="text-emerald-400">Peso %</span>
-              </div>
+
+            {/* View Mode Toggle Buttons */}
+            <div className="flex items-center space-x-1.5 bg-[#1e1e1e] p-1 rounded-lg border border-[#333]">
+              <button
+                type="button"
+                onClick={() => setChartViewMode('acompanhamento')}
+                className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-all cursor-pointer ${
+                  chartViewMode === 'acompanhamento'
+                    ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 shadow-sm'
+                    : 'text-neutral-400 hover:text-white'
+                }`}
+              >
+                Meta vs Realizado vs Em Falta
+              </button>
+              <button
+                type="button"
+                onClick={() => setChartViewMode('planeamento')}
+                className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-all cursor-pointer ${
+                  chartViewMode === 'planeamento'
+                    ? 'bg-[#c5a47e]/20 text-[#c5a47e] border border-[#c5a47e]/40 shadow-sm'
+                    : 'text-neutral-400 hover:text-white'
+                }`}
+              >
+                Meta vs Histórico Base
+              </button>
             </div>
+          </div>
+
+          {/* Chart Legend */}
+          <div className="flex flex-wrap items-center gap-4 text-xs font-medium mb-4 pb-3 border-b border-[#222]">
+            <div className="flex items-center space-x-1.5">
+              <span className="w-3 h-3 rounded bg-[#c5a47e]" />
+              <span className="text-neutral-300">Meta Estabelecida (MT)</span>
+            </div>
+            {chartViewMode === 'acompanhamento' ? (
+              <>
+                <div className="flex items-center space-x-1.5">
+                  <span className="w-3 h-3 rounded bg-emerald-500" />
+                  <span className="text-emerald-400">Vendas Realizadas (MT)</span>
+                </div>
+                <div className="flex items-center space-x-1.5">
+                  <span className="w-3 h-3 rounded bg-amber-500" />
+                  <span className="text-amber-300">Meta em Falta / Por Realizar (MT)</span>
+                </div>
+                <div className="flex items-center space-x-1.5">
+                  <span className="w-3 h-1 bg-sky-400" />
+                  <span className="text-sky-400">% Atingimento</span>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="flex items-center space-x-1.5">
+                  <span className="w-3 h-3 rounded bg-[#404040]" />
+                  <span className="text-neutral-400">Histórico Anterior (MT)</span>
+                </div>
+                <div className="flex items-center space-x-1.5">
+                  <span className="w-3 h-1 bg-emerald-400" />
+                  <span className="text-emerald-400">Peso Sazonal %</span>
+                </div>
+              </>
+            )}
           </div>
 
           <div className="h-72 w-full">
@@ -1225,150 +1734,342 @@ export const AnalyticsSalesGoalsTab: React.FC<AnalyticsSalesGoalsTabProps> = ({
                 <YAxis
                   yAxisId="right"
                   orientation="right"
-                  stroke="#10b981"
+                  stroke={chartViewMode === 'acompanhamento' ? '#38bdf8' : '#10b981'}
                   fontSize={11}
                   tickLine={false}
-                  axisLine={{ stroke: '#10b981' }}
+                  axisLine={{ stroke: chartViewMode === 'acompanhamento' ? '#38bdf8' : '#10b981' }}
                   tickFormatter={(val) => `${val}%`}
-                  domain={[0, (dataMax: number) => Math.ceil(dataMax * 1.25)]}
+                  domain={[0, (dataMax: number) => Math.max(100, Math.ceil(dataMax * 1.2))]}
                 />
                 <Tooltip
-                  content={({ active, payload, label }) => {
+                  content={({ active, payload }) => {
                     if (!active || !payload || !payload.length) return null;
                     const item = payload[0].payload;
                     return (
-                      <div className="bg-[#1c1c1c] border border-[#333] p-3 rounded-lg shadow-xl text-xs space-y-1">
+                      <div className="bg-[#1c1c1c] border border-[#333] p-3 rounded-lg shadow-xl text-xs space-y-1.5">
                         <div className="font-bold text-white text-sm mb-1">{item.nomeCompleto}</div>
                         <div className="flex items-center justify-between space-x-4">
-                          <span className="text-[#c5a47e] font-medium">Meta Projetada:</span>
+                          <span className="text-[#c5a47e] font-medium">Meta do Mês:</span>
                           <span className="font-mono font-bold text-white">{formatCurrency(item.meta)}</span>
                         </div>
                         <div className="flex items-center justify-between space-x-4">
-                          <span className="text-neutral-400">Histórico Anterior:</span>
-                          <span className="font-mono text-neutral-300">{formatCurrency(item.historico)}</span>
+                          <span className="text-emerald-400 font-medium">Vendas Realizadas:</span>
+                          <span className="font-mono font-bold text-emerald-400">{formatCurrency(item.realizado)}</span>
                         </div>
                         <div className="flex items-center justify-between space-x-4">
-                          <span className="text-emerald-400">Peso Percentual:</span>
-                          <span className="font-mono font-bold text-emerald-400">{item.peso}%</span>
+                          <span className="text-amber-300 font-medium">Meta em Falta:</span>
+                          <span className="font-mono font-bold text-amber-300">{formatCurrency(item.emFalta)}</span>
                         </div>
+                        <div className="flex items-center justify-between space-x-4">
+                          <span className="text-sky-400 font-medium">Atingimento:</span>
+                          <span className="font-mono font-bold text-sky-400">{item.pct}%</span>
+                        </div>
+                        {chartViewMode === 'planeamento' && (
+                          <div className="flex items-center justify-between space-x-4 pt-1 border-t border-[#333]">
+                            <span className="text-neutral-400">Histórico Base:</span>
+                            <span className="font-mono text-neutral-300">{formatCurrency(item.historico)}</span>
+                          </div>
+                        )}
                       </div>
                     );
                   }}
                 />
-                <Bar yAxisId="left" dataKey="historico" fill="#3a3a3a" radius={[4, 4, 0, 0]} name="Histórico" />
-                <Bar yAxisId="left" dataKey="meta" fill="#c5a47e" radius={[4, 4, 0, 0]} name="Meta" />
-                <Line
-                  yAxisId="right"
-                  type="monotone"
-                  dataKey="peso"
-                  stroke="#10b981"
-                  strokeWidth={2.5}
-                  dot={{ fill: '#10b981', r: 4 }}
-                  name="Peso %"
-                />
+                {chartViewMode === 'acompanhamento' ? (
+                  <>
+                    <Bar yAxisId="left" dataKey="meta" fill="#c5a47e" radius={[4, 4, 0, 0]} name="Meta" />
+                    <Bar yAxisId="left" dataKey="realizado" fill="#10b981" radius={[4, 4, 0, 0]} name="Realizado" />
+                    <Bar yAxisId="left" dataKey="emFalta" fill="#f59e0b" radius={[4, 4, 0, 0]} name="Em Falta" />
+                    <Line
+                      yAxisId="right"
+                      type="monotone"
+                      dataKey="pct"
+                      stroke="#38bdf8"
+                      strokeWidth={2.5}
+                      dot={{ fill: '#38bdf8', r: 4 }}
+                      name="% Atingido"
+                    />
+                  </>
+                ) : (
+                  <>
+                    <Bar yAxisId="left" dataKey="historico" fill="#3a3a3a" radius={[4, 4, 0, 0]} name="Histórico" />
+                    <Bar yAxisId="left" dataKey="meta" fill="#c5a47e" radius={[4, 4, 0, 0]} name="Meta" />
+                    <Line
+                      yAxisId="right"
+                      type="monotone"
+                      dataKey="peso"
+                      stroke="#10b981"
+                      strokeWidth={2.5}
+                      dot={{ fill: '#10b981', r: 4 }}
+                      name="Peso %"
+                    />
+                  </>
+                )}
               </ComposedChart>
             </ResponsiveContainer>
           </div>
         </div>
       )}
 
-      {/* 5. Detailed Table: Month by Month Breakdown */}
+      {/* 5. Detailed Table: Month by Month Breakdown with Inline Editing and Explicit "Meta em Falta" */}
       {resultado && (
         <div className="bg-[#141414] border border-[#262626] rounded-xl overflow-hidden shadow-lg">
-          <div className="p-4 lg:p-5 border-b border-[#262626] flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="p-4 lg:p-5 border-b border-[#262626] flex flex-col md:flex-row md:items-center justify-between gap-3 bg-[#171717]">
             <div>
               <h3 className="text-sm lg:text-base font-bold text-white flex items-center space-x-2">
                 <Layers className="w-4 h-4 text-[#c5a47e]" />
-                <span>Detalhamento Consolidado das Metas Mensais ({resultado.anoReferencia})</span>
+                <span>Detalhamento e Acompanhamento Mensal das Metas ({resultado.anoReferencia})</span>
               </h3>
               <p className="text-xs text-neutral-400 mt-0.5">
-                Estrutura de 12 meses gerada pelo motor com pesos percentuais e metas operacionais recomendadas
+                Edite diretamente os valores de <strong>Meta Mensal</strong> ou <strong>Vendas Realizadas</strong> nas células abaixo. As alterações manuais são mantidas e guardadas automaticamente.
               </p>
             </div>
-            <span className="text-xs font-mono text-[#c5a47e] bg-[#c5a47e]/10 px-2.5 py-1 rounded-md border border-[#c5a47e]/20 self-start sm:self-center">
-              Estratégia: {resultado.estrategia || estrategia}
-            </span>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={puxarVendasReaisERPParaRealizado}
+                className="px-2.5 py-1.5 bg-[#252525] hover:bg-[#2e2e2e] text-neutral-300 rounded-lg text-xs font-medium border border-[#3a3a3a] transition-colors cursor-pointer"
+                title="Puxar vendas do ERP para atualizar coluna de Vendas Realizadas"
+              >
+                Puxar Vendas ERP
+              </button>
+              <button
+                type="button"
+                onClick={carregarExemploRealizado}
+                className="px-2.5 py-1.5 bg-[#252525] hover:bg-[#2e2e2e] text-neutral-300 rounded-lg text-xs font-medium border border-[#3a3a3a] transition-colors cursor-pointer"
+                title="Carregar exemplo de acompanhamento (Jan-Jun)"
+              >
+                Exemplo Demo
+              </button>
+              <button
+                type="button"
+                onClick={zerarVendasRealizadas}
+                className="px-2.5 py-1.5 bg-[#252525] hover:bg-[#2e2e2e] text-neutral-400 hover:text-amber-300 rounded-lg text-xs font-medium border border-[#3a3a3a] transition-colors cursor-pointer"
+                title="Zerar vendas realizadas para ver 100% da meta em falta"
+              >
+                Zerar Realizado
+              </button>
+              <button
+                type="button"
+                onClick={handleSalvarManualExplicit}
+                className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold transition-all shadow flex items-center space-x-1 cursor-pointer"
+                title="Salvar alterações manuais permanentemente"
+              >
+                <Save className="w-3 h-3" />
+                <span>Guardar</span>
+              </button>
+            </div>
           </div>
 
           <div className="overflow-x-auto">
             <table className="w-full text-xs text-left">
-              <thead className="bg-[#1a1a1a] text-neutral-400 font-semibold uppercase tracking-wider border-b border-[#262626]">
+              <thead className="bg-[#1c1c1c] text-neutral-400 font-semibold uppercase tracking-wider border-b border-[#2b2b2b]">
                 <tr>
-                  <th className="py-3 px-4 text-center w-12">#</th>
-                  <th className="py-3 px-4">Mês de Referência</th>
-                  <th className="py-3 px-4 text-right">Peso Sazonal (%)</th>
-                  <th className="py-3 px-4 text-right text-white">Meta Mensal (MT)</th>
-                  <th className="py-3 px-4 text-right text-neutral-400">Média Diária (MT)</th>
-                  <th className="py-3 px-4 text-right text-neutral-400">Histórico Base</th>
-                  <th className="py-3 px-4 text-right">Variação vs Histórico</th>
+                  <th className="py-3 px-3 text-center w-10">#</th>
+                  <th className="py-3 px-3">Mês de Referência</th>
+                  <th className="py-3 px-3 text-right">Peso Sazonal</th>
+                  <th className="py-3 px-3 text-right text-[#c5a47e] font-bold">
+                    Meta Mensal (MT)
+                    <span className="block text-[9px] text-neutral-400 font-normal">Edição manual livre</span>
+                  </th>
+                  <th className="py-3 px-3 text-right text-emerald-400 font-bold">
+                    Vendas Realizadas (MT)
+                    <span className="block text-[9px] text-neutral-400 font-normal">Faturamento real</span>
+                  </th>
+                  <th className="py-3 px-3 text-right text-amber-300 font-bold bg-amber-500/5 border-x border-amber-500/20">
+                    Meta em Falta / Por Realizar (MT)
+                    <span className="block text-[9px] text-amber-400/80 font-normal">Gap para atingir</span>
+                  </th>
+                  <th className="py-3 px-3 text-center">Progresso</th>
+                  <th className="py-3 px-3 text-right text-neutral-400">Média Diária Falta</th>
+                  <th className="py-3 px-3 text-center">Situação</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#222]">
                 {resultado.metasMensais.map((item, idx) => {
-                  const hist = historicoValores[idx] || 0;
-                  const delta = item.valorMeta - hist;
-                  const deltaPct = hist > 0 ? ((delta / hist) * 100).toFixed(1) : '0';
-                  const isPositive = delta >= 0;
+                  const real = vendasRealizadas[idx] || 0;
+                  const emFalta = Math.max(0, item.valorMeta - real);
+                  const pctAtingido = item.valorMeta > 0 ? (real / item.valorMeta) * 100 : 0;
+                  const superavitMes = Math.max(0, real - item.valorMeta);
+                  const atingida = real >= item.valorMeta && item.valorMeta > 0;
 
                   return (
-                    <tr key={item.mes} className="hover:bg-[#1a1a1a]/60 transition-colors">
-                      <td className="py-3 px-4 text-center font-mono text-neutral-500">
+                    <tr key={item.mes} className="hover:bg-[#1a1a1a]/80 transition-colors">
+                      <td className="py-2.5 px-3 text-center font-mono text-neutral-500">
                         {String(item.mes).padStart(2, '0')}
                       </td>
-                      <td className="py-3 px-4 font-medium text-white flex items-center space-x-2">
-                        <span>{item.nomeMes}</span>
-                        {item.valorMeta === mesMaior?.valorMeta && (
-                          <span className="px-1.5 py-0.2 text-[9px] font-bold rounded bg-emerald-500/20 text-emerald-300">
-                            Maior
-                          </span>
-                        )}
-                        {item.valorMeta === mesMenor?.valorMeta && (
-                          <span className="px-1.5 py-0.2 text-[9px] font-bold rounded bg-amber-500/20 text-amber-300">
-                            Menor
-                          </span>
-                        )}
+                      <td className="py-2.5 px-3 font-medium text-white">
+                        <div className="flex items-center space-x-1.5">
+                          <span>{item.nomeMes}</span>
+                          {item.valorMeta === mesMaior?.valorMeta && (
+                            <span className="px-1.5 py-0.2 text-[9px] font-bold rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                              Maior
+                            </span>
+                          )}
+                          {item.valorMeta === mesMenor?.valorMeta && (
+                            <span className="px-1.5 py-0.2 text-[9px] font-bold rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                              Menor
+                            </span>
+                          )}
+                        </div>
                       </td>
-                      <td className="py-3 px-4 text-right font-mono font-bold text-emerald-400">
+                      <td className="py-2.5 px-3 text-right font-mono font-bold text-emerald-400">
                         {item.pesoPercentual.toFixed(2)}%
                       </td>
-                      <td className="py-3 px-4 text-right font-mono font-bold text-white text-sm">
-                        {formatCurrency(item.valorMeta)}
+
+                      {/* Meta Mensal (MT) - Campo Editável Manualmente */}
+                      <td className="py-2.5 px-3 text-right">
+                        <div className="flex items-center justify-end">
+                          <input
+                            type="number"
+                            min={0}
+                            step={1000}
+                            value={item.valorMeta}
+                            onChange={(e) => handleAlterarMetaMes(idx, Number(e.target.value) || 0)}
+                            className="w-28 px-2 py-1 bg-[#121212] border border-[#3a3a3a] hover:border-[#c5a47e] focus:border-[#c5a47e] focus:outline-none rounded text-right font-mono text-white text-xs font-bold transition-colors"
+                            title="Clique para alterar a meta deste mês manualmente (salvamento automático)"
+                          />
+                        </div>
                       </td>
-                      <td className="py-3 px-4 text-right font-mono text-neutral-300">
-                        {formatCurrency(Number((item.valorMeta / 30).toFixed(2)))}/dia
+
+                      {/* Vendas Realizadas (MT) - Campo Editável Manualmente */}
+                      <td className="py-2.5 px-3 text-right">
+                        <div className="flex items-center justify-end">
+                          <input
+                            type="number"
+                            min={0}
+                            step={1000}
+                            value={vendasRealizadas[idx] || 0}
+                            onChange={(e) => handleAlterarRealizadoMes(idx, Number(e.target.value) || 0)}
+                            className="w-28 px-2 py-1 bg-[#121212] border border-[#3a3a3a] hover:border-emerald-500 focus:border-emerald-500 focus:outline-none rounded text-right font-mono text-emerald-400 text-xs font-semibold transition-colors"
+                            title="Clique para alterar as vendas realizadas deste mês"
+                          />
+                        </div>
                       </td>
-                      <td className="py-3 px-4 text-right font-mono text-neutral-400">
-                        {formatCurrency(hist)}
+
+                      {/* META EM FALTA / POR REALIZAR (MT) - DESTAQUE VISUAL CLARO */}
+                      <td className="py-2.5 px-3 text-right bg-amber-500/5 border-x border-amber-500/20 font-mono">
+                        {item.valorMeta === 0 ? (
+                          <span className="text-neutral-500">0 MT</span>
+                        ) : atingida ? (
+                          <div className="inline-flex flex-col items-end">
+                            <span className="inline-flex items-center px-2 py-0.5 rounded text-emerald-400 bg-emerald-500/15 border border-emerald-500/30 font-bold text-xs">
+                              <CheckCircle2 className="w-3 h-3 mr-1 text-emerald-400" />
+                              0 MT
+                            </span>
+                            {superavitMes > 0 && (
+                              <span className="text-[10px] text-emerald-400/80 mt-0.5">
+                                +{formatCurrency(superavitMes)} superávit
+                              </span>
+                            )}
+                          </div>
+                        ) : (
+                          <div className="inline-flex flex-col items-end">
+                            <span className="inline-flex items-center px-2 py-0.5 rounded text-amber-300 bg-amber-500/15 border border-amber-500/30 font-bold text-xs">
+                              <Hourglass className="w-3 h-3 mr-1 text-amber-400" />
+                              {formatCurrency(emFalta)}
+                            </span>
+                            <span className="text-[10px] text-amber-400/80 mt-0.5">
+                              {(((emFalta) / item.valorMeta) * 100).toFixed(0)}% por realizar
+                            </span>
+                          </div>
+                        )}
                       </td>
-                      <td className="py-3 px-4 text-right font-mono">
-                        <span className={`inline-flex items-center space-x-1 ${isPositive ? 'text-emerald-400' : 'text-rose-400'}`}>
-                          <span>{isPositive ? '+' : ''}{formatCurrency(delta)}</span>
-                          <span className="text-[10px] text-neutral-400 font-sans">({isPositive ? '+' : ''}{deltaPct}%)</span>
-                        </span>
+
+                      {/* Progresso Visual */}
+                      <td className="py-2.5 px-3 text-center">
+                        <div className="w-24 mx-auto space-y-1">
+                          <div className="flex items-center justify-between text-[10px] font-mono">
+                            <span className={atingida ? 'text-emerald-400 font-bold' : 'text-neutral-300'}>
+                              {pctAtingido.toFixed(0)}%
+                            </span>
+                          </div>
+                          <div className="w-full bg-[#242424] h-1.5 rounded-full overflow-hidden">
+                            <div
+                              className={`h-full rounded-full transition-all duration-300 ${
+                                atingida ? 'bg-emerald-500' : 'bg-amber-500'
+                              }`}
+                              style={{ width: `${Math.min(100, pctAtingido)}%` }}
+                            />
+                          </div>
+                        </div>
+                      </td>
+
+                      {/* Média Diária em Falta */}
+                      <td className="py-2.5 px-3 text-right font-mono text-neutral-300">
+                        {emFalta === 0 ? (
+                          <span className="text-emerald-400 text-[11px]">Concluído</span>
+                        ) : (
+                          <span>~{formatCurrency(Math.round(emFalta / 30))}/dia</span>
+                        )}
+                      </td>
+
+                      {/* Situação */}
+                      <td className="py-2.5 px-3 text-center">
+                        {item.valorMeta === 0 ? (
+                          <span className="px-2 py-0.5 rounded text-[10px] font-medium bg-neutral-800 text-neutral-400 border border-[#333]">
+                            Sem Meta
+                          </span>
+                        ) : atingida ? (
+                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                            Atingida ✓
+                          </span>
+                        ) : real > 0 ? (
+                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40">
+                            Em Falta
+                          </span>
+                        ) : (
+                          <span className="px-2 py-0.5 rounded text-[10px] font-medium bg-neutral-800 text-neutral-300 border border-[#333]">
+                            Pendente
+                          </span>
+                        )}
                       </td>
                     </tr>
                   );
                 })}
               </tbody>
-              <tfoot className="bg-[#1a1a1a] font-bold text-white border-t border-[#333]">
+
+              {/* Linha de Total Consolidado Anual com Totais Explícitos */}
+              <tfoot className="bg-[#181818] font-bold text-white border-t-2 border-[#333]">
                 <tr>
-                  <td colSpan={2} className="py-3.5 px-4 text-left uppercase text-[#c5a47e]">
-                    Total Consolidado ({resultado.anoReferencia})
+                  <td colSpan={2} className="py-4 px-3 text-left uppercase text-[#c5a47e] text-xs">
+                    TOTAL CONSOLIDADO ({resultado.anoReferencia})
                   </td>
-                  <td className="py-3.5 px-4 text-right font-mono text-emerald-400">100.00%</td>
-                  <td className="py-3.5 px-4 text-right font-mono text-base text-[#c5a47e]">
+                  <td className="py-4 px-3 text-right font-mono text-emerald-400 text-xs">
+                    100.00%
+                  </td>
+                  <td className="py-4 px-3 text-right font-mono text-sm text-[#c5a47e]">
                     {formatCurrency(resultado.metaAnualTotal)}
                   </td>
-                  <td className="py-3.5 px-4 text-right font-mono text-neutral-300">
-                    {formatCurrency(Number((resultado.metaAnualTotal / 365).toFixed(2)))}/dia
+                  <td className="py-4 px-3 text-right font-mono text-sm text-emerald-400">
+                    {formatCurrency(totalRealizado)}
                   </td>
-                  <td className="py-3.5 px-4 text-right font-mono text-neutral-300">
-                    {formatCurrency(totalHistorico)}
+                  {/* TOTAL EM FALTA / POR REALIZAR */}
+                  <td className="py-4 px-3 text-right font-mono text-sm text-amber-300 bg-amber-500/10 border-x border-amber-500/30">
+                    <div className="flex flex-col items-end">
+                      <span className="text-base font-black text-amber-300">
+                        {formatCurrency(metaEmFaltaTotal)}
+                      </span>
+                      <span className="text-[10px] text-amber-400/90 font-normal">
+                        {percentualEmFaltaTotal.toFixed(1)}% por realizar
+                      </span>
+                    </div>
                   </td>
-                  <td className="py-3.5 px-4 text-right font-mono">
-                    <span className="text-emerald-400">
-                      +{formatCurrency(resultado.metaAnualTotal - totalHistorico)}
-                    </span>
+                  <td className="py-4 px-3 text-center font-mono text-blue-300 text-xs">
+                    {percentualRealizadoTotal.toFixed(1)}%
+                  </td>
+                  <td className="py-4 px-3 text-right font-mono text-neutral-300 text-xs">
+                    {metaEmFaltaTotal === 0 ? 'Concluído' : `~${formatCurrency(Math.round(metaEmFaltaTotal / 365))}/dia`}
+                  </td>
+                  <td className="py-4 px-3 text-center text-xs">
+                    {metaEmFaltaTotal === 0 ? (
+                      <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                        100% Batida!
+                      </span>
+                    ) : (
+                      <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40">
+                        Em Falta
+                      </span>
+                    )}
                   </td>
                 </tr>
               </tfoot>
@@ -1391,7 +2092,7 @@ export const AnalyticsSalesGoalsTab: React.FC<AnalyticsSalesGoalsTabProps> = ({
                   <h3 className="text-base font-bold text-white flex items-center gap-2">
                     Código Dart / Flutter (Google Generative AI)
                     <span className="text-[10px] font-mono bg-blue-500/20 text-blue-300 px-2 py-0.5 rounded border border-blue-500/30">
-                      gemini-2.5-flash
+                      gemini-3.6-flash
                     </span>
                   </h3>
                   <p className="text-xs text-neutral-400 mt-0.5">
@@ -1441,7 +2142,7 @@ Future<void> gerarMetas() async {
   );
 
   final model = GenerativeModel(
-    model: 'gemini-2.5-flash',
+    model: 'gemini-3.6-flash',
     apiKey: apiKey,
     systemInstruction: Content.system(
       'Você é um motor de cálculo de metas comerciais para sistemas ERP/POS. '
@@ -1516,7 +2217,7 @@ Future<void> gerarMetas() async {
   );
 
   final model = GenerativeModel(
-    model: 'gemini-2.5-flash',
+    model: 'gemini-3.6-flash',
     apiKey: apiKey,
     systemInstruction: Content.system(
       'Você é um motor de cálculo de metas comerciais para sistemas ERP/POS. '
@@ -1563,6 +2264,82 @@ Future<void> gerarMetas() async {
                 className="px-4 py-2 bg-[#252525] hover:bg-[#303030] text-white rounded-lg text-xs font-semibold transition-colors cursor-pointer"
               >
                 Fechar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Proteção contra Sobrescrita Acidental de Metas Manuais */}
+      {showOverwriteModal && pendingAction && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-[#181818] border border-amber-600/40 rounded-2xl max-w-md w-full shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+            {/* Modal Header */}
+            <div className="p-5 border-b border-[#2a2a2a] flex items-start space-x-3.5 bg-gradient-to-r from-amber-950/30 to-[#181818]">
+              <div className="p-2.5 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-400 shrink-0">
+                <ShieldAlert className="w-6 h-6" />
+              </div>
+              <div className="flex-1">
+                <h3 className="text-base font-bold text-white leading-tight">
+                  {pendingAction.titulo}
+                </h3>
+                <span className="text-[11px] font-mono text-amber-400 font-semibold block mt-0.5">
+                  Segurança de Dados • Módulo Comercial POS/ERP
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowOverwriteModal(false);
+                  setPendingAction(null);
+                }}
+                className="text-neutral-400 hover:text-white p-1 rounded-lg hover:bg-[#252525] transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-5 space-y-3.5 text-xs text-neutral-300">
+              <p className="leading-relaxed">
+                {pendingAction.descricao}
+              </p>
+
+              <div className="p-3 bg-emerald-950/30 border border-emerald-500/30 rounded-xl space-y-1 text-emerald-300">
+                <div className="font-bold flex items-center space-x-1.5 text-emerald-400">
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  <span>Backup Automático de Segurança</span>
+                </div>
+                <p className="text-[11px] text-neutral-300 leading-normal">
+                  Seus valores manuais serão arquivados na chave de backup local do ano {anoReferencia}. Poderá restaurá-los a qualquer momento clicando no botão <strong>"Restaurar Rascunho Manual"</strong> no topo da página.
+                </p>
+              </div>
+            </div>
+
+            {/* Modal Actions */}
+            <div className="px-5 py-3.5 border-t border-[#2a2a2a] bg-[#141414] flex flex-col-reverse sm:flex-row items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowOverwriteModal(false);
+                  setPendingAction(null);
+                }}
+                className="w-full sm:w-auto px-4 py-2 bg-[#252525] hover:bg-[#303030] text-neutral-300 hover:text-white rounded-xl text-xs font-semibold transition-colors cursor-pointer"
+              >
+                Cancelar e Manter Valores Manuais
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const action = pendingAction.executar;
+                  setShowOverwriteModal(false);
+                  setPendingAction(null);
+                  action();
+                }}
+                className="w-full sm:w-auto px-4 py-2 bg-gradient-to-r from-amber-500 to-[#c5a47e] hover:from-amber-400 hover:to-[#d6b793] text-black font-bold rounded-xl text-xs flex items-center justify-center space-x-1.5 transition-all shadow-md cursor-pointer"
+              >
+                <Check className="w-3.5 h-3.5 text-black" />
+                <span>Substituir e Prosseguir</span>
               </button>
             </div>
           </div>
