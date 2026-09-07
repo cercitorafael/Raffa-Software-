@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef } from 'react';
+import React, { useState, useMemo, useRef, useCallback } from 'react';
 import { useApp } from '../../context/AppContext';
 import { isEffectiveSale } from '../../utils/documentUtils';
 import {
@@ -60,6 +60,7 @@ import {
   Line,
 } from 'recharts';
 import { AnalyticsMarginsTab } from './AnalyticsMarginsTab';
+import { AnalyticsSalesGoalsTab } from './AnalyticsSalesGoalsTab';
 
 // Chart Color Palette tailored for dark theme with crisp contrast
 const COLORS = [
@@ -143,7 +144,7 @@ export const AnalyticsModule: React.FC = () => {
   // View States
   const [chartMetric, setChartMetric] = useState<'both' | 'revenue' | 'volume' | 'margin'>('both');
   const [topProductsMetric, setTopProductsMetric] = useState<'revenue' | 'quantity'>('revenue');
-  const [activeTab, setActiveTab] = useState<'overview' | 'margins' | 'daily' | 'products' | 'payments' | 'hours'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'margins' | 'goals' | 'daily' | 'products' | 'payments' | 'hours'>('overview');
   const [marginViewMode, setMarginViewMode] = useState<'summary' | 'weekly' | 'monthly' | 'yearly' | 'categories'>('summary');
   const [productSearch, setProductSearch] = useState<string>('');
 
@@ -244,6 +245,43 @@ export const AnalyticsModule: React.FC = () => {
     }
   };
 
+  // Helper to reliably find product for a sale item avoiding accidental SKU collisions
+  const findProductForSaleItem = useCallback(
+    (item: { productId?: string; sku?: string; productName?: string }) => {
+      // 1. Primary & safest: match by exact productId
+      if (item.productId) {
+        const byId = products.find((p) => p.id === item.productId);
+        if (byId) return byId;
+      }
+      // 2. Exact match by productName
+      if (item.productName) {
+        const normName = item.productName.trim().toLowerCase();
+        const byName = products.find((p) => p.name.trim().toLowerCase() === normName);
+        if (byName) return byName;
+      }
+      // 3. Match by SKU only if SKU matches AND (productName partially matches or item has no productName)
+      if (item.sku) {
+        if (item.productName) {
+          const normName = item.productName.trim().toLowerCase();
+          const bySkuAndName = products.find(
+            (p) =>
+              p.sku === item.sku &&
+              (p.name.trim().toLowerCase().includes(normName) ||
+                normName.includes(p.name.trim().toLowerCase()))
+          );
+          if (bySkuAndName) return bySkuAndName;
+        }
+        // Fallback: match by SKU only if item has no productId
+        if (!item.productId) {
+          const bySku = products.find((p) => p.sku === item.sku);
+          if (bySku) return bySku;
+        }
+      }
+      return undefined;
+    },
+    [products]
+  );
+
   // Filter Sales according to date range, store, payment method, and product category
   // EXCLUDES quotations (ORC), proformas (PF), transport guides (GT/GR) from commercial revenue
   const filteredSales = useMemo(() => {
@@ -269,7 +307,7 @@ export const AnalyticsModule: React.FC = () => {
       // Category filtering
       if (selectedCategory !== 'all') {
         const hasCategory = sale.items?.some((item) => {
-          const prod = products.find((p) => p.id === item.productId || p.sku === item.sku);
+          const prod = findProductForSaleItem(item);
           return (prod?.category === selectedCategory) || (item.category === selectedCategory);
         });
         if (!hasCategory) return false;
@@ -277,7 +315,7 @@ export const AnalyticsModule: React.FC = () => {
 
       return true;
     });
-  }, [salesHistory, customStartDate, customEndDate, selectedStoreId, selectedPaymentMethod, selectedCategory, products]);
+  }, [salesHistory, customStartDate, customEndDate, selectedStoreId, selectedPaymentMethod, selectedCategory, findProductForSaleItem]);
 
   // Helper to calculate revenue, units, and estimated product cost for any sale
   // Uses product costPrice or estimates 50% of unit price if not defined
@@ -286,13 +324,18 @@ export const AnalyticsModule: React.FC = () => {
     let cost = 0;
     let units = 0;
     sale.items?.forEach((item: any) => {
-      const prod = products.find((p) => p.id === item.productId || p.sku === item.sku);
+      const prod = findProductForSaleItem(item);
       if (selectedCategory !== 'all' && prod?.category !== selectedCategory && item.category !== selectedCategory) {
         return;
       }
       const qty = item.quantity || 0;
       const itemRev = item.total || ((item.unitPrice || 0) * qty);
-      const unitCost = prod?.costPrice ?? (item.unitPrice ? item.unitPrice * 0.5 : 0);
+      const unitCost =
+        prod?.costPrice !== undefined && prod.costPrice !== null
+          ? prod.costPrice
+          : item.unitPrice
+          ? item.unitPrice * 0.5
+          : 0;
       const itemCost = unitCost * qty;
 
       rev += itemRev;
@@ -455,14 +498,14 @@ export const AnalyticsModule: React.FC = () => {
       }
       if (selectedCategory !== 'all') {
         const hasCategory = sale.items?.some((item) => {
-          const prod = products.find((p) => p.id === item.productId || p.sku === item.sku);
+          const prod = findProductForSaleItem(item);
           return (prod?.category === selectedCategory) || (item.category === selectedCategory);
         });
         if (!hasCategory) return false;
       }
       return true;
     });
-  }, [salesHistory, selectedStoreId, selectedPaymentMethod, selectedCategory, products]);
+  }, [salesHistory, selectedStoreId, selectedPaymentMethod, selectedCategory, findProductForSaleItem]);
 
   // 1. Margem do Período Filtrado Ativo
   const periodMarginMetrics = useMemo(() => {
@@ -831,7 +874,7 @@ export const AnalyticsModule: React.FC = () => {
 
     filteredSales.forEach((sale) => {
       sale.items?.forEach((item: any) => {
-        const prod = products.find((p) => p.id === item.productId || p.sku === item.sku);
+        const prod = findProductForSaleItem(item);
         const catKey = prod?.category || item.category || 'Geral';
         if (selectedCategory !== 'all' && catKey !== selectedCategory) return;
 
@@ -853,7 +896,12 @@ export const AnalyticsModule: React.FC = () => {
 
         const qty = item.quantity || 0;
         const rev = item.total || ((item.unitPrice || 0) * qty);
-        const unitCost = prod?.costPrice ?? (item.unitPrice ? item.unitPrice * 0.5 : 0);
+        const unitCost =
+          prod?.costPrice !== undefined && prod.costPrice !== null
+            ? prod.costPrice
+            : item.unitPrice
+            ? item.unitPrice * 0.5
+            : 0;
         const cost = unitCost * qty;
 
         entry.revenue += rev;
@@ -908,16 +956,17 @@ export const AnalyticsModule: React.FC = () => {
 
     filteredSales.forEach((sale) => {
       sale.items?.forEach((item) => {
-        const prod = products.find((p) => p.id === item.productId || p.sku === item.sku);
-        const key = item.productId || item.sku || item.productName;
+        const prod = findProductForSaleItem(item);
+        const key = item.productId || (item.productName ? `${item.sku || 'nosku'}-${item.productName}` : item.sku) || 'Produto';
 
         let entry = prodMap.get(key);
         if (!entry) {
+          const catObj = categories.find((c) => c.id === prod?.category || c.name === prod?.category || c.id === item.category);
           entry = {
             productId: key,
             productName: item.productName || prod?.name || 'Produto',
             sku: item.sku || prod?.sku || 'SKU-000',
-            category: prod?.category || 'Geral',
+            category: catObj?.name || prod?.category || item.category || 'Geral',
             quantity: 0,
             revenue: 0,
             costEstimate: 0,
@@ -926,9 +975,17 @@ export const AnalyticsModule: React.FC = () => {
           prodMap.set(key, entry);
         }
 
-        entry.quantity += item.quantity || 0;
-        entry.revenue += item.total || 0;
-        const itemCost = (prod?.costPrice || (item.unitPrice ? item.unitPrice * 0.5 : 0)) * (item.quantity || 0);
+        const qty = item.quantity || 0;
+        const itemRev = item.total || ((item.unitPrice || 0) * qty);
+        entry.quantity += qty;
+        entry.revenue += itemRev;
+        const unitCost =
+          prod?.costPrice !== undefined && prod.costPrice !== null
+            ? prod.costPrice
+            : item.unitPrice
+            ? item.unitPrice * 0.5
+            : 0;
+        const itemCost = unitCost * qty;
         entry.costEstimate += itemCost;
       });
     });
@@ -937,18 +994,23 @@ export const AnalyticsModule: React.FC = () => {
     const totalRev = summaryMetrics.totalRevenue || 1;
 
     return list
-      .map((item) => ({
-        ...item,
-        revenue: Number(item.revenue.toFixed(2)),
-        marginEstimate: Number((item.revenue - item.costEstimate).toFixed(2)),
-        marginPercent:
+      .map((item) => {
+        const margin = Number((item.revenue - item.costEstimate).toFixed(2));
+        const marginPct =
           item.revenue > 0
-            ? Number((((item.revenue - item.costEstimate) / item.revenue) * 100).toFixed(1))
-            : 0,
-        shareOfTotal: Number(((item.revenue / totalRev) * 100).toFixed(1)),
-      }))
+            ? Number(((margin / item.revenue) * 100).toFixed(1))
+            : 0;
+        return {
+          ...item,
+          revenue: Number(item.revenue.toFixed(2)),
+          costEstimate: Number(item.costEstimate.toFixed(2)),
+          marginEstimate: margin,
+          marginPercent: marginPct,
+          shareOfTotal: Number(((item.revenue / totalRev) * 100).toFixed(1)),
+        };
+      })
       .sort((a, b) => (topProductsMetric === 'revenue' ? b.revenue - a.revenue : b.quantity - a.quantity));
-  }, [filteredSales, products, summaryMetrics.totalRevenue, topProductsMetric]);
+  }, [filteredSales, products, categories, summaryMetrics.totalRevenue, topProductsMetric, findProductForSaleItem]);
 
   // Top 10 Products for BarChart
   const top10ChartData = useMemo(() => {
@@ -1509,11 +1571,11 @@ export const AnalyticsModule: React.FC = () => {
               </span>
             </div>
             <div className="mt-2 flex items-baseline justify-between">
-              <div className="text-xl font-bold text-emerald-400 tracking-tight">
-                +{formatCurrency(weeklyMarginMetrics.current.margin)}
+              <div className={`text-xl font-bold tracking-tight ${weeklyMarginMetrics.current.margin >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                {weeklyMarginMetrics.current.margin > 0 ? '+' : ''}{formatCurrency(weeklyMarginMetrics.current.margin)}
               </div>
               <span className={`text-xs font-bold px-1.5 py-0.5 rounded ${
-                weeklyMarginMetrics.current.marginPercent >= 30 ? 'bg-emerald-500/20 text-emerald-300' : 'bg-amber-500/20 text-amber-300'
+                weeklyMarginMetrics.current.marginPercent >= 30 ? 'bg-emerald-500/20 text-emerald-300' : weeklyMarginMetrics.current.marginPercent >= 0 ? 'bg-amber-500/20 text-amber-300' : 'bg-rose-500/20 text-rose-300'
               }`}>
                 {weeklyMarginMetrics.current.marginPercent}%
               </span>
@@ -1550,11 +1612,11 @@ export const AnalyticsModule: React.FC = () => {
               </span>
             </div>
             <div className="mt-2 flex items-baseline justify-between">
-              <div className="text-xl font-bold text-emerald-400 tracking-tight">
-                +{formatCurrency(monthlyMarginMetrics.current.margin)}
+              <div className={`text-xl font-bold tracking-tight ${monthlyMarginMetrics.current.margin >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                {monthlyMarginMetrics.current.margin > 0 ? '+' : ''}{formatCurrency(monthlyMarginMetrics.current.margin)}
               </div>
               <span className={`text-xs font-bold px-1.5 py-0.5 rounded ${
-                monthlyMarginMetrics.current.marginPercent >= 30 ? 'bg-emerald-500/20 text-emerald-300' : 'bg-amber-500/20 text-amber-300'
+                monthlyMarginMetrics.current.marginPercent >= 30 ? 'bg-emerald-500/20 text-emerald-300' : monthlyMarginMetrics.current.marginPercent >= 0 ? 'bg-amber-500/20 text-amber-300' : 'bg-rose-500/20 text-rose-300'
               }`}>
                 {monthlyMarginMetrics.current.marginPercent}%
               </span>
@@ -1591,11 +1653,11 @@ export const AnalyticsModule: React.FC = () => {
               </span>
             </div>
             <div className="mt-2 flex items-baseline justify-between">
-              <div className="text-xl font-bold text-emerald-400 tracking-tight">
-                +{formatCurrency(yearlyMarginMetrics.current.margin)}
+              <div className={`text-xl font-bold tracking-tight ${yearlyMarginMetrics.current.margin >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                {yearlyMarginMetrics.current.margin > 0 ? '+' : ''}{formatCurrency(yearlyMarginMetrics.current.margin)}
               </div>
               <span className={`text-xs font-bold px-1.5 py-0.5 rounded ${
-                yearlyMarginMetrics.current.marginPercent >= 30 ? 'bg-emerald-500/20 text-emerald-300' : 'bg-amber-500/20 text-amber-300'
+                yearlyMarginMetrics.current.marginPercent >= 30 ? 'bg-emerald-500/20 text-emerald-300' : yearlyMarginMetrics.current.marginPercent >= 0 ? 'bg-amber-500/20 text-amber-300' : 'bg-rose-500/20 text-rose-300'
               }`}>
                 {yearlyMarginMetrics.current.marginPercent}%
               </span>
@@ -1630,8 +1692,8 @@ export const AnalyticsModule: React.FC = () => {
               </span>
             </div>
             <div className="mt-2 flex items-baseline justify-between">
-              <div className="text-xl font-bold text-emerald-400 tracking-tight">
-                +{formatCurrency(periodMarginMetrics.margin)}
+              <div className={`text-xl font-bold tracking-tight ${periodMarginMetrics.margin >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                {periodMarginMetrics.margin > 0 ? '+' : ''}{formatCurrency(periodMarginMetrics.margin)}
               </div>
               <span className="text-xs font-bold px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300">
                 {periodMarginMetrics.marginPercent}%
@@ -1717,6 +1779,12 @@ export const AnalyticsModule: React.FC = () => {
               label: 'Margens & Rentabilidade',
               badge: 'Semana / Mês / Ano',
               icon: TrendingUp,
+            },
+            {
+              id: 'goals',
+              label: 'Metas Comerciais (Motor IA)',
+              badge: 'Gemini AI',
+              icon: Target,
             },
             {
               id: 'products',
@@ -2133,6 +2201,15 @@ export const AnalyticsModule: React.FC = () => {
         />
       )}
 
+      {/* 4.2 TAB: COMMERCIAL GOALS (AI Engine with Gemini 2.5 / 3.8 Flash) */}
+      {activeTab === 'goals' && (
+        <AnalyticsSalesGoalsTab
+          salesHistory={salesHistory}
+          formatCurrency={formatCurrency}
+          notify={notify}
+        />
+      )}
+
       {/* 5. TAB 2: Top Selling Products & Category Breakdown */}
       {(activeTab === 'overview' || activeTab === 'products') && (
         <div className="space-y-6">
@@ -2393,8 +2470,19 @@ export const AnalyticsModule: React.FC = () => {
                       <td className="py-3 px-4 text-right text-[#c5a47e] font-semibold">
                         {item.shareOfTotal}%
                       </td>
-                      <td className="py-3 px-4 text-right text-emerald-400 font-medium">
-                        +{formatCurrency(item.marginEstimate)} ({item.marginPercent}%)
+                      <td
+                        className={`py-3 px-4 text-right font-medium ${
+                          item.marginEstimate > 0
+                            ? 'text-emerald-400'
+                            : item.marginEstimate < 0
+                            ? 'text-rose-400'
+                            : 'text-neutral-400'
+                        }`}
+                        title={`Faturação: ${formatCurrency(item.revenue)} | Custo Est.: ${formatCurrency(item.costEstimate)} | Margem: ${formatCurrency(item.marginEstimate)}`}
+                      >
+                        {item.marginEstimate > 0 ? '+' : ''}
+                        {formatCurrency(item.marginEstimate)} ({item.marginEstimate > 0 ? '+' : ''}
+                        {item.marginPercent}%)
                       </td>
                     </tr>
                   ))}

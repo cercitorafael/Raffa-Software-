@@ -220,8 +220,8 @@ export const AnalyticsMarginsTab: React.FC<AnalyticsMarginsTabProps> = ({
                   {weeklyMarginMetrics.current.label}
                 </span>
               </div>
-              <div className="mt-2 text-2xl font-bold text-emerald-400">
-                +{formatCurrency(weeklyMarginMetrics.current.margin)}
+              <div className={`mt-2 text-2xl font-bold ${weeklyMarginMetrics.current.margin >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                {weeklyMarginMetrics.current.margin > 0 ? '+' : ''}{formatCurrency(weeklyMarginMetrics.current.margin)}
               </div>
               <div className="mt-1 flex items-center justify-between text-xs">
                 <span className="text-neutral-400">Margem %:</span>
@@ -243,8 +243,8 @@ export const AnalyticsMarginsTab: React.FC<AnalyticsMarginsTabProps> = ({
                   {monthlyMarginMetrics.current.label}
                 </span>
               </div>
-              <div className="mt-2 text-2xl font-bold text-emerald-400">
-                +{formatCurrency(monthlyMarginMetrics.current.margin)}
+              <div className={`mt-2 text-2xl font-bold ${monthlyMarginMetrics.current.margin >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                {monthlyMarginMetrics.current.margin > 0 ? '+' : ''}{formatCurrency(monthlyMarginMetrics.current.margin)}
               </div>
               <div className="mt-1 flex items-center justify-between text-xs">
                 <span className="text-neutral-400">Margem %:</span>
@@ -266,8 +266,8 @@ export const AnalyticsMarginsTab: React.FC<AnalyticsMarginsTabProps> = ({
                   Ano {yearlyMarginMetrics.current.year}
                 </span>
               </div>
-              <div className="mt-2 text-2xl font-bold text-emerald-400">
-                +{formatCurrency(yearlyMarginMetrics.current.margin)}
+              <div className={`mt-2 text-2xl font-bold ${yearlyMarginMetrics.current.margin >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                {yearlyMarginMetrics.current.margin > 0 ? '+' : ''}{formatCurrency(yearlyMarginMetrics.current.margin)}
               </div>
               <div className="mt-1 flex items-center justify-between text-xs">
                 <span className="text-neutral-400">Margem %:</span>
@@ -289,8 +289,8 @@ export const AnalyticsMarginsTab: React.FC<AnalyticsMarginsTabProps> = ({
                   {periodMarginMetrics.transactions} docs
                 </span>
               </div>
-              <div className="mt-2 text-2xl font-bold text-emerald-400">
-                +{formatCurrency(periodMarginMetrics.margin)}
+              <div className={`mt-2 text-2xl font-bold ${periodMarginMetrics.margin >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                {periodMarginMetrics.margin > 0 ? '+' : ''}{formatCurrency(periodMarginMetrics.margin)}
               </div>
               <div className="mt-1 flex items-center justify-between text-xs">
                 <span className="text-neutral-400">Margem Global %:</span>
@@ -442,8 +442,8 @@ export const AnalyticsMarginsTab: React.FC<AnalyticsMarginsTabProps> = ({
                     </span>
                   </div>
                   <div className="mt-1 flex items-baseline justify-between">
-                    <span className="text-lg font-bold text-emerald-400">
-                      +{formatCurrency(monthlyMarginMetrics.bestMonth?.margin || 0)}
+                    <span className={`text-lg font-bold ${(monthlyMarginMetrics.bestMonth?.margin || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                      {(monthlyMarginMetrics.bestMonth?.margin || 0) > 0 ? '+' : ''}{formatCurrency(monthlyMarginMetrics.bestMonth?.margin || 0)}
                     </span>
                     <span className="text-xs font-semibold text-neutral-400">
                       Margem: {monthlyMarginMetrics.bestMonth?.marginPercent || 0}%
@@ -463,8 +463,8 @@ export const AnalyticsMarginsTab: React.FC<AnalyticsMarginsTabProps> = ({
                     </span>
                   </div>
                   <div className="mt-1 flex items-baseline justify-between">
-                    <span className="text-lg font-bold text-emerald-400">
-                      +{formatCurrency(weeklyMarginMetrics.bestWeek?.margin || 0)}
+                    <span className={`text-lg font-bold ${(weeklyMarginMetrics.bestWeek?.margin || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                      {(weeklyMarginMetrics.bestWeek?.margin || 0) > 0 ? '+' : ''}{formatCurrency(weeklyMarginMetrics.bestWeek?.margin || 0)}
                     </span>
                     <span className="text-xs font-semibold text-neutral-400">
                       Margem: {weeklyMarginMetrics.bestWeek?.marginPercent || 0}%
@@ -681,8 +681,8 @@ export const AnalyticsMarginsTab: React.FC<AnalyticsMarginsTabProps> = ({
                       <td className="py-3 px-4 text-right text-neutral-400 font-mono">
                         {formatCurrency(week.cost)}
                       </td>
-                      <td className="py-3 px-4 text-right font-bold text-emerald-400 font-mono">
-                        +{formatCurrency(week.margin)}
+                      <td className={`py-3 px-4 text-right font-bold font-mono ${week.margin >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                        {week.margin > 0 ? '+' : ''}{formatCurrency(week.margin)}
                       </td>
                       <td className="py-3 px-4 text-right">
                         <span className={`px-2 py-0.5 rounded border font-bold text-[10px] ${getMarginBadgeClass(week.marginPercent)}`}>
@@ -757,8 +757,8 @@ export const AnalyticsMarginsTab: React.FC<AnalyticsMarginsTabProps> = ({
                       <td className="py-3 px-4 text-right text-neutral-400 font-mono">
                         {formatCurrency(month.cost)}
                       </td>
-                      <td className="py-3 px-4 text-right font-bold text-emerald-400 font-mono">
-                        +{formatCurrency(month.margin)}
+                      <td className={`py-3 px-4 text-right font-bold font-mono ${month.margin >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                        {month.margin > 0 ? '+' : ''}{formatCurrency(month.margin)}
                       </td>
                       <td className="py-3 px-4 text-right">
                         <span className={`px-2 py-0.5 rounded border font-bold text-[10px] ${getMarginBadgeClass(month.marginPercent)}`}>
@@ -842,8 +842,8 @@ export const AnalyticsMarginsTab: React.FC<AnalyticsMarginsTabProps> = ({
                       <td className="py-3 px-4 text-right text-neutral-400 font-mono">
                         {formatCurrency(year.cost)}
                       </td>
-                      <td className="py-3 px-4 text-right font-bold text-emerald-400 font-mono text-sm">
-                        +{formatCurrency(year.margin)}
+                      <td className={`py-3 px-4 text-right font-bold font-mono text-sm ${year.margin >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                        {year.margin > 0 ? '+' : ''}{formatCurrency(year.margin)}
                       </td>
                       <td className="py-3 px-4 text-right">
                         <span className={`px-2 py-0.5 rounded border font-bold text-xs ${getMarginBadgeClass(year.marginPercent)}`}>
@@ -914,8 +914,8 @@ export const AnalyticsMarginsTab: React.FC<AnalyticsMarginsTabProps> = ({
                       <td className="py-3 px-4 text-right text-neutral-400 font-mono">
                         {formatCurrency(cat.cost)}
                       </td>
-                      <td className="py-3 px-4 text-right font-bold text-emerald-400 font-mono">
-                        +{formatCurrency(cat.margin)}
+                      <td className={`py-3 px-4 text-right font-bold font-mono ${cat.margin >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                        {cat.margin > 0 ? '+' : ''}{formatCurrency(cat.margin)}
                       </td>
                       <td className="py-3 px-4 text-right">
                         <span className={`px-2 py-0.5 rounded border font-bold text-[10px] ${getMarginBadgeClass(cat.marginPercent)}`}>
