@@ -1040,7 +1040,7 @@ export const CashShiftModal: React.FC<CashShiftModalProps> = ({ onClose, initial
               </div>
 
               {/* Daily Sales Reconciliation Card */}
-              {todayFiscalTotal > 0 && (
+              {(todayFiscalTotal > 0 || shiftSalesTotal > 0) && (
                 <div className="bg-[#0f0f0f] p-3.5 rounded-lg border border-[#2b2b2b] space-y-2 text-xs">
                   <div className="flex items-center justify-between">
                     <span className="text-[10px] font-bold uppercase tracking-widest text-[#c5a47e] flex items-center space-x-1.5">
@@ -1070,9 +1070,9 @@ export const CashShiftModal: React.FC<CashShiftModalProps> = ({ onClose, initial
                     A Visão Geral reflete todas as faturas do dia civil. A gaveta física calcula as entradas estritamente a partir da abertura deste turno ({formatDate(activeShift.openedAt)}).
                   </p>
 
-                  {outsideShiftSales > 0 && (
+                  {(outsideShiftSales > 0 || Math.abs(todayFiscalTotal - shiftSalesTotal) > 0.01) && (
                     <div className="pt-1 flex items-center justify-between bg-[#171717] p-2 rounded-md border border-[#333]">
-                      <span className="text-[11px] text-neutral-300">Deseja consolidar estas faturas no turno aberto?</span>
+                      <span className="text-[11px] text-neutral-300">Deseja reconciliar as vendas ativas com o turno?</span>
                       <button
                         type="button"
                         onClick={() => syncActiveShiftWithTodaySales()}

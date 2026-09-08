@@ -1,4 +1,4 @@
-import { Sale, InvoiceType } from '../types';
+import { Sale, InvoiceType, CashShift } from '../types';
 
 /**
  * Checks whether a document or document type is an effective completed sale / invoice.
@@ -133,3 +133,122 @@ export function canDeleteDocument(doc: Sale): boolean {
   const t = (doc.invoiceType || '').toUpperCase();
   return ['PF', 'ORC', 'FP'].includes(t);
 }
+
+/**
+ * Calculates the real-time financial totals for an active cash shift based strictly
+ * on existing, non-annulled sales and credit notes recorded during the shift session.
+ * 
+ * If a sale was deleted, voided, or cancelled, it will not contribute to the shift,
+ * ensuring the physical drawer and shift metrics never retain phantom or voided sales.
+ */
+export function calculateShiftSalesTotals(
+  shift: CashShift | null,
+  sales: Sale[]
+): {
+  totalSales: number;
+  totalCash: number;
+  totalCards: number;
+  totalMbway: number;
+  totalTransfers: number;
+  totalVouchers: number;
+} {
+  if (!shift) {
+    return { totalSales: 0, totalCash: 0, totalCards: 0, totalMbway: 0, totalTransfers: 0, totalVouchers: 0 };
+  }
+
+  const shiftDay = shift.openedAt ? shift.openedAt.substring(0, 10) : '';
+
+  // Filter sales that took place in this shift session
+  const shiftSales = sales.filter((s) => {
+    if (s.companyId && shift.companyId && s.companyId !== shift.companyId) return false;
+    // Anulled or cancelled sales have zero contribution to shift
+    if (s.status === 'anulado' || s.status === 'cancelado') return false;
+
+    // Direct shift match
+    if (s.shiftId && s.shiftId === shift.id) return true;
+
+    // If shiftId is absent or generic ('no-shift' / 'shift-doc'), check time and date
+    if (!s.shiftId || s.shiftId === 'no-shift' || s.shiftId === 'shift-doc') {
+      if (shift.openedAt && s.date && s.date >= shift.openedAt) {
+        const saleDay = s.date.substring(0, 10);
+        if (saleDay === shiftDay) return true;
+      }
+    }
+
+    return false;
+  });
+
+  let totalSales = 0;
+  let totalCash = 0;
+  let totalCards = 0;
+  let totalMbway = 0;
+  let totalTransfers = 0;
+  let totalVouchers = 0;
+
+  shiftSales.forEach((s) => {
+    const invType = (s.invoiceType || '').toUpperCase();
+    const isSale = ['FT', 'FS', 'FR', 'VD', 'ND'].includes(invType);
+    const isNC = invType === 'NC';
+    if (!isSale && !isNC) return; // ignore Proformas, Quotes, Guides
+
+    let mult = 1;
+    if (isNC) {
+      mult = -1;
+      // If the original invoice it refers to was already marked 'anulado' or eliminated,
+      // it is already excluded, so NC shouldn't double-subtract.
+      if (s.notes) {
+        const match = s.notes.match(/referente a ([A-Z0-9\/\s\-]+?)\./i);
+        if (match && match[1]) {
+          const origNum = match[1].trim();
+          const origDoc = sales.find((orig) => orig.invoiceNumber === origNum);
+          if (origDoc && (origDoc.status === 'anulado' || origDoc.status === 'cancelado')) {
+            mult = 0; // already excluded
+          }
+        }
+      }
+    }
+
+    if (mult === 0) return;
+
+    totalSales += mult * (s.total || 0);
+
+    // Payments breakdown
+    if (Array.isArray(s.payments) && s.payments.length > 0) {
+      s.payments.forEach((p) => {
+        const rawAmt = Number(p.amount) || 0;
+        const safeAmt = s.total > 0 && rawAmt > s.total ? s.total : rawAmt;
+        const amt = mult * safeAmt;
+        const method = (p.method || '').toLowerCase();
+        if (method === 'dinheiro' || method === 'numerario') {
+          totalCash += amt;
+        } else if (method === 'cartao' || method === 'tpa' || method === 'visa' || method === 'mastercard') {
+          totalCards += amt;
+        } else if (method === 'mbway' || method === 'mpesa' || method === 'emola') {
+          totalMbway += amt;
+        } else if (method === 'transferencia') {
+          totalTransfers += amt;
+        } else if (method === 'vale' || method === 'voucher') {
+          totalVouchers += amt;
+        } else {
+          totalCash += amt;
+        }
+      });
+    } else {
+      // If no payments specified:
+      // In immediate payment documents (FR, FS, VD) that are not 'pendente', treat as cash
+      if (['FR', 'FS', 'VD'].includes(invType) && s.status !== 'pendente') {
+        totalCash += mult * (s.total || 0);
+      }
+    }
+  });
+
+  return {
+    totalSales: Math.max(0, Number(totalSales.toFixed(2))),
+    totalCash: Math.max(0, Number(totalCash.toFixed(2))),
+    totalCards: Math.max(0, Number(totalCards.toFixed(2))),
+    totalMbway: Math.max(0, Number(totalMbway.toFixed(2))),
+    totalTransfers: Math.max(0, Number(totalTransfers.toFixed(2))),
+    totalVouchers: Math.max(0, Number(totalVouchers.toFixed(2))),
+  };
+}
+

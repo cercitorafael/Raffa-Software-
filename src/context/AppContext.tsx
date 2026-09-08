@@ -121,7 +121,7 @@ import {
 import { INDUSTRY_PRESETS, IndustryPreset } from '../data/industryPresets';
 import { calculateSubscription, SubscriptionInfo } from '../utils/subscription';
 import { getTodayDateStr } from '../utils/dateUtils';
-import { isEffectiveSale } from '../utils/documentUtils';
+import { isEffectiveSale, calculateShiftSalesTotals } from '../utils/documentUtils';
 
 export interface CartItem extends SaleItem {
   image?: string;
@@ -1183,6 +1183,38 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     events,
     syncQueue,
   ]);
+
+  // Auto-reconcile active shift with actual existing non-annulled sales
+  // Guarantees that if any sale document is deleted or voided, the cash register never retains phantom amounts
+  useEffect(() => {
+    if (!activeShift || activeShift.status !== 'aberto') return;
+    const computed = calculateShiftSalesTotals(activeShift, salesHistory);
+    const hasDiscrepancy =
+      Math.abs((activeShift.totalSales || 0) - computed.totalSales) > 0.009 ||
+      Math.abs((activeShift.totalCash || 0) - computed.totalCash) > 0.009 ||
+      Math.abs((activeShift.totalCards || 0) - computed.totalCards) > 0.009 ||
+      Math.abs((activeShift.totalMbway || 0) - computed.totalMbway) > 0.009 ||
+      Math.abs((activeShift.totalTransfers || 0) - computed.totalTransfers) > 0.009 ||
+      Math.abs((activeShift.totalVouchers || 0) - computed.totalVouchers) > 0.009;
+
+    if (hasDiscrepancy) {
+      setActiveShift((prev) => {
+        if (!prev || prev.status !== 'aberto') return prev;
+        const reconciled: CashShift = {
+          ...prev,
+          totalSales: computed.totalSales,
+          totalCash: computed.totalCash,
+          totalCards: computed.totalCards,
+          totalMbway: computed.totalMbway,
+          totalTransfers: computed.totalTransfers,
+          totalVouchers: computed.totalVouchers,
+        };
+        saveToStorage('activeShift', reconciled);
+        pushRecordToSupabase('turnos_caixa', 'upsert', reconciled);
+        return reconciled;
+      });
+    }
+  }, [salesHistory, activeShift?.id, activeShift?.status, activeShift?.totalSales, activeShift?.totalCash]);
 
   // ==================== SUPABASE REAL-TIME SYNCHRONIZATION ENGINE ====================
   const reconnectSupabaseRealtime = useCallback(() => {
@@ -4087,77 +4119,36 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     const todayStr = getTodayDateStr();
-    const compId = currentCompany?.id;
-    // Vendas comerciais de hoje da empresa ativa
-    const todaySales = salesHistory.filter(
-      (s) => s.date && s.date.substring(0, 10) === todayStr && isEffectiveSale(s) && (!compId || s.companyId === compId)
-    );
-
-    let totalSales = 0;
-    let totalCash = 0;
-    let totalCards = 0;
-    let totalMbway = 0;
-    let totalTransfers = 0;
-    let totalVouchers = 0;
-
-    todaySales.forEach((s) => {
-      const isNC = (s.invoiceType || '').toUpperCase() === 'NC';
-      const mult = isNC ? -1 : 1;
-      totalSales += mult * (s.total || 0);
-
-      // Pagamentos
-      if (Array.isArray(s.payments) && s.payments.length > 0) {
-        s.payments.forEach((p) => {
-          // If a payment was recorded with amount > s.total, cap it to s.total to prevent shift cash inflation
-          const rawAmt = Number(p.amount) || 0;
-          const safeAmt = s.total > 0 && rawAmt > s.total ? s.total : rawAmt;
-          const amt = mult * safeAmt;
-          const method = (p.method || '').toLowerCase();
-          if (method === 'dinheiro' || method === 'numerario') {
-            totalCash += amt;
-          } else if (method === 'cartao' || method === 'tpa' || method === 'visa' || method === 'mastercard') {
-            totalCards += amt;
-          } else if (method === 'mbway' || method === 'mpesa' || method === 'emola') {
-            totalMbway += amt;
-          } else if (method === 'transferencia') {
-            totalTransfers += amt;
-          } else if (method === 'vale' || method === 'voucher') {
-            totalVouchers += amt;
-          } else {
-            totalCash += amt;
-          }
-        });
-      } else {
-        totalCash += mult * (s.total || 0);
-      }
-    });
+    const newTotals = calculateShiftSalesTotals(activeShift, salesHistory);
 
     const updatedShift: CashShift = {
       ...activeShift,
-      totalSales: Math.max(0, totalSales),
-      totalCash: Math.max(0, totalCash),
-      totalCards: Math.max(0, totalCards),
-      totalMbway: Math.max(0, totalMbway),
-      totalTransfers: Math.max(0, totalTransfers),
-      totalVouchers: Math.max(0, totalVouchers),
+      totalSales: newTotals.totalSales,
+      totalCash: newTotals.totalCash,
+      totalCards: newTotals.totalCards,
+      totalMbway: newTotals.totalMbway,
+      totalTransfers: newTotals.totalTransfers,
+      totalVouchers: newTotals.totalVouchers,
     };
 
     // Atribui o shiftId a essas vendas de hoje se não tiverem
-    setSalesHistory((prev) =>
-      prev.map((s) => {
+    setSalesHistory((prev) => {
+      const mapped = prev.map((s) => {
         if (s.date && s.date.substring(0, 10) === todayStr && (!s.shiftId || s.shiftId === 'no-shift')) {
           return { ...s, shiftId: activeShift.id };
         }
         return s;
-      })
-    );
+      });
+      saveToStorage('salesHistory', mapped);
+      return mapped;
+    });
 
     setActiveShift(updatedShift);
     saveToStorage('activeShift', updatedShift);
     pushRecordToSupabase('turnos_caixa', 'upsert', updatedShift);
     sound.playSuccessChime();
     notify(
-      `Caixa sincronizada! ${todaySales.length} faturas de hoje foram reconciliadas com esta caixa (${formatCurrency(totalSales)}).`,
+      `Caixa sincronizada! Vendas reconciliadas com sucesso (${formatCurrency(newTotals.totalSales)}).`,
       'success'
     );
   }, [activeShift, salesHistory, notify]);
@@ -4637,11 +4628,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       ? ' [Stock: Artigos devolvidos ao inventário]'
       : ' [Stock: Sem alteração física / Apenas estorno financeiro]';
 
+    const updatedInv: Sale = {
+      ...inv,
+      status: 'anulado',
+      notes: `${inv.notes || ''} [ANULADO / ESTORNADO via ${ncNumber}: Motivo - ${reason}]`.trim(),
+    };
+
     const ncSale: Sale = {
       ...inv,
       id: `sale-nc-${Date.now()}`,
       invoiceNumber: ncNumber,
       invoiceType: 'NC',
+      status: 'emitido',
+      shiftId: activeShift?.id || inv.shiftId || 'no-shift',
       date: dateStr,
       fiscalHash: ncHash,
       previousHash: prevHash,
@@ -4658,8 +4657,33 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       );
     }
 
-    setSalesHistory((prev) => [ncSale, ...prev]);
+    const updatedHistory = [ncSale, ...salesHistory.map((s) => (s.id === inv.id ? updatedInv : s))];
+    setSalesHistory(updatedHistory);
+    saveToStorage('salesHistory', updatedHistory);
+    pushRecordToSupabase('vendas', 'update', updatedInv);
     pushRecordToSupabase('vendas', 'insert', ncSale);
+
+    // Instantly cancel/deduct from cash shift if an active shift is open
+    if (activeShift) {
+      const newTotals = calculateShiftSalesTotals(activeShift, updatedHistory);
+      const updatedShift: CashShift = {
+        ...activeShift,
+        totalSales: newTotals.totalSales,
+        totalCash: newTotals.totalCash,
+        totalCards: newTotals.totalCards,
+        totalMbway: newTotals.totalMbway,
+        totalTransfers: newTotals.totalTransfers,
+        totalVouchers: newTotals.totalVouchers,
+      };
+      setActiveShift(updatedShift);
+      saveToStorage('activeShift', updatedShift);
+      pushRecordToSupabase('turnos_caixa', 'upsert', updatedShift);
+    }
+
+    if (lastCompletedSale?.id === invoiceId) {
+      setLastCompletedSale(null);
+    }
+
     emitEvent('Financeiro', 'finance.invoice.annulled', {
       originalInvoice: inv.invoiceNumber,
       creditNote: ncNumber,
@@ -4668,6 +4692,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       restocked: restockStock,
     });
     sound.playSuccessChime();
+    notify(`Fatura ${inv.invoiceNumber} anulada com sucesso. Valor cancelado/estornado do caixa.`, 'success');
   };
 
   const updateDocument = (id: string, updates: Partial<Sale>) => {
@@ -4701,19 +4726,39 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       );
     }
 
-    setSalesHistory((prev) => {
-      const updated = prev.filter((s) => s.id !== id);
-      saveToStorage('salesHistory', updated);
-      return updated;
-    });
+    const updated = salesHistory.filter((s) => s.id !== id);
+    setSalesHistory(updated);
+    saveToStorage('salesHistory', updated);
     pushRecordToSupabase('vendas', 'delete', { id });
+
+    // Instantly cancel/deduct from cash shift if an active shift is open
+    if (activeShift) {
+      const newTotals = calculateShiftSalesTotals(activeShift, updated);
+      const updatedShift: CashShift = {
+        ...activeShift,
+        totalSales: newTotals.totalSales,
+        totalCash: newTotals.totalCash,
+        totalCards: newTotals.totalCards,
+        totalMbway: newTotals.totalMbway,
+        totalTransfers: newTotals.totalTransfers,
+        totalVouchers: newTotals.totalVouchers,
+      };
+      setActiveShift(updatedShift);
+      saveToStorage('activeShift', updatedShift);
+      pushRecordToSupabase('turnos_caixa', 'upsert', updatedShift);
+    }
+
+    if (lastCompletedSale?.id === id) {
+      setLastCompletedSale(null);
+    }
+
     emitEvent('Financeiro', 'document.deleted', {
       documentId: id,
       invoiceNumber: doc.invoiceNumber,
       type: doc.invoiceType,
     });
     sound.playSuccessChime();
-    notify(`Documento ${doc.invoiceNumber} eliminado com sucesso.`, 'success');
+    notify(`Documento ${doc.invoiceNumber} eliminado com sucesso. O valor correspondente foi cancelado do caixa.`, 'success');
   };
 
   const clearSalesHistory = (idsOrScope?: string[] | 'all', restockStock: boolean = false) => {
@@ -4745,20 +4790,36 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       });
     }
 
-    setSalesHistory((prev) => {
-      let updated: Sale[];
-      if (!idsOrScope || idsOrScope === 'all') {
-        updated = [];
-      } else {
-        updated = prev.filter((s) => !idsOrScope.includes(s.id));
-      }
-      saveToStorage('salesHistory', updated);
-      return updated;
-    });
+    const updated = (!idsOrScope || idsOrScope === 'all')
+      ? []
+      : salesHistory.filter((s) => !idsOrScope.includes(s.id));
+    setSalesHistory(updated);
+    saveToStorage('salesHistory', updated);
 
     toDelete.forEach((doc) => {
       pushRecordToSupabase('vendas', 'delete', { id: doc.id });
     });
+
+    // Instantly cancel/deduct from cash shift if an active shift is open
+    if (activeShift) {
+      const newTotals = calculateShiftSalesTotals(activeShift, updated);
+      const updatedShift: CashShift = {
+        ...activeShift,
+        totalSales: newTotals.totalSales,
+        totalCash: newTotals.totalCash,
+        totalCards: newTotals.totalCards,
+        totalMbway: newTotals.totalMbway,
+        totalTransfers: newTotals.totalTransfers,
+        totalVouchers: newTotals.totalVouchers,
+      };
+      setActiveShift(updatedShift);
+      saveToStorage('activeShift', updatedShift);
+      pushRecordToSupabase('turnos_caixa', 'upsert', updatedShift);
+    }
+
+    if (lastCompletedSale && (!idsOrScope || idsOrScope === 'all' || idsOrScope.includes(lastCompletedSale.id))) {
+      setLastCompletedSale(null);
+    }
 
     emitEvent('Financeiro', 'documents.cleared', {
       count: toDelete.length,
@@ -4766,25 +4827,50 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
 
     sound.playSuccessChime();
-    notify(`${toDelete.length} documento(s) fiscal(ais) eliminado(s) com sucesso.`, 'success');
+    notify(`${toDelete.length} documento(s) fiscal(ais) eliminado(s) com sucesso. Valores cancelados do caixa.`, 'success');
   };
 
   const updateDocumentStatus = (
     id: string,
     status: 'emitido' | 'anulado' | 'pago' | 'pendente' | 'aprovado' | 'recusado' | 'convertido'
   ) => {
-    setSalesHistory((prev) =>
-      prev.map((doc) => {
+    let updatedHistory: Sale[] = [];
+    setSalesHistory((prev) => {
+      updatedHistory = prev.map((doc) => {
         if (doc.id === id) {
           const updated: Sale = { ...doc, status };
           pushRecordToSupabase('vendas', 'update', updated);
           return updated;
         }
         return doc;
-      })
-    );
+      });
+      saveToStorage('salesHistory', updatedHistory);
+      return updatedHistory;
+    });
+
+    // Instantly cancel/deduct from cash shift if an active shift is open
+    if (activeShift) {
+      const newTotals = calculateShiftSalesTotals(activeShift, updatedHistory);
+      const updatedShift: CashShift = {
+        ...activeShift,
+        totalSales: newTotals.totalSales,
+        totalCash: newTotals.totalCash,
+        totalCards: newTotals.totalCards,
+        totalMbway: newTotals.totalMbway,
+        totalTransfers: newTotals.totalTransfers,
+        totalVouchers: newTotals.totalVouchers,
+      };
+      setActiveShift(updatedShift);
+      saveToStorage('activeShift', updatedShift);
+      pushRecordToSupabase('turnos_caixa', 'upsert', updatedShift);
+    }
+
+    if (status === 'anulado' && lastCompletedSale?.id === id) {
+      setLastCompletedSale(null);
+    }
+
     sound.playSuccessChime();
-    notify(`Estado do documento alterado para "${status}".`, 'success');
+    notify(`Estado do documento alterado para "${status}" e valores de caixa reconciliados.`, 'success');
   };
 
   const convertQuoteToInvoice = async (
