@@ -34,9 +34,10 @@ import {
 } from 'recharts';
 
 export interface WeeklyMarginMetricItem {
-  key: string;
+  key?: string;
+  weekKey?: string;
   weekNumber: number;
-  year: number;
+  year?: number;
   label: string;
   startDate: string;
   endDate: string;
@@ -46,13 +47,14 @@ export interface WeeklyMarginMetricItem {
   marginPercent: number;
   transactions: number;
   units: number;
-  growthPercent: number;
+  growthPercent?: number;
 }
 
 export interface MonthlyMarginMetricItem {
-  key: string;
-  monthIndex: number;
-  year: number;
+  key?: string;
+  monthKey?: string;
+  monthIndex?: number;
+  year?: number;
   label: string;
   revenue: number;
   cost: number;
@@ -60,7 +62,7 @@ export interface MonthlyMarginMetricItem {
   marginPercent: number;
   transactions: number;
   units: number;
-  growthPercent: number;
+  growthPercent?: number;
 }
 
 export interface YearlyMarginMetricItem {
@@ -75,12 +77,16 @@ export interface YearlyMarginMetricItem {
 
 export interface CategoryMarginItem {
   category: string;
+  name?: string;
   revenue: number;
   cost: number;
   margin: number;
   marginPercent: number;
-  quantity: number;
-  shareOfTotalMargin: number;
+  quantity?: number;
+  units?: number;
+  salesCount?: number;
+  shareOfMargin?: number;
+  shareOfTotalMargin?: number;
 }
 
 interface AnalyticsMarginsTabProps {
@@ -88,18 +94,19 @@ interface AnalyticsMarginsTabProps {
     series: WeeklyMarginMetricItem[];
     current: WeeklyMarginMetricItem;
     bestWeek: WeeklyMarginMetricItem | null;
-    avgMarginPercent: number;
+    avgMarginPercent?: number;
+    avgWeeklyMargin?: number;
   };
   monthlyMarginMetrics: {
     series: MonthlyMarginMetricItem[];
     current: MonthlyMarginMetricItem;
     bestMonth: MonthlyMarginMetricItem | null;
-    avgMarginPercent: number;
+    avgMarginPercent?: number;
   };
   yearlyMarginMetrics: {
     series: YearlyMarginMetricItem[];
     current: YearlyMarginMetricItem;
-    totalMargin: number;
+    totalMargin?: number;
   };
   periodMarginMetrics: {
     revenue: number;

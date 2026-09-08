@@ -28,6 +28,8 @@ import { SubscriptionModal } from './components/subscription/SubscriptionModal';
 import { ToastContainer } from './components/common/ToastContainer';
 import { ConfirmModal } from './components/common/ConfirmModal';
 
+import { ErrorBoundary } from './components/common/ErrorBoundary';
+
 const MainLayout: React.FC = () => {
   const { activeNavTab, showOfflineSyncModal, setShowOfflineSyncModal } = useApp();
   const [showGlobalShiftModal, setShowGlobalShiftModal] = React.useState(false);
@@ -135,11 +137,13 @@ const AppContent: React.FC = () => {
 
 export default function App() {
   return (
-    <I18nProvider>
-      <AppProvider>
-        <AppContent />
-      </AppProvider>
-    </I18nProvider>
+    <ErrorBoundary>
+      <I18nProvider>
+        <AppProvider>
+          <AppContent />
+        </AppProvider>
+      </I18nProvider>
+    </ErrorBoundary>
   );
 }
 

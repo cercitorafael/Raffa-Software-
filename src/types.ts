@@ -1,6 +1,6 @@
 // Types for the Sistema Integrado POS/ERP Empresarial
 
-export type Role = 'caixa' | 'gerente' | 'financeiro' | 'rh' | 'comprador' | 'admin';
+export type Role = 'caixa' | 'gerente' | 'financeiro' | 'rh' | 'comprador' | 'admin' | 'manager' | (string & {});
 
 export type AppTheme = 'dark' | 'light' | 'midnight' | 'emerald';
 
@@ -129,12 +129,21 @@ export interface VatRate {
   code: string; // Código SAF-T / Fiscal (ex: NOR, ISE, RED, INT)
   isDefault?: boolean;
   exemptionReason?: string; // Motivo de isenção de IVA (ex: Art. 9º CIVA)
-  isActive: boolean;
+  isActive?: boolean;
+  active?: boolean;
   description?: string;
 }
 
 export type CompanyStatus = 'active' | 'suspended' | 'trial' | 'expired' | 'pending';
 export type BillingCycle = 'monthly' | 'yearly';
+
+export interface CompanyAttachedDocument {
+  name: string;
+  size?: number;
+  type?: string;
+  dataUrl: string;
+  uploadedAt: string;
+}
 
 export interface Company {
   id: string;
@@ -159,6 +168,7 @@ export interface Company {
   email: string;
   website?: string;
   logoUrl?: string; // Logótipo da Empresa (URL / Base64)
+  logoPosition?: 'left' | 'center' | 'right';
   softwareCertNumber: string; // ex: 3412/AT ou Autoridade Tributária local
   saftVersion: string;
   shareCapital?: string;
@@ -167,6 +177,10 @@ export interface Company {
   defaultBank?: string;
   activeInvoiceTemplateId?: string;
   invoiceTemplates?: InvoiceTemplateConfig[];
+
+  // Documentos Oficiais & Fiscais (Requerimento e Memória Descritiva)
+  requerimentoDoc?: CompanyAttachedDocument;
+  memoriaDescritivaDoc?: CompanyAttachedDocument;
 
   // Subscription & Licensing
   status?: CompanyStatus | string;
@@ -183,19 +197,24 @@ export interface Store {
   name: string;
   address: string;
   city: string;
+  postalCode?: string;
   phone: string;
-  managerId: string;
-  defaultWarehouseId: string;
-  terminalsCount: number;
+  managerId?: string;
+  defaultWarehouseId?: string;
+  terminalsCount?: number;
+  isActive?: boolean;
 }
 
 export interface Terminal {
   id: string;
   storeId: string;
   code: string; // ex: "POS-01"
-  description: string;
-  isActive: boolean;
-  currentShiftId: string | null;
+  name?: string;
+  series?: string;
+  currentSequence?: number;
+  description?: string;
+  isActive?: boolean;
+  currentShiftId?: string | null;
   printerModel?: string;
 }
 
@@ -214,6 +233,7 @@ export interface Product {
   barcode: string;
   name: string;
   category: string;
+  categoryId?: string;
   price: number; // PVP com IVA
   costPrice: number; // Preço de Custo
   taxRate: number; // ex: 23, 13, 6, 0 (%)
@@ -266,8 +286,10 @@ export interface StockMovement {
   movementNumber?: string;
   date?: string;
   timestamp?: string;
+  createdAt?: string;
   type: MovementType;
   productId: string;
+  warehouseId?: string;
   sourceWarehouseId?: string;
   originWarehouseId?: string;
   targetWarehouseId?: string;
@@ -351,7 +373,7 @@ export interface PhysicalCount {
   }[];
 }
 
-export type PaymentMethod = 'dinheiro' | 'cartao' | 'mbway' | 'transferencia' | 'vale';
+export type PaymentMethod = 'dinheiro' | 'cartao' | 'mbway' | 'transferencia' | 'vale' | 'tpa' | 'cheque' | 'outro' | (string & {});
 
 export interface PaymentRecord {
   id?: string;
@@ -366,13 +388,15 @@ export interface PaymentRecord {
 export interface SaleItem {
   productId: string;
   productName: string;
-  sku: string;
+  sku?: string;
+  category?: string;
   quantity: number;
   unitPrice: number;
   taxRate: number;
-  taxAmount: number;
-  discountPercent: number;
-  discountAmount: number;
+  taxAmount?: number;
+  discountPercent?: number;
+  discountAmount?: number;
+  discount?: number;
   total: number;
   unit?: string;
   lotNumber?: string;
@@ -494,6 +518,7 @@ export interface Customer {
   companyId: string;
   name: string;
   taxNumber: string; // NIF
+  nif?: string; // Alias for taxNumber
   email: string;
   phone: string;
   address: string;
@@ -502,7 +527,7 @@ export interface Customer {
   country?: string;
   segment?: 'vip' | 'recorrente' | 'novo' | 'em_risco';
   loyaltyPoints: number;
-  loyaltyTier: 'Bronze' | 'Prata' | 'Ouro' | 'Platina' | 'bronze' | 'prata' | 'ouro' | 'platina';
+  loyaltyTier: 'Bronze' | 'Prata' | 'Ouro' | 'Platina' | 'bronze' | 'prata' | 'ouro' | 'platina' | string;
   totalSpent: number;
   ordersCount?: number;
   creditLimit?: number;
@@ -558,27 +583,29 @@ export interface Supplier {
   companyId: string;
   code: string;
   name: string;
-  tradeName: string;
+  tradeName?: string;
   taxNumber: string;
   email: string;
   phone: string;
   address: string;
-  paymentTerms: string; // ex: "30 dias", "Pronto Pagamento", "60 dias"
-  iban: string;
-  rating: number; // 1-5
+  paymentTerms?: string; // ex: "30 dias", "Pronto Pagamento", "60 dias"
+  iban?: string;
+  rating?: number; // 1-5
   categories: string[];
+  isActive?: boolean;
 }
 
 export interface PurchaseRequisition {
   id: string;
   companyId: string;
   code: string; // ex: "RC-2026-001"
+  requisitionNumber?: string;
   date: string;
   requesterId: string;
   requesterName: string;
   department: string;
   priority: 'baixa' | 'media' | 'alta' | 'urgente';
-  status: 'pendente' | 'aprovado' | 'rejeitado' | 'convertido_em_ordem';
+  status: 'pendente' | 'aprovado' | 'rejeitado' | 'convertido_em_ordem' | 'convertido_em_po' | 'aprovada' | 'rejeitada';
   approvedBy?: string;
   approvalDate?: string;
   notes?: string;
@@ -690,31 +717,41 @@ export interface AccountReceivable {
   companyId: string;
   customerId: string;
   customerName: string;
-  documentNumber: string;
+  documentNumber?: string;
+  invoiceNumber?: string;
   date: string;
   dueDate: string;
   amount: number;
   receivedAmount: number;
   status: 'pendente' | 'pago' | 'parcial' | 'vencido';
   receiptDate?: string;
+  notes?: string;
 }
 
 export interface ChartOfAccounts {
+  id?: string;
   code: string; // ex: "11", "21", "31", "61", "71"
   name: string;
   type: 'ativo' | 'passivo' | 'capital_proprio' | 'rendimento' | 'gasto';
-  level: number;
+  level?: number;
+  class?: string | number;
+  description?: string;
   parentCode?: string;
+  balance?: number;
 }
 
 export interface LedgerEntry {
   id: string;
   companyId: string;
-  entryNumber: string;
+  entryNumber?: string;
   date: string;
   description: string;
-  sourceDoc: string; // ex: "Venda POS #1024" or "Fatura FT 2026A/12"
+  sourceDoc?: string; // ex: "Venda POS #1024" or "Fatura FT 2026A/12"
+  documentRef?: string;
+  journalType?: string;
   lines: {
+    id?: string;
+    accountId?: string;
     accountCode: string;
     accountName: string;
     debit: number;
@@ -733,7 +770,9 @@ export interface BankTransaction {
   description: string;
   amount: number;
   type: 'credito' | 'debito';
-  reconciled: boolean;
+  reconciled?: boolean;
+  matched?: boolean;
+  documentRef?: string;
   matchedEntityDoc?: string;
 }
 
@@ -761,13 +800,15 @@ export interface EmployeeShift {
   id: string;
   companyId?: string;
   employeeId: string;
+  employeeName?: string;
+  role?: string;
   storeId: string;
   date: string;
   startTime: string; // "09:00"
   endTime: string; // "18:00"
-  breakDurationMinutes: number;
-  roleAssigned: string;
-  status: 'planeado' | 'cumprido' | 'falta' | 'troca';
+  breakDurationMinutes?: number;
+  roleAssigned?: string;
+  status: 'planeado' | 'cumprido' | 'falta' | 'troca' | 'concluido' | 'em_curso' | (string & {});
 }
 
 export interface TimeClockEntry {
@@ -775,14 +816,16 @@ export interface TimeClockEntry {
   employeeId: string;
   employeeName: string;
   storeId: string;
-  date: string;
+  date?: string;
   clockIn: string; // "08:58"
   lunchOut?: string; // "13:00"
   lunchIn?: string; // "14:00"
   clockOut?: string; // "18:05"
   totalHours: number;
-  overtimeHours: number;
-  status: 'completo' | 'em_curso' | 'anomalia';
+  overtimeHours?: number;
+  notes?: string;
+  status: 'completo' | 'em_curso' | 'anomalia' | 'concluido' | 'aprovado' | (string & {});
+  approvedBy?: string;
 }
 
 export interface PayrollSlip {
@@ -790,20 +833,22 @@ export interface PayrollSlip {
   companyId: string;
   employeeId: string;
   employeeName: string;
-  employeeRole: string;
-  taxNumber: string;
-  monthYear: string; // "08/2026"
+  employeeRole?: string;
+  taxNumber?: string;
+  month?: string;
+  monthYear?: string; // "08/2026"
   baseSalary: number;
   mealAllowance: number; // 22 dias * valor diario
-  overtimePay: number;
+  overtimePay?: number;
   bonus: number;
-  grossTotal: number;
-  socialSecurityDeduction: number; // 11% trabalhador
+  grossTotal?: number;
+  socialSecurityDeduction?: number; // 11% trabalhador
+  socialSecurityRetention?: number;
   irsRetention: number; // % retenção na fonte
   netSalary: number;
   companySocialSecurity: number; // 23.75% TSU
-  totalEmployerCost: number;
-  status: 'processado' | 'pago';
+  totalEmployerCost?: number;
+  status: 'processado' | 'pago' | 'pendente' | (string & {});
   paymentDate?: string;
 }
 
@@ -884,6 +929,9 @@ export interface ConfirmDialogState {
   confirmLabel?: string;
   cancelLabel?: string;
   isDestructive?: boolean;
+  isDanger?: boolean;
+  variant?: string;
+  type?: string;
   itemDetails?: string;
   onConfirm: () => void;
 }

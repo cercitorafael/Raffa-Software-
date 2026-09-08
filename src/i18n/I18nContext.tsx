@@ -59,8 +59,17 @@ export const I18nProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const toggleLanguage = useCallback(() => {
-    setLanguage((prev) => (prev === 'pt' ? 'en' : 'pt'));
-  }, [setLanguage]);
+    setLanguageState((prev) => {
+      const next: Language = prev === 'pt' ? 'en' : 'pt';
+      try {
+        localStorage.setItem(STORAGE_KEY, next);
+        document.documentElement.lang = next;
+      } catch (e) {
+        console.warn('Could not persist language to localStorage', e);
+      }
+      return next;
+    });
+  }, []);
 
   useEffect(() => {
     try {

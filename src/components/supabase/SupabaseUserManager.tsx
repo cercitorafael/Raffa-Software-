@@ -309,7 +309,7 @@ export const SupabaseUserManager: React.FC = () => {
         isOpen: true,
         type: 'pull',
         title: `Relatório de Importação (Pull do Supabase)${scopeLabel}`,
-        totalSuccess: Object.values(res.counts || {}).reduce((a: any, b: any) => a + b, 0),
+        totalSuccess: Number(Object.values(res.counts || {}).reduce((a: any, b: any) => Number(a) + Number(b), 0)),
         results: res.tableResults || {},
         errors: res.errors || [],
       });
@@ -333,7 +333,7 @@ export const SupabaseUserManager: React.FC = () => {
         isOpen: true,
         type: 'push',
         title: `Relatório de Exportação (Push para o Supabase)${scopeLabel}`,
-        totalSuccess: Object.values(res.uploaded || {}).reduce((a: any, b: any) => a + b, 0),
+        totalSuccess: Number(Object.values(res.uploaded || {}).reduce((a: any, b: any) => Number(a) + Number(b), 0)),
         results: res.tableResults || {},
         errors: res.errors || [],
       });

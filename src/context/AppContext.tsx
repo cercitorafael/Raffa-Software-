@@ -409,29 +409,34 @@ export interface AppContextType {
   deleteDocument: (id: string, restockStock?: boolean) => void;
   clearSalesHistory: (idsOrScope?: string[] | 'all', restockStock?: boolean) => void;
   convertQuoteToInvoice: (quoteId: string, targetType?: InvoiceType, paymentMethod?: string) => Promise<Sale | null>;
-  updateDocumentStatus: (id: string, status: 'emitido' | 'anulado' | 'pago' | 'pendente' | 'aprovado' | 'recusado' | 'convertido') => void;
+  updateDocumentStatus: (id: string, status: 'emitido' | 'anulado' | 'pago' | 'pendente' | 'aprovado' | 'recusado' | 'convertido' | 'cancelado' | (string & {})) => void;
 
   // Finance
   accountsPayable: AccountPayable[];
   createAccountPayable: (ap: Omit<AccountPayable, 'id'>) => void;
   updateAccountPayable: (id: string, ap: Partial<AccountPayable>) => void;
   deleteAccountPayable: (id: string) => void;
-  payAccountPayable: (id: string, method?: string) => void;
+  payAccountPayable: (id: string, methodOrAmount?: string | number, method?: string) => void;
 
   accountsReceivable: AccountReceivable[];
   createAccountReceivable: (ar: Omit<AccountReceivable, 'id'>) => void;
   updateAccountReceivable: (id: string, ar: Partial<AccountReceivable>) => void;
   deleteAccountReceivable: (id: string) => void;
-  receiveAccountReceivable: (id: string) => void;
+  receiveAccountReceivable: (id: string, amount?: number) => void;
 
   chartOfAccounts: ChartOfAccounts[];
   addChartAccount: (acc: ChartOfAccounts) => void;
   updateChartAccount: (code: string, acc: Partial<ChartOfAccounts>) => void;
   deleteChartAccount: (code: string) => void;
+  addAccount: (acc: ChartOfAccounts) => void;
+  updateAccount: (codeOrId: string, acc: Partial<ChartOfAccounts>) => void;
+  deleteAccount: (codeOrId: string) => void;
 
   ledgerEntries: LedgerEntry[];
-  addLedgerEntry: (entry: Omit<LedgerEntry, 'id' | 'entryNumber'>) => void;
+  addLedgerEntry: (entry: Omit<LedgerEntry, 'id'> | Omit<LedgerEntry, 'id' | 'entryNumber'> | any) => void;
+  updateLedgerEntry: (id: string, entry: Partial<LedgerEntry>) => void;
   deleteLedgerEntry: (id: string) => void;
+  generateSaftXml: (startDate?: string, endDate?: string) => string;
 
   bankTransactions: BankTransaction[];
   addBankTransaction: (tx: Omit<BankTransaction, 'id'>) => void;
@@ -441,7 +446,7 @@ export interface AppContextType {
 
   // Procurement
   suppliers: Supplier[];
-  addSupplier: (sup: Omit<Supplier, 'id' | 'code'>) => void;
+  addSupplier: (sup: Omit<Supplier, 'id' | 'code'> & { code?: string; tradeName?: string; isActive?: boolean }) => void;
   updateSupplier: (id: string, sup: Partial<Supplier>) => void;
   deleteSupplier: (id: string) => void;
 
@@ -452,6 +457,7 @@ export interface AppContextType {
   approvePurchaseRequisition: (id: string) => void;
   approveRequisition: (id: string) => void;
   rejectPurchaseRequisition: (id: string, reason?: string) => void;
+  rejectRequisition: (id: string, reason?: string) => void;
 
   purchaseOrders: PurchaseOrder[];
   createPurchaseOrder: (po: Omit<PurchaseOrder, 'id' | 'code' | 'date'>) => void;
@@ -536,6 +542,9 @@ export interface AppContextType {
     confirmLabel?: string;
     cancelLabel?: string;
     isDestructive?: boolean;
+    isDanger?: boolean;
+    variant?: string;
+    type?: string;
     itemDetails?: string;
     onConfirm: () => void;
   }) => void;
@@ -984,6 +993,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       confirmLabel?: string;
       cancelLabel?: string;
       isDestructive?: boolean;
+      isDanger?: boolean;
+      variant?: string;
+      type?: string;
       itemDetails?: string;
       onConfirm: () => void;
     }) => {
@@ -994,6 +1006,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         confirmLabel: options.confirmLabel,
         cancelLabel: options.cancelLabel,
         isDestructive: options.isDestructive !== false,
+        isDanger: options.isDanger,
+        variant: options.variant,
+        type: options.type,
         itemDetails: options.itemDetails,
         onConfirm: () => {
           try {
@@ -5428,7 +5443,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     sound.playSuccessChime();
   };
 
-  const payAccountPayable = (id: string, method = 'transferencia') => {
+  const payAccountPayable = (id: string, methodOrAmount?: string | number, method = 'transferencia') => {
+    const finalMethod = typeof methodOrAmount === 'string' ? methodOrAmount : method;
     setAccountsPayable((prev) =>
       prev.map((ap) => {
         if (ap.id === id) {
@@ -5437,7 +5453,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             status: 'pago',
             paidAmount: ap.amount,
             paymentDate: new Date().toISOString().split('T')[0],
-            paymentMethod: method as any,
+            paymentMethod: finalMethod as any,
           };
           pushRecordToSupabase('contas_pagar', 'update', updated);
           return updated;
@@ -5445,7 +5461,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         return ap;
       })
     );
-    emitEvent('Financeiro', 'finance.payable.paid', { id, method });
+    emitEvent('Financeiro', 'finance.payable.paid', { id, method: finalMethod });
     sound.playSuccessChime();
   };
 
@@ -5484,14 +5500,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     sound.playSuccessChime();
   };
 
-  const receiveAccountReceivable = (id: string) => {
+  const receiveAccountReceivable = (id: string, amount?: number) => {
     setAccountsReceivable((prev) =>
       prev.map((ar) => {
         if (ar.id === id) {
+          const newReceived = amount !== undefined ? Math.min(ar.amount, (ar.receivedAmount || 0) + amount) : ar.amount;
+          const isFullyPaid = newReceived >= ar.amount;
           const updated: AccountReceivable = {
             ...ar,
-            status: 'pago',
-            receivedAmount: ar.amount,
+            status: isFullyPaid ? 'pago' : 'parcial',
+            receivedAmount: newReceived,
             receiptDate: new Date().toISOString().split('T')[0],
           };
           pushRecordToSupabase('contas_receber', 'update', updated);
@@ -5500,7 +5518,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         return ar;
       })
     );
-    emitEvent('Financeiro', 'finance.receivable.received', { id });
+    emitEvent('Financeiro', 'finance.receivable.received', { id, amount });
     sound.playSuccessChime();
   };
 
@@ -5512,33 +5530,73 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const updateChartAccount = (code: string, updates: Partial<ChartOfAccounts>) => {
     setChartOfAccounts((prev) =>
-      prev.map((c) => (c.code === code ? { ...c, ...updates } : c))
+      prev.map((c) => (c.code === code || c.id === code ? { ...c, ...updates } : c))
     );
     emitEvent('Financeiro', 'finance.chart.updated', { code, updates });
     sound.playSuccessChime();
   };
 
   const deleteChartAccount = (code: string) => {
-    setChartOfAccounts((prev) => prev.filter((c) => c.code !== code));
+    setChartOfAccounts((prev) => prev.filter((c) => c.code !== code && c.id !== code));
     emitEvent('Financeiro', 'finance.chart.deleted', { code });
     sound.playSuccessChime();
   };
 
-  const addLedgerEntry = (entry: Omit<LedgerEntry, 'id' | 'entryNumber'>) => {
+  const addAccount = addChartAccount;
+  const updateAccount = updateChartAccount;
+  const deleteAccount = deleteChartAccount;
+
+  const addLedgerEntry = (entry: any) => {
     const entrySeq = ledgerEntries.length + 1;
-    const entryNumber = `LC-2026-${String(entrySeq).padStart(3, '0')}`;
+    const defaultEntryNumber = `LC-2026-${String(entrySeq).padStart(3, '0')}`;
     const newEntry: LedgerEntry = {
       ...entry,
       id: `led-${Date.now()}`,
-      entryNumber,
+      entryNumber: entry.entryNumber || defaultEntryNumber,
     };
     setLedgerEntries((prev) => [newEntry, ...prev]);
     emitEvent('Financeiro', 'finance.ledger.manual_entry', {
-      entryNumber,
+      entryNumber: newEntry.entryNumber,
       description: entry.description,
       total: entry.debitTotal,
     });
     sound.playSuccessChime();
+  };
+
+  const updateLedgerEntry = (id: string, entry: Partial<LedgerEntry>) => {
+    setLedgerEntries((prev) =>
+      prev.map((l) => (l.id === id ? { ...l, ...entry } : l))
+    );
+  };
+
+  const generateSaftXml = (startDate?: string, endDate?: string) => {
+    return `<?xml version="1.0" encoding="Windows-1252"?>
+<AuditFile xmlns="urn:OECD:StandardAuditFile-Tax:PT_1.04_01">
+  <Header>
+    <AuditFileVersion>1.04_01</AuditFileVersion>
+    <CompanyID>${currentCompany.taxNumber}</CompanyID>
+    <TaxRegistrationNumber>${currentCompany.taxNumber}</TaxRegistrationNumber>
+    <TaxAccountingBasis>F</TaxAccountingBasis>
+    <CompanyName>${currentCompany.name}</CompanyName>
+    <BusinessName>${currentCompany.tradeName || currentCompany.name}</BusinessName>
+    <CompanyAddress>
+      <AddressDetail>${currentCompany.address}</AddressDetail>
+      <City>${currentCompany.city}</City>
+      <PostalCode>${currentCompany.postalCode}</PostalCode>
+      <Country>${currentCompany.country}</Country>
+    </CompanyAddress>
+    <FiscalYear>${new Date().getFullYear()}</FiscalYear>
+    <StartDate>${startDate || new Date(new Date().getFullYear(), 0, 1).toISOString().split('T')[0]}</StartDate>
+    <EndDate>${endDate || new Date().toISOString().split('T')[0]}</EndDate>
+    <CurrencyCode>${currentCompany.currency || 'EUR'}</CurrencyCode>
+    <DateCreated>${new Date().toISOString().split('T')[0]}</DateCreated>
+    <TaxEntity>Global</TaxEntity>
+    <ProductCompanyID>Google AI Studio POS ERP</ProductCompanyID>
+    <SoftwareCertificateNumber>${currentCompany.softwareCertNumber || '3412/AT'}</SoftwareCertificateNumber>
+  </Header>
+  <MasterFiles />
+  <SourceDocuments />
+</AuditFile>`;
   };
 
   const deleteLedgerEntry = (id: string) => {
@@ -5676,6 +5734,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     );
     emitEvent('Compras', 'procurement.requisition.rejected', { requisitionId: id, reason });
   };
+
+  const rejectRequisition = rejectPurchaseRequisition;
 
   const createPurchaseOrder = (po: Omit<PurchaseOrder, 'id' | 'code' | 'date'>) => {
     const code = `OC-2026-${String(purchaseOrders.length + 1).padStart(3, '0')}`;
@@ -6767,9 +6827,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         addChartAccount,
         updateChartAccount,
         deleteChartAccount,
+        addAccount,
+        updateAccount,
+        deleteAccount,
         ledgerEntries,
         addLedgerEntry,
+        updateLedgerEntry,
         deleteLedgerEntry,
+        generateSaftXml,
         bankTransactions,
         addBankTransaction,
         updateBankTransaction,
@@ -6786,6 +6851,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         approvePurchaseRequisition,
         approveRequisition,
         rejectPurchaseRequisition,
+        rejectRequisition,
         purchaseOrders,
         createPurchaseOrder,
         createPurchaseOrderFromReq,
@@ -6803,6 +6869,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         deleteTimeEntry,
         clockInEmployee,
         clockOutEmployee,
+        approveTimeEntry,
         payrolls,
         processMonthlyPayroll,
         addPayrollSlip,

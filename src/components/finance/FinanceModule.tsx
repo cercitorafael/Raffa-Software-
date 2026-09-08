@@ -390,6 +390,7 @@ export const FinanceModule: React.FC = () => {
         description: bankTxForm.description,
         amount: Number(bankTxForm.amount),
         type: bankTxForm.type,
+        reconciled: false,
         matched: false,
         documentRef: bankTxForm.documentRef,
       });
@@ -999,7 +1000,7 @@ export const FinanceModule: React.FC = () => {
                                   code: acc.code,
                                   name: acc.name,
                                   type: acc.type,
-                                  class: acc.class,
+                                  class: Number(acc.class) || 1,
                                   description: acc.description || '',
                                   parentCode: acc.parentCode || '',
                                 });

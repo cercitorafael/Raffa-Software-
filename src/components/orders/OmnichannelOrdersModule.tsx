@@ -96,8 +96,8 @@ export const OmnichannelOrdersModule: React.FC = () => {
     }
   };
 
-  const handleConvertToSale = (order: OmnichannelOrder) => {
-    const sale = convertOrderToSale(order.id);
+  const handleConvertToSale = async (order: OmnichannelOrder) => {
+    const sale = await convertOrderToSale(order.id);
     if (sale) {
       // Refresh current selected order
       const updated = omnichannelOrders.find((o) => o.id === order.id);

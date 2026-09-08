@@ -1688,7 +1688,6 @@ export const POSModule: React.FC = () => {
                           postalCode: '1000-001',
                           loyaltyPoints: 10,
                           loyaltyTier: 'bronze',
-                          totalSpent: 0,
                           notes: 'Criado no POS',
                         });
                         if (created) setSelectedCustomer(created);

@@ -79,7 +79,7 @@ export const TransferArticlePickerModal: React.FC<TransferArticlePickerModalProp
         (p.barcode && p.barcode.toLowerCase().includes(searchTerm.toLowerCase()));
 
       const matchCategory =
-        selectedCategory === 'all' || p.categoryId === selectedCategory;
+        selectedCategory === 'all' || p.categoryId === selectedCategory || p.category === selectedCategory;
 
       const originQty = getProductStock(p.id, originWarehouseId);
       const matchStock = !onlyWithStock || originQty > 0;
@@ -301,7 +301,7 @@ export const TransferArticlePickerModal: React.FC<TransferArticlePickerModalProp
                   const isSelected = !!selectedItems[prod.id]?.selected;
                   const itemQty = selectedItems[prod.id]?.quantity || 1;
                   const hasStock = originQty > 0;
-                  const categoryName = categories.find((c) => c.id === prod.categoryId)?.name || 'Geral';
+                  const categoryName = categories.find((c) => c.id === prod.categoryId || c.id === prod.category || c.name === prod.category)?.name || prod.category || 'Geral';
 
                   return (
                     <tr

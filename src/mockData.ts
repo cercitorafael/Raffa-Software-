@@ -328,6 +328,21 @@ export const defaultPermissionsByRole: Record<Role, UserPermissions> = {
     users: { read: false, create: false, edit: false, delete: false, fiscal: false },
     analytics: { read: true, create: false, edit: false, delete: false, fiscal: false },
   },
+  manager: {
+    pos: { read: true, create: true, edit: true, delete: true, fiscal: true },
+    documents: { read: true, create: true, edit: true, delete: true, fiscal: true },
+    stores: { read: true, create: true, edit: true, delete: false, fiscal: true },
+    stock: { read: true, create: true, edit: true, delete: true, fiscal: false },
+    finance: { read: true, create: true, edit: true, delete: false, fiscal: true },
+    hr: { read: true, create: true, edit: true, delete: false, fiscal: false },
+    procurement: { read: true, create: true, edit: true, delete: false, fiscal: false },
+    crm: { read: true, create: true, edit: true, delete: true, fiscal: false },
+    orders: { read: true, create: true, edit: true, delete: true, fiscal: false },
+    events: { read: true, create: true, edit: false, delete: false, fiscal: false },
+    settings: { read: true, create: true, edit: true, delete: false, fiscal: true },
+    users: { read: true, create: true, edit: true, delete: false, fiscal: false },
+    analytics: { read: true, create: true, edit: true, delete: false, fiscal: true },
+  },
 };
 
 export const initialRoles: RoleDefinition[] = [

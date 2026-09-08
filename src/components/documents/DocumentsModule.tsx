@@ -53,6 +53,7 @@ import {
   Ban,
   ArrowLeft,
   Percent,
+  FileCode,
 } from 'lucide-react';
 import { sound } from '../../utils/audio';
 import {
@@ -72,6 +73,13 @@ import {
 } from '../../utils/documentUtils';
 import { defaultInvoiceTemplates } from '../../mockData';
 import { generateFiscalHash } from '../../utils/crypto';
+import { CompanyDocumentButton } from '../settings/CompanyDocumentButton';
+import {
+  readFileAsAttachedDocument,
+  downloadAttachedDocument,
+  generateOfficialRequerimentoPdf,
+  generateOfficialMemoriaDescritivaPdf,
+} from '../../utils/officialDocs';
 
 export const DocumentsModule: React.FC = () => {
   const {
@@ -205,6 +213,83 @@ export const DocumentsModule: React.FC = () => {
 
   // Quotation & Proforma Specifics (ORC / PF)
   const [orcValidity, setOrcValidity] = useState<string>('30 dias');
+
+  // ================= OFFICIAL ATTACHED DOCUMENTS (REQUERIMENTO & MEMÓRIA DESCRITIVA) =================
+  const handleUploadCompanyDoc = async (file: File, type: 'requerimento' | 'memoriaDescritiva') => {
+    try {
+      if (file.size > 10 * 1024 * 1024) {
+        notify('O ficheiro excede o limite máximo de 10MB.', 'warning');
+        return;
+      }
+      const attachedDoc = await readFileAsAttachedDocument(file);
+      const updated = {
+        ...currentCompany,
+        [type === 'requerimento' ? 'requerimentoDoc' : 'memoriaDescritivaDoc']: attachedDoc,
+      };
+      updateCompany(updated);
+      // Automatically download the added document as requested
+      downloadAttachedDocument(attachedDoc);
+      notify(
+        `${type === 'requerimento' ? 'Requerimento' : 'Memória Descritiva'} adicionado e descarregado com sucesso!`,
+        'success'
+      );
+    } catch (err) {
+      console.error(err);
+      notify('Falha ao processar o ficheiro do documento.', 'error');
+    }
+  };
+
+  const handleGenerateCompanyDoc = (type: 'requerimento' | 'memoriaDescritiva') => {
+    try {
+      const generatedDoc =
+        type === 'requerimento'
+          ? generateOfficialRequerimentoPdf(currentCompany)
+          : generateOfficialMemoriaDescritivaPdf(currentCompany);
+      const updated = {
+        ...currentCompany,
+        [type === 'requerimento' ? 'requerimentoDoc' : 'memoriaDescritivaDoc']: generatedDoc,
+      };
+      updateCompany(updated);
+      // Automatically download the generated document
+      downloadAttachedDocument(generatedDoc);
+      notify(
+        `${type === 'requerimento' ? 'Requerimento Oficial' : 'Memória Descritiva Oficial'} gerado e descarregado com sucesso!`,
+        'success'
+      );
+    } catch (err) {
+      console.error(err);
+      notify('Erro ao gerar documento oficial.', 'error');
+    }
+  };
+
+  const handleDownloadCompanyDoc = (type: 'requerimento' | 'memoriaDescritiva') => {
+    const targetDoc = type === 'requerimento' ? currentCompany?.requerimentoDoc : currentCompany?.memoriaDescritivaDoc;
+    if (!targetDoc) {
+      notify('Nenhum documento anexado para descarregar.', 'warning');
+      return;
+    }
+    downloadAttachedDocument(targetDoc);
+    notify(`A descarregar ${targetDoc.name}...`, 'info');
+  };
+
+  const handleRemoveCompanyDoc = (type: 'requerimento' | 'memoriaDescritiva') => {
+    const label = type === 'requerimento' ? 'Requerimento' : 'Memória Descritiva';
+    requestConfirm({
+      title: `Remover ${label}?`,
+      message: `Tem a certeza que deseja remover o documento "${label}" anexado?`,
+      confirmLabel: 'Sim, Remover',
+      cancelLabel: 'Cancelar',
+      variant: 'danger',
+      onConfirm: () => {
+        const updated = {
+          ...currentCompany,
+          [type === 'requerimento' ? 'requerimentoDoc' : 'memoriaDescritivaDoc']: undefined,
+        };
+        updateCompany(updated);
+        notify(`${label} removido com sucesso.`, 'info');
+      },
+    });
+  };
 
   // ================= DOCUMENT CRUD & MANAGEMENT STATES =================
   const [editingDoc, setEditingDoc] = useState<Sale | null>(null);
@@ -1000,8 +1085,8 @@ export const DocumentsModule: React.FC = () => {
         </div>
       </div>
 
-      {/* Main Tabs Navigation */}
-      <div className="px-6 pt-2 pb-0 flex items-center justify-between border-b border-[#222222] bg-[#0c0c0c] shrink-0">
+      {/* Main Tabs Navigation & Document Action Buttons */}
+      <div className="px-6 py-2 flex flex-col lg:flex-row items-stretch lg:items-center justify-between border-b border-[#222222] bg-[#0c0c0c] gap-3 shrink-0">
         <div className="flex items-center space-x-2 overflow-x-auto">
           <button
             onClick={() => setActiveTab('emit')}
@@ -1050,6 +1135,37 @@ export const DocumentsModule: React.FC = () => {
             <Truck className="w-3.5 h-3.5" />
             <span>Guias de Transporte (AT)</span>
           </button>
+        </div>
+
+        {/* 2 Botões de Documentos Oficiais: Esquerda = Requerimento | Direita = Memória Descritiva */}
+        <div className="flex items-center space-x-2 shrink-0 overflow-x-auto py-1">
+          {/* Botão da Esquerda: Requerimento */}
+          <CompanyDocumentButton
+            id="doc-requerimento"
+            label="Requerimento"
+            sublabel="Pedido de autorização e certificação"
+            badgeText="À Esquerda"
+            doc={currentCompany?.requerimentoDoc}
+            icon={FileText}
+            onUpload={(file) => handleUploadCompanyDoc(file, 'requerimento')}
+            onGenerate={() => handleGenerateCompanyDoc('requerimento')}
+            onDownload={() => handleDownloadCompanyDoc('requerimento')}
+            onRemove={() => handleRemoveCompanyDoc('requerimento')}
+          />
+
+          {/* Botão da Direita: Memória Descritiva */}
+          <CompanyDocumentButton
+            id="doc-memoria-descritiva"
+            label="Memória Descritiva"
+            sublabel="Especificação técnica e segurança"
+            badgeText="À Direita"
+            doc={currentCompany?.memoriaDescritivaDoc}
+            icon={FileCode}
+            onUpload={(file) => handleUploadCompanyDoc(file, 'memoriaDescritiva')}
+            onGenerate={() => handleGenerateCompanyDoc('memoriaDescritiva')}
+            onDownload={() => handleDownloadCompanyDoc('memoriaDescritiva')}
+            onRemove={() => handleRemoveCompanyDoc('memoriaDescritiva')}
+          />
         </div>
       </div>
 

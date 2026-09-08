@@ -120,7 +120,7 @@ export const Navbar: React.FC<{ onOpenShiftModal: () => void }> = ({ onOpenShift
     });
   }, [terminals]);
 
-  const roleLabels: Record<Role, { name: string; badge: string; color: string }> = {
+  const roleLabels: Record<string, { name: string; badge: string; color: string }> = {
     caixa: { name: 'Operador de Caixa', badge: 'POS', color: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' },
     gerente: { name: 'Gerente de Loja', badge: 'GERÊNCIA', color: 'bg-[#c5a47e]/15 text-[#c5a47e] border-[#c5a47e]/30' },
     financeiro: { name: 'Diretor Financeiro', badge: 'FINANÇAS', color: 'bg-amber-500/10 text-amber-400 border-amber-500/30' },

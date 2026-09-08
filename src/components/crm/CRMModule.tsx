@@ -213,7 +213,6 @@ export const CRMModule: React.FC = () => {
       postalCode: '1000-001',
       loyaltyPoints: 50,
       loyaltyTier: 'bronze',
-      totalSpent: 0,
       notes: 'Cliente registado no balcão',
     });
 

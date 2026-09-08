@@ -1277,7 +1277,7 @@ export const StockModule: React.FC = () => {
                     const destStock = stock
                       .filter((s) => s.productId === selProd.id && s.warehouseId === transferToWh)
                       .reduce((acc, s) => acc + s.quantity, 0);
-                    const catName = categories.find((c) => c.id === selProd.categoryId)?.name || 'Geral';
+                    const catName = categories.find((c) => c.id === selProd.categoryId || c.id === selProd.category || c.name === selProd.category)?.name || selProd.category || 'Geral';
 
                     return (
                       <div className="p-4 bg-[#0d0d0d] border border-[#262626] rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3">

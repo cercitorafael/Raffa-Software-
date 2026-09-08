@@ -58,7 +58,7 @@ export const LoginScreen: React.FC = () => {
     return (
       u.email?.toLowerCase() === clean ||
       (u.username && u.username.toLowerCase() === clean) ||
-      u.name.toLowerCase() === clean ||
+      (u.name && u.name.toLowerCase() === clean) ||
       (clean === 'admin' && u.role === 'admin') ||
       (clean === 'caixa' && u.role === 'caixa') ||
       (clean === 'gerente' && u.role === 'gerente') ||
@@ -71,8 +71,8 @@ export const LoginScreen: React.FC = () => {
   const detectedCompany = detectedUser
     ? companies.find((c) => c.id === detectedUser.companyId) || {
         id: detectedUser.companyId || 'comp-1',
-        name: detectedUser.name.includes(' ') ? `Empresa ${detectedUser.name}` : `A Minha Empresa`,
-        tradeName: detectedUser.name,
+        name: (detectedUser.name && detectedUser.name.includes(' ')) ? `Empresa ${detectedUser.name}` : `A Minha Empresa`,
+        tradeName: detectedUser.name || 'A Minha Empresa',
         taxNumber: '400000000',
       }
     : null;
@@ -106,7 +106,7 @@ export const LoginScreen: React.FC = () => {
   }, [authMode, pinInput, selectedUser]);
 
   // Role metadata
-  const roleBadges: Record<Role, { name: string; badge: string; color: string; desc: string }> = {
+  const roleBadges: Record<string, { name: string; badge: string; color: string; desc: string }> = {
     admin: {
       name: 'Administrador Geral',
       badge: 'ADMIN SGPS',
@@ -468,7 +468,12 @@ export const LoginScreen: React.FC = () => {
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-[160px] overflow-y-auto pr-1">
                   {users.map((u) => {
                     const isSelected = selectedUser?.id === u.id;
-                    const roleInfo = roleBadges[u.role] || roleBadges.caixa;
+                    const roleInfo = (roleBadges && roleBadges[u.role]) || roleBadges?.caixa || {
+                      name: u.role || 'Operador',
+                      badge: String(u.role || 'POS').toUpperCase(),
+                      color: 'bg-neutral-800 text-neutral-300 border-neutral-700',
+                      desc: '',
+                    };
 
                     return (
                       <button
