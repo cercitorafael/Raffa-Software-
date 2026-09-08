@@ -171,7 +171,7 @@ Obrigado pela sua preferência!
             {/* Totals Breakdown */}
             <div className="py-2.5 border-b border-dashed border-[#333333] space-y-1 text-xs">
               <div className="flex justify-between text-neutral-400">
-                <span>Subtotal:</span>
+                <span>{sale.vatMode === 'acrescido' ? 'Subtotal (s/ IVA):' : 'Subtotal:'}</span>
                 <span>{formatCurrency(sale.subtotal)}</span>
               </div>
               {sale.discountTotal > 0 && (
@@ -180,10 +180,22 @@ Obrigado pela sua preferência!
                   <span>-{formatCurrency(sale.discountTotal)}</span>
                 </div>
               )}
-              <div className="flex justify-between text-neutral-400">
-                <span>Total IVA Incluído:</span>
-                <span>{formatCurrency(sale.taxTotal)}</span>
-              </div>
+              {sale.vatMode === 'acrescido' ? (
+                <div className="flex justify-between text-emerald-400 font-semibold">
+                  <span>+ IVA Somado à Fatura:</span>
+                  <span>+{formatCurrency(sale.taxTotal)}</span>
+                </div>
+              ) : sale.vatMode === 'isento' ? (
+                <div className="flex justify-between text-neutral-400">
+                  <span>Regime de IVA:</span>
+                  <span>Isento (0%)</span>
+                </div>
+              ) : (
+                <div className="flex justify-between text-neutral-400">
+                  <span>Total IVA Incluído:</span>
+                  <span>{formatCurrency(sale.taxTotal)}</span>
+                </div>
+              )}
               <div className="flex justify-between font-extrabold text-sm text-[#c5a47e] pt-1 border-t border-[#262626]">
                 <span>TOTAL A PAGAR:</span>
                 <span>{formatCurrency(sale.total)}</span>

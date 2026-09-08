@@ -32,11 +32,12 @@ import {
   FileText,
   Phone,
   MapPin,
+  Receipt,
 } from 'lucide-react';
 import { PaymentModal } from './PaymentModal';
 import { ReceiptModal } from './ReceiptModal';
 import { CashShiftModal } from './CashShiftModal';
-import { Product, Customer } from '../../types';
+import { Product, Customer, VatRate } from '../../types';
 
 export const POSModule: React.FC = () => {
   const {
@@ -47,6 +48,13 @@ export const POSModule: React.FC = () => {
     currentStore,
     currentCompany,
     cart,
+    posVatMode,
+    setPosVatMode,
+    posDefaultTaxRate,
+    setPosDefaultTaxRate,
+    updateCartTaxRate,
+    updateCartItemVat,
+    applyVatRateToCart,
     addToCart,
     removeFromCart,
     updateCartQuantity,
@@ -224,12 +232,49 @@ export const POSModule: React.FC = () => {
     })
     .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'pt', { sensitivity: 'base', numeric: true }));
 
-  // Calculate cart totals
+  // Active VAT rates configuration
+  const activeVatRates: VatRate[] = (currentCompany?.vatRates && currentCompany.vatRates.length > 0)
+    ? currentCompany.vatRates.filter((r) => r.active)
+    : [
+        { id: '1', code: 'NOR', name: 'Normal', rate: 16, active: true },
+        { id: '2', code: 'ISE', name: 'Isento', rate: 0, active: true },
+        { id: '3', code: 'RED', name: 'Reduzida', rate: 5, active: true },
+        { id: '4', code: 'INT', name: 'Intermédia', rate: 10, active: true },
+      ];
+
+  // Calculate cart totals with VAT mode support
   const subtotal = cart.reduce((sum, i) => sum + Number(i.unitPrice || 0) * Number(i.quantity || 0), 0);
   const itemDiscounts = cart.reduce((sum, i) => sum + Number(i.discountAmount || 0), 0);
   const globalDiscountAmt = ((subtotal - itemDiscounts) * Number(globalDiscount || 0)) / 100;
   const totalDiscount = itemDiscounts + globalDiscountAmt;
-  const grandTotal = Math.max(0, subtotal - totalDiscount);
+  const netBase = Math.max(0, subtotal - totalDiscount);
+  const globalDiscountFactor = 1 - Number(globalDiscount || 0) / 100;
+
+  let totalTax = 0;
+  let grandTotal = 0;
+
+  if (posVatMode === 'acrescido') {
+    totalTax = cart.reduce((sum, i) => {
+      const rate = typeof i.taxRate === 'number' ? i.taxRate : posDefaultTaxRate;
+      const itemNetBase = Math.max(0, Number(i.unitPrice || 0) * Number(i.quantity || 0) - Number(i.discountAmount || 0)) * globalDiscountFactor;
+      return sum + Number(((itemNetBase * rate) / 100).toFixed(2));
+    }, 0);
+    totalTax = Number(totalTax.toFixed(2));
+    grandTotal = Number((netBase + totalTax).toFixed(2));
+  } else if (posVatMode === 'isento') {
+    totalTax = 0;
+    grandTotal = netBase;
+  } else {
+    // 'incluido'
+    totalTax = cart.reduce((sum, i) => {
+      const rate = typeof i.taxRate === 'number' ? i.taxRate : posDefaultTaxRate;
+      const itemGross = Math.max(0, Number(i.unitPrice || 0) * Number(i.quantity || 0) - Number(i.discountAmount || 0)) * globalDiscountFactor;
+      const itemBase = rate > 0 ? itemGross / (1 + rate / 100) : itemGross;
+      return sum + (itemGross - itemBase);
+    }, 0);
+    totalTax = Number(totalTax.toFixed(2));
+    grandTotal = netBase;
+  }
   const totalItemsCount = cart.reduce((sum, i) => sum + Number(i.quantity || 0), 0);
 
   // Get stock for store default warehouse with fallback
@@ -1012,6 +1057,102 @@ export const POSModule: React.FC = () => {
           )}
         </div>
 
+        {/* Barra de Opções de IVA no Ponto de Venda */}
+        <div className="px-3 py-2 bg-[#121212] border-b border-[#262626] flex flex-col gap-1.5 shrink-0">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-1.5 text-neutral-300">
+              <Receipt className="w-3.5 h-3.5 text-[#c5a47e]" />
+              <span className="text-[11px] font-semibold">Regime de IVA:</span>
+            </div>
+
+            {/* Selector de Regime de IVA */}
+            <div className="flex items-center bg-[#0a0a0a] p-0.5 rounded-lg border border-[#262626]">
+              <button
+                type="button"
+                onClick={() => {
+                  setPosVatMode('acrescido');
+                  notify('Regime alterado: +IVA Acrescido (Soma nas faturas)', 'info');
+                }}
+                className={`px-2 py-1 rounded-md text-[10px] font-medium transition-all cursor-pointer ${
+                  posVatMode === 'acrescido'
+                    ? 'bg-emerald-500/20 border border-emerald-500/50 text-emerald-400 font-bold shadow-xs'
+                    : 'text-neutral-400 hover:text-white'
+                }`}
+                title="O IVA será somado ao valor líquido e somará nas faturas emitidas"
+              >
+                + IVA (Acrescido)
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setPosVatMode('incluido');
+                  notify('Regime alterado: IVA Incluído no PVP', 'info');
+                }}
+                className={`px-2 py-1 rounded-md text-[10px] font-medium transition-all cursor-pointer ${
+                  posVatMode === 'incluido'
+                    ? 'bg-[#c5a47e]/20 border border-[#c5a47e]/50 text-[#c5a47e] font-bold shadow-xs'
+                    : 'text-neutral-400 hover:text-white'
+                }`}
+                title="O preço de venda já inclui IVA (regime retalho habitual)"
+              >
+                IVA Incluído
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setPosVatMode('isento');
+                  notify('Regime alterado: Isento de IVA (0%)', 'info');
+                }}
+                className={`px-2 py-1 rounded-md text-[10px] font-medium transition-all cursor-pointer ${
+                  posVatMode === 'isento'
+                    ? 'bg-neutral-800 border border-neutral-600 text-neutral-200 font-bold shadow-xs'
+                    : 'text-neutral-400 hover:text-white'
+                }`}
+                title="Operação isenta de imposto (0%)"
+              >
+                Isento
+              </button>
+            </div>
+          </div>
+
+          {/* Taxa Padrão & Botão Aplicar a Todos */}
+          <div className="flex items-center justify-between text-[10.5px] text-neutral-400 pt-1 border-t border-[#1e1e1e]">
+            <div className="flex items-center space-x-1.5">
+              <span>Taxa padrão:</span>
+              <select
+                value={posDefaultTaxRate}
+                onChange={(e) => {
+                  const rate = Number(e.target.value);
+                  setPosDefaultTaxRate(rate);
+                }}
+                className="bg-[#0a0a0a] border border-[#2a2a2a] rounded px-1.5 py-0.5 text-[10.5px] font-mono font-semibold text-neutral-200 focus:outline-hidden"
+              >
+                {activeVatRates.map((r) => (
+                  <option key={r.id || r.rate} value={r.rate}>
+                    {r.rate}% {r.name ? `(${r.name})` : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {cart.length > 0 && (
+              <button
+                type="button"
+                onClick={() => {
+                  applyVatRateToCart(posDefaultTaxRate);
+                  notify(`Taxa de IVA ${posDefaultTaxRate}% aplicada a todos os artigos!`, 'success');
+                }}
+                className="text-[10px] text-[#c5a47e] hover:text-[#d6b791] font-medium transition-colors hover:underline cursor-pointer"
+                title="Aplicar esta taxa a todas as linhas do cesto atual"
+              >
+                Aplicar taxa a todos
+              </button>
+            )}
+          </div>
+        </div>
+
         {/* Cart Items List */}
         <div className="flex-1 overflow-y-auto p-3 space-y-2">
           {cart.length === 0 ? (
@@ -1070,12 +1211,27 @@ export const POSModule: React.FC = () => {
                       </div>
                     </div>
 
-                    <span className="text-xs font-mono font-bold text-[#c5a47e]">
-                      {formatCurrency(item.total)}
-                    </span>
+                    <div className="text-right shrink-0">
+                      <span className="text-xs font-mono font-bold text-[#c5a47e]">
+                        {formatCurrency(item.total)}
+                      </span>
+                      {posVatMode === 'acrescido' ? (
+                        <span className="block text-[9px] font-mono text-emerald-400 font-semibold">
+                          +{formatCurrency(item.taxAmount)} IVA
+                        </span>
+                      ) : posVatMode === 'incluido' ? (
+                        <span className="block text-[9px] font-mono text-neutral-400">
+                          c/ IVA {item.taxRate}%
+                        </span>
+                      ) : (
+                        <span className="block text-[9px] font-mono text-neutral-400">
+                          0% Isento
+                        </span>
+                      )}
+                    </div>
                   </div>
 
-                  {/* Controls: Quantity +/- with direct typed input & Item Discount */}
+                  {/* Controls: Quantity +/- with direct typed input & Item Discount & Item VAT */}
                   <div
                     className="flex items-center justify-between pt-1 border-t border-[#262626]"
                     onClick={(e) => e.stopPropagation()}
@@ -1116,8 +1272,24 @@ export const POSModule: React.FC = () => {
                       </button>
                     </div>
 
-                    {/* Line Discount selector */}
+                    {/* Line VAT & Discount selectors */}
                     <div className="flex items-center space-x-2">
+                      <div className="flex items-center space-x-1">
+                        <span className="text-[10px] text-neutral-400">IVA:</span>
+                        <select
+                          value={item.taxRate}
+                          onChange={(e) => updateCartTaxRate(item.productId, Number(e.target.value))}
+                          className="bg-[#0d0d0d] border border-[#262626] rounded-xs text-[10px] px-1 py-0.5 font-semibold text-neutral-300 focus:outline-hidden"
+                          title="Taxa de IVA do artigo"
+                        >
+                          {activeVatRates.map((r) => (
+                            <option key={r.id || r.rate} value={r.rate}>
+                              {r.rate}%
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
                       <div className="flex items-center space-x-1">
                         <span className="text-[10px] text-neutral-400">Desc:</span>
                         <select
@@ -1203,7 +1375,7 @@ export const POSModule: React.FC = () => {
           {/* Subtotals & Taxes */}
           <div className="space-y-1.5 text-xs text-neutral-400 pt-1">
             <div className="flex justify-between">
-              <span>Subtotal:</span>
+              <span>{posVatMode === 'acrescido' ? 'Subtotal (s/ IVA):' : 'Subtotal:'}</span>
               <span className="font-mono text-neutral-200">{formatCurrency(subtotal)}</span>
             </div>
             {totalDiscount > 0 && (
@@ -1212,10 +1384,25 @@ export const POSModule: React.FC = () => {
                 <span className="font-mono">-{formatCurrency(totalDiscount)}</span>
               </div>
             )}
-            <div className="flex justify-between text-neutral-400 text-[11px]">
-              <span>IVA Incluído:</span>
-              <span className="font-mono">{formatCurrency(cart.reduce((s, i) => s + i.taxAmount, 0))}</span>
-            </div>
+            {posVatMode === 'acrescido' ? (
+              <div className="flex justify-between text-emerald-400 font-semibold text-[11px] bg-emerald-500/10 px-2 py-1 rounded border border-emerald-500/20">
+                <span className="flex items-center gap-1">
+                  <Receipt className="w-3 h-3 text-emerald-400" />
+                  <span>IVA Somado (+Taxas):</span>
+                </span>
+                <span className="font-mono">+{formatCurrency(totalTax)}</span>
+              </div>
+            ) : posVatMode === 'isento' ? (
+              <div className="flex justify-between text-neutral-400 text-[11px]">
+                <span>Regime de IVA:</span>
+                <span className="font-mono font-medium text-neutral-300">Isento (0%)</span>
+              </div>
+            ) : (
+              <div className="flex justify-between text-neutral-400 text-[11px]">
+                <span>IVA Incluído no Preço:</span>
+                <span className="font-mono">{formatCurrency(totalTax)}</span>
+              </div>
+            )}
 
             <div className="flex justify-between items-baseline pt-2 border-t border-[#262626]">
               <span className="text-xs font-bold text-neutral-300 uppercase tracking-wider">Total a Pagar:</span>

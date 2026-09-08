@@ -13,7 +13,37 @@ import {
   CashShift,
   Company,
   Store,
+  Employee,
+  EmployeeShift,
+  TimeClockEntry,
+  PayrollSlip,
 } from '../types';
+
+export interface SalesGoalRecord {
+  id: string;
+  companyId?: string;
+  company_id?: string;
+  anoReferencia?: number;
+  ano_referencia?: number;
+  metaAnualTotal?: number;
+  meta_anual_total?: number;
+  estrategia?: string;
+  metasMensais?: any[];
+  metas_mensais?: any[];
+  valoresManuais?: number[];
+  valores_manuais?: number[];
+  historicoValores?: number[];
+  historico_valores?: number[];
+  vendasRealizadas?: number[];
+  vendas_realizadas?: number[];
+  savedAt?: string;
+  saved_at?: string;
+  source?: string;
+  isManuallyEdited?: boolean;
+  is_manually_edited?: boolean;
+  updatedAt?: string;
+  updated_at?: string;
+}
 
 export interface SupabaseSyncLog {
   id: string;
@@ -40,7 +70,12 @@ export type TableSyncName =
   | 'stock'
   | 'contas_pagar'
   | 'contas_receber'
-  | 'turnos_caixa';
+  | 'turnos_caixa'
+  | 'colaboradores'
+  | 'registos_ponto'
+  | 'recibos_salario'
+  | 'escalas_trabalho'
+  | 'metas_vendas';
 
 export interface RealtimeSyncCallbacks {
   onProfileChange?: (event: 'INSERT' | 'UPDATE' | 'DELETE', item: Partial<UserProfile>, rawOld?: any) => void;
@@ -57,6 +92,11 @@ export interface RealtimeSyncCallbacks {
   onAccountPayableChange?: (event: 'INSERT' | 'UPDATE' | 'DELETE', item: Partial<AccountPayable>, rawOld?: any) => void;
   onAccountReceivableChange?: (event: 'INSERT' | 'UPDATE' | 'DELETE', item: Partial<AccountReceivable>, rawOld?: any) => void;
   onShiftChange?: (event: 'INSERT' | 'UPDATE' | 'DELETE', item: Partial<CashShift>, rawOld?: any) => void;
+  onEmployeeChange?: (event: 'INSERT' | 'UPDATE' | 'DELETE', item: Partial<Employee>, rawOld?: any) => void;
+  onTimeEntryChange?: (event: 'INSERT' | 'UPDATE' | 'DELETE', item: Partial<TimeClockEntry>, rawOld?: any) => void;
+  onPayrollChange?: (event: 'INSERT' | 'UPDATE' | 'DELETE', item: Partial<PayrollSlip>, rawOld?: any) => void;
+  onEmployeeShiftChange?: (event: 'INSERT' | 'UPDATE' | 'DELETE', item: Partial<EmployeeShift>, rawOld?: any) => void;
+  onSalesGoalChange?: (event: 'INSERT' | 'UPDATE' | 'DELETE', item: Partial<SalesGoalRecord>, rawOld?: any) => void;
   onStatusChange?: (status: 'connected' | 'connecting' | 'disconnected' | 'error', errorMsg?: string) => void;
   onLogAdded?: (log: SupabaseSyncLog) => void;
 }
@@ -736,6 +776,215 @@ export function mapSupabaseToShift(row: any): CashShift {
   };
 }
 
+export function mapEmployeeToSupabase(e: Partial<Employee>) {
+  return {
+    id: e.id,
+    company_id: e.companyId || 'comp-1',
+    code: e.code || '',
+    name: e.name || '',
+    role: e.role || '',
+    department: e.department || '',
+    store_id: e.storeId || '',
+    tax_number: e.taxNumber || '',
+    social_security_number: e.socialSecurityNumber || '',
+    email: e.email || '',
+    phone: e.phone || '',
+    base_salary: Number(e.baseSalary || 0),
+    meal_allowance_daily: Number(e.mealAllowanceDaily || 0),
+    contract_type: e.contractType || 'sem_termo',
+    admission_date: e.admissionDate || '',
+    status: e.status || 'ativo',
+    avatar_url: e.avatarUrl || null,
+    updated_at: new Date().toISOString(),
+  };
+}
+
+export function mapSupabaseToEmployee(row: any): Employee {
+  return {
+    id: String(row.id || ''),
+    companyId: String(row.company_id || 'comp-1'),
+    code: String(row.code || ''),
+    name: String(row.name || ''),
+    role: String(row.role || ''),
+    department: String(row.department || ''),
+    storeId: String(row.store_id || ''),
+    taxNumber: String(row.tax_number || ''),
+    socialSecurityNumber: String(row.social_security_number || ''),
+    email: String(row.email || ''),
+    phone: String(row.phone || ''),
+    baseSalary: Number(row.base_salary || 0),
+    mealAllowanceDaily: Number(row.meal_allowance_daily || 0),
+    contractType: row.contract_type || 'sem_termo',
+    admissionDate: String(row.admission_date || ''),
+    status: row.status || 'ativo',
+    avatarUrl: row.avatar_url || undefined,
+  };
+}
+
+export function mapTimeEntryToSupabase(t: Partial<TimeClockEntry> & { companyId?: string }) {
+  return {
+    id: t.id,
+    company_id: (t as any).companyId || 'comp-1',
+    employee_id: t.employeeId || '',
+    employee_name: t.employeeName || '',
+    store_id: t.storeId || '',
+    date: t.date || new Date().toISOString().split('T')[0],
+    clock_in: t.clockIn || '',
+    lunch_out: t.lunchOut || null,
+    lunch_in: t.lunchIn || null,
+    clock_out: t.clockOut || '',
+    total_hours: Number(t.totalHours || 0),
+    overtime_hours: Number(t.overtimeHours || 0),
+    status: t.status || 'completo',
+    approved_by: (t as any).approvedBy || null,
+    updated_at: new Date().toISOString(),
+  };
+}
+
+export function mapSupabaseToTimeEntry(row: any): TimeClockEntry {
+  return {
+    id: String(row.id || ''),
+    employeeId: String(row.employee_id || ''),
+    employeeName: String(row.employee_name || ''),
+    storeId: String(row.store_id || ''),
+    date: String(row.date || ''),
+    clockIn: String(row.clock_in || ''),
+    lunchOut: row.lunch_out || undefined,
+    lunchIn: row.lunch_in || undefined,
+    clockOut: row.clock_out || undefined,
+    totalHours: Number(row.total_hours || 0),
+    overtimeHours: Number(row.overtime_hours || 0),
+    status: row.status || 'completo',
+    ...(row.approved_by ? { approvedBy: row.approved_by } : {}),
+    ...(row.company_id ? { companyId: row.company_id } : {}),
+  } as any;
+}
+
+export function mapPayrollToSupabase(p: Partial<PayrollSlip>) {
+  return {
+    id: p.id,
+    company_id: p.companyId || 'comp-1',
+    employee_id: p.employeeId || '',
+    employee_name: p.employeeName || '',
+    employee_role: p.employeeRole || '',
+    tax_number: p.taxNumber || '',
+    month_year: p.monthYear || (p as any).month || '',
+    month: (p as any).month || p.monthYear || '',
+    base_salary: Number(p.baseSalary || 0),
+    meal_allowance: Number(p.mealAllowance || 0),
+    overtime_pay: Number(p.overtimePay || 0),
+    bonus: Number(p.bonus || 0),
+    gross_total: Number(p.grossTotal || 0),
+    social_security_deduction: Number(p.socialSecurityDeduction || 0),
+    social_security_retention: Number((p as any).socialSecurityRetention || p.socialSecurityDeduction || 0),
+    irs_retention: Number(p.irsRetention || 0),
+    net_salary: Number(p.netSalary || 0),
+    company_social_security: Number(p.companySocialSecurity || 0),
+    total_employer_cost: Number(p.totalEmployerCost || 0),
+    status: p.status || 'processado',
+    payment_date: p.paymentDate || null,
+    updated_at: new Date().toISOString(),
+  };
+}
+
+export function mapSupabaseToPayroll(row: any): PayrollSlip {
+  return {
+    id: String(row.id || ''),
+    companyId: String(row.company_id || 'comp-1'),
+    employeeId: String(row.employee_id || ''),
+    employeeName: String(row.employee_name || ''),
+    employeeRole: String(row.employee_role || ''),
+    taxNumber: String(row.tax_number || ''),
+    monthYear: String(row.month_year || row.month || ''),
+    month: String(row.month || row.month_year || ''),
+    baseSalary: Number(row.base_salary || 0),
+    mealAllowance: Number(row.meal_allowance || 0),
+    overtimePay: Number(row.overtime_pay || 0),
+    bonus: Number(row.bonus || 0),
+    grossTotal: Number(row.gross_total || 0),
+    socialSecurityDeduction: Number(row.social_security_deduction || 0),
+    socialSecurityRetention: Number(row.social_security_retention || row.social_security_deduction || 0),
+    irsRetention: Number(row.irs_retention || 0),
+    netSalary: Number(row.net_salary || 0),
+    companySocialSecurity: Number(row.company_social_security || 0),
+    totalEmployerCost: Number(row.total_employer_cost || 0),
+    status: row.status || 'processado',
+    paymentDate: row.payment_date || undefined,
+  } as any;
+}
+
+export function mapEmployeeShiftToSupabase(s: Partial<EmployeeShift>) {
+  return {
+    id: s.id,
+    company_id: (s as any).companyId || 'comp-1',
+    employee_id: s.employeeId || '',
+    store_id: s.storeId || '',
+    date: s.date || '',
+    start_time: s.startTime || '',
+    end_time: s.endTime || '',
+    break_duration_minutes: Number(s.breakDurationMinutes || 60),
+    role_assigned: s.roleAssigned || '',
+    status: s.status || 'planeado',
+    notes: (s as any).notes || '',
+    updated_at: new Date().toISOString(),
+  };
+}
+
+export function mapSupabaseToEmployeeShift(row: any): EmployeeShift {
+  return {
+    id: String(row.id || ''),
+    employeeId: String(row.employee_id || ''),
+    companyId: String(row.company_id || 'comp-1'),
+    storeId: String(row.store_id || ''),
+    date: String(row.date || ''),
+    startTime: String(row.start_time || ''),
+    endTime: String(row.end_time || ''),
+    breakDurationMinutes: Number(row.break_duration_minutes || 60),
+    roleAssigned: String(row.role_assigned || ''),
+    status: row.status || 'planeado',
+    notes: row.notes || undefined,
+  } as any;
+}
+
+export function mapSalesGoalToSupabase(g: Partial<SalesGoalRecord>) {
+  const companyId = g.companyId || 'comp-1';
+  const ano = Number(g.anoReferencia || new Date().getFullYear());
+  const id = g.id || `goal_${companyId}_${ano}`;
+  return {
+    id,
+    company_id: companyId,
+    ano_referencia: ano,
+    meta_anual_total: Number(g.metaAnualTotal || 0),
+    estrategia: g.estrategia || 'MANUAL',
+    metas_mensais: g.metasMensais || [],
+    valores_manuais: g.valoresManuais || [],
+    historico_valores: g.historicoValores || [],
+    vendas_realizadas: g.vendasRealizadas || [],
+    saved_at: g.savedAt || new Date().toISOString(),
+    source: g.source || 'Manual / Ajuste Local',
+    is_manually_edited: g.isManuallyEdited !== undefined ? g.isManuallyEdited : true,
+    updated_at: new Date().toISOString(),
+  };
+}
+
+export function mapSupabaseToSalesGoal(row: any): SalesGoalRecord {
+  return {
+    id: String(row.id || ''),
+    companyId: String(row.company_id || 'comp-1'),
+    anoReferencia: Number(row.ano_referencia || new Date().getFullYear()),
+    metaAnualTotal: Number(row.meta_anual_total || 0),
+    estrategia: String(row.estrategia || 'MANUAL'),
+    metasMensais: Array.isArray(row.metas_mensais) ? row.metas_mensais : [],
+    valoresManuais: Array.isArray(row.valores_manuais) ? row.valores_manuais : [],
+    historicoValores: Array.isArray(row.historico_valores) ? row.historico_valores : [],
+    vendasRealizadas: Array.isArray(row.vendas_realizadas) ? row.vendas_realizadas : [],
+    savedAt: row.saved_at || undefined,
+    source: row.source || undefined,
+    isManuallyEdited: Boolean(row.is_manually_edited),
+    updatedAt: row.updated_at || undefined,
+  };
+}
+
 /**
  * ============================================================================
  * SINCRONIZAÇÃO BIDIRECIONAL EM TEMPO REAL (REALTIME SUBSCRIBER)
@@ -786,6 +1035,11 @@ export function startSupabaseRealtimeSync(callbacks: RealtimeSyncCallbacks) {
     'contas_pagar',
     'contas_receber',
     'turnos_caixa',
+    'colaboradores',
+    'registos_ponto',
+    'recibos_salario',
+    'escalas_trabalho',
+    'metas_vendas',
   ];
 
   registeredTables.forEach((tableName) => {
@@ -993,6 +1247,41 @@ function handleRealtimeEvent(tableName: TableSyncName, payload: any) {
         currentCallbacks.onShiftChange(eventType, item, oldRecord);
       }
       break;
+
+    case 'colaboradores':
+      if (currentCallbacks.onEmployeeChange) {
+        const item = eventType === 'DELETE' ? { id: String(rawId) } : mapSupabaseToEmployee(newRecord);
+        currentCallbacks.onEmployeeChange(eventType, item, oldRecord);
+      }
+      break;
+
+    case 'registos_ponto':
+      if (currentCallbacks.onTimeEntryChange) {
+        const item = eventType === 'DELETE' ? { id: String(rawId) } : mapSupabaseToTimeEntry(newRecord);
+        currentCallbacks.onTimeEntryChange(eventType, item, oldRecord);
+      }
+      break;
+
+    case 'recibos_salario':
+      if (currentCallbacks.onPayrollChange) {
+        const item = eventType === 'DELETE' ? { id: String(rawId) } : mapSupabaseToPayroll(newRecord);
+        currentCallbacks.onPayrollChange(eventType, item, oldRecord);
+      }
+      break;
+
+    case 'escalas_trabalho':
+      if (currentCallbacks.onEmployeeShiftChange) {
+        const item = eventType === 'DELETE' ? { id: String(rawId) } : mapSupabaseToEmployeeShift(newRecord);
+        currentCallbacks.onEmployeeShiftChange(eventType, item, oldRecord);
+      }
+      break;
+
+    case 'metas_vendas':
+      if (currentCallbacks.onSalesGoalChange) {
+        const item = eventType === 'DELETE' ? { id: String(rawId) } : mapSupabaseToSalesGoal(newRecord);
+        currentCallbacks.onSalesGoalChange(eventType, item, oldRecord);
+      }
+      break;
   }
 }
 
@@ -1032,6 +1321,16 @@ export function mapLocalRecordToSupabasePayload(table: TableSyncName, record: an
       return mapAccountReceivableToSupabase(record);
     case 'turnos_caixa':
       return mapShiftToSupabase(record);
+    case 'colaboradores':
+      return mapEmployeeToSupabase(record);
+    case 'registos_ponto':
+      return mapTimeEntryToSupabase(record);
+    case 'recibos_salario':
+      return mapPayrollToSupabase(record);
+    case 'escalas_trabalho':
+      return mapEmployeeShiftToSupabase(record);
+    case 'metas_vendas':
+      return mapSalesGoalToSupabase(record);
     default:
       return record;
   }
@@ -1201,6 +1500,11 @@ export async function pullTableFromSupabase(
     case 'contas_pagar': mapper = mapSupabaseToAccountPayable; break;
     case 'contas_receber': mapper = mapSupabaseToAccountReceivable; break;
     case 'turnos_caixa': mapper = mapSupabaseToShift; break;
+    case 'colaboradores': mapper = mapSupabaseToEmployee; break;
+    case 'registos_ponto': mapper = mapSupabaseToTimeEntry; break;
+    case 'recibos_salario': mapper = mapSupabaseToPayroll; break;
+    case 'escalas_trabalho': mapper = mapSupabaseToEmployeeShift; break;
+    case 'metas_vendas': mapper = mapSupabaseToSalesGoal; break;
   }
 
   try {
@@ -1222,6 +1526,16 @@ export async function pullTableFromSupabase(
       query = query.order('nome', { ascending: true });
     } else if (table === 'vendas') {
       query = query.order('date', { ascending: false });
+    } else if (table === 'colaboradores') {
+      query = query.order('name', { ascending: true });
+    } else if (table === 'registos_ponto') {
+      query = query.order('date', { ascending: false });
+    } else if (table === 'recibos_salario') {
+      query = query.order('month_year', { ascending: false });
+    } else if (table === 'escalas_trabalho') {
+      query = query.order('date', { ascending: false });
+    } else if (table === 'metas_vendas') {
+      query = query.order('ano_referencia', { ascending: false });
     }
 
     // Apply Profile scoping
@@ -1302,6 +1616,11 @@ export async function pushTableToSupabase(
     case 'contas_pagar': mapper = mapAccountPayableToSupabase; break;
     case 'contas_receber': mapper = mapAccountReceivableToSupabase; break;
     case 'turnos_caixa': mapper = mapShiftToSupabase; break;
+    case 'colaboradores': mapper = mapEmployeeToSupabase; break;
+    case 'registos_ponto': mapper = mapTimeEntryToSupabase; break;
+    case 'recibos_salario': mapper = mapPayrollToSupabase; break;
+    case 'escalas_trabalho': mapper = mapEmployeeShiftToSupabase; break;
+    case 'metas_vendas': mapper = mapSalesGoalToSupabase; break;
   }
 
   try {
@@ -1388,6 +1707,11 @@ export async function pullAllFromSupabase(options?: {
     accountsPayable?: AccountPayable[];
     accountsReceivable?: AccountReceivable[];
     shifts?: CashShift[];
+    employees?: Employee[];
+    timeEntries?: TimeClockEntry[];
+    payrolls?: PayrollSlip[];
+    employeeShifts?: EmployeeShift[];
+    salesGoals?: SalesGoalRecord[];
   };
   errors: string[];
   tableResults: Record<string, { count: number; error?: string; status: 'ok' | 'error' | 'empty' }>;
@@ -1420,6 +1744,16 @@ export async function pullAllFromSupabase(options?: {
         query = query.order('nome', { ascending: true });
       } else if (table === 'vendas') {
         query = query.order('date', { ascending: false });
+      } else if (table === 'colaboradores') {
+        query = query.order('name', { ascending: true });
+      } else if (table === 'registos_ponto') {
+        query = query.order('date', { ascending: false });
+      } else if (table === 'recibos_salario') {
+        query = query.order('month_year', { ascending: false });
+      } else if (table === 'escalas_trabalho') {
+        query = query.order('date', { ascending: false });
+      } else if (table === 'metas_vendas') {
+        query = query.order('ano_referencia', { ascending: false });
       }
 
       // Apply profile filter if specified for profiles table
@@ -1471,6 +1805,11 @@ export async function pullAllFromSupabase(options?: {
     fetchTable('contas_pagar', mapSupabaseToAccountPayable, 'accountsPayable'),
     fetchTable('contas_receber', mapSupabaseToAccountReceivable, 'accountsReceivable'),
     fetchTable('turnos_caixa', mapSupabaseToShift, 'shifts'),
+    fetchTable('colaboradores', mapSupabaseToEmployee, 'employees'),
+    fetchTable('registos_ponto', mapSupabaseToTimeEntry, 'timeEntries'),
+    fetchTable('recibos_salario', mapSupabaseToPayroll, 'payrolls'),
+    fetchTable('escalas_trabalho', mapSupabaseToEmployeeShift, 'employeeShifts'),
+    fetchTable('metas_vendas', mapSupabaseToSalesGoal, 'salesGoals'),
   ]);
 
   result.success = result.errors.length === 0;
@@ -1514,6 +1853,11 @@ export async function pushAllToSupabase(
     accountsPayable: AccountPayable[];
     accountsReceivable: AccountReceivable[];
     shifts: CashShift[];
+    employees?: Employee[];
+    timeEntries?: TimeClockEntry[];
+    payrolls?: PayrollSlip[];
+    employeeShifts?: EmployeeShift[];
+    salesGoals?: SalesGoalRecord[];
   },
   options?: {
     companyId?: string;
@@ -1608,6 +1952,11 @@ export async function pushAllToSupabase(
   await uploadBatch('contas_pagar', localData.accountsPayable, mapAccountPayableToSupabase);
   await uploadBatch('contas_receber', localData.accountsReceivable, mapAccountReceivableToSupabase);
   await uploadBatch('turnos_caixa', localData.shifts, mapShiftToSupabase);
+  await uploadBatch('colaboradores', localData.employees, mapEmployeeToSupabase);
+  await uploadBatch('registos_ponto', localData.timeEntries, mapTimeEntryToSupabase);
+  await uploadBatch('recibos_salario', localData.payrolls, mapPayrollToSupabase);
+  await uploadBatch('escalas_trabalho', localData.employeeShifts, mapEmployeeShiftToSupabase);
+  await uploadBatch('metas_vendas', localData.salesGoals, mapSalesGoalToSupabase);
 
   result.success = result.errors.length === 0;
 
@@ -1621,7 +1970,7 @@ export async function pushAllToSupabase(
     action: 'PUSH',
     origin: 'LOCAL_APP',
     description: result.success
-      ? `Exportação total para o Supabase concluída com sucesso (${totalCount} registos enviados em 14 tabelas)${scopeMsg}.`
+      ? `Exportação total para o Supabase concluída com sucesso (${totalCount} registos enviados em 19 tabelas)${scopeMsg}.`
       : `Exportação para o Supabase concluída com ${result.errors.length} erro(s). ${totalCount} registos enviados${scopeMsg}.`,
     status: result.success ? 'success' : 'error',
   });

@@ -120,6 +120,8 @@ export interface CurrencyDefinition {
   thousandsSeparator: '.' | ',' | ' ' | '' | "'";
 }
 
+export type VatMode = 'acrescido' | 'incluido' | 'isento';
+
 export interface VatRate {
   id: string;
   name: string;
@@ -150,6 +152,7 @@ export interface Company {
   currencyPosition?: 'prefix' | 'suffix';
   currencyDecimals?: number;
   defaultTaxRate?: number; // Taxa de IVA Padrão da Empresa (ex: 16%)
+  defaultVatMode?: VatMode; // Regime de IVA Padrão ('acrescido' = soma à fatura, 'incluido' = no PVP, 'isento')
   vatRates?: VatRate[]; // Lista de taxas de IVA configuradas na empresa
   phone: string;
   mobile?: string;
@@ -374,6 +377,7 @@ export interface SaleItem {
   unit?: string;
   lotNumber?: string;
   batchNumber?: string;
+  vatMode?: VatMode;
 }
 
 export type InvoiceType =
@@ -409,6 +413,7 @@ export interface Sale {
   discountTotal: number;
   taxTotal: number;
   total: number;
+  vatMode?: VatMode;
   payments: PaymentRecord[];
   changeAmount?: number; // Troco
   operatorId: string;
@@ -754,6 +759,7 @@ export interface Employee {
 
 export interface EmployeeShift {
   id: string;
+  companyId?: string;
   employeeId: string;
   storeId: string;
   date: string;

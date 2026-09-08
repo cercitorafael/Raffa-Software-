@@ -941,6 +941,11 @@ export async function diagnosticarTodasTabelasSupabase(): Promise<{
     { name: 'contas_pagar', label: 'Contas a Pagar' },
     { name: 'contas_receber', label: 'Contas a Receber' },
     { name: 'turnos_caixa', label: 'Turnos de Caixa' },
+    { name: 'colaboradores', label: 'Recursos Humanos - Colaboradores' },
+    { name: 'registos_ponto', label: 'Recursos Humanos - Picagens de Ponto' },
+    { name: 'recibos_salario', label: 'Recursos Humanos - Recibos de Salário' },
+    { name: 'escalas_trabalho', label: 'Recursos Humanos - Escalas de Trabalho' },
+    { name: 'metas_vendas', label: 'Metas Comerciais & Vendas' },
   ];
 
   const results: Record<string, TableDiagnosticResult> = {};
@@ -1313,6 +1318,111 @@ CREATE TABLE IF NOT EXISTS public.turnos_caixa (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
+-- 14. TABELA DE COLABORADORES / RECURSOS HUMANOS
+CREATE TABLE IF NOT EXISTS public.colaboradores (
+    id TEXT PRIMARY KEY,
+    company_id TEXT DEFAULT 'comp-1',
+    code TEXT,
+    name TEXT NOT NULL,
+    role TEXT,
+    department TEXT,
+    store_id TEXT,
+    tax_number TEXT,
+    social_security_number TEXT,
+    email TEXT,
+    phone TEXT,
+    base_salary NUMERIC DEFAULT 0,
+    meal_allowance_daily NUMERIC DEFAULT 0,
+    contract_type TEXT DEFAULT 'sem_termo',
+    admission_date TEXT,
+    status TEXT DEFAULT 'ativo',
+    avatar_url TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+-- 15. TABELA DE REGISTOS DE PONTO / PICAGENS
+CREATE TABLE IF NOT EXISTS public.registos_ponto (
+    id TEXT PRIMARY KEY,
+    company_id TEXT DEFAULT 'comp-1',
+    employee_id TEXT NOT NULL,
+    employee_name TEXT NOT NULL,
+    store_id TEXT,
+    date TEXT NOT NULL,
+    clock_in TEXT,
+    lunch_out TEXT,
+    lunch_in TEXT,
+    clock_out TEXT,
+    total_hours NUMERIC DEFAULT 0,
+    overtime_hours NUMERIC DEFAULT 0,
+    status TEXT DEFAULT 'completo',
+    approved_by TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+-- 16. TABELA DE RECIBOS DE VENCIMENTO / FOLHA DE SALÁRIOS
+CREATE TABLE IF NOT EXISTS public.recibos_salario (
+    id TEXT PRIMARY KEY,
+    company_id TEXT DEFAULT 'comp-1',
+    employee_id TEXT NOT NULL,
+    employee_name TEXT NOT NULL,
+    employee_role TEXT,
+    tax_number TEXT,
+    month_year TEXT NOT NULL,
+    month TEXT,
+    base_salary NUMERIC DEFAULT 0,
+    meal_allowance NUMERIC DEFAULT 0,
+    overtime_pay NUMERIC DEFAULT 0,
+    bonus NUMERIC DEFAULT 0,
+    gross_total NUMERIC DEFAULT 0,
+    social_security_deduction NUMERIC DEFAULT 0,
+    social_security_retention NUMERIC DEFAULT 0,
+    irs_retention NUMERIC DEFAULT 0,
+    net_salary NUMERIC DEFAULT 0,
+    company_social_security NUMERIC DEFAULT 0,
+    total_employer_cost NUMERIC DEFAULT 0,
+    status TEXT DEFAULT 'processado',
+    payment_date TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+-- 17. TABELA DE ESCALAS E TURNOS DE TRABALHO (RH)
+CREATE TABLE IF NOT EXISTS public.escalas_trabalho (
+    id TEXT PRIMARY KEY,
+    company_id TEXT DEFAULT 'comp-1',
+    employee_id TEXT NOT NULL,
+    store_id TEXT,
+    date TEXT NOT NULL,
+    start_time TEXT NOT NULL,
+    end_time TEXT NOT NULL,
+    break_duration_minutes NUMERIC DEFAULT 60,
+    role_assigned TEXT,
+    status TEXT DEFAULT 'planeado',
+    notes TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+-- 18. TABELA DE METAS COMERCIAIS & VENDAS
+CREATE TABLE IF NOT EXISTS public.metas_vendas (
+    id TEXT PRIMARY KEY,
+    company_id TEXT DEFAULT 'comp-1',
+    ano_referencia NUMERIC NOT NULL,
+    meta_anual_total NUMERIC DEFAULT 0,
+    estrategia TEXT DEFAULT 'MANUAL',
+    metas_mensais JSONB DEFAULT '[]'::jsonb,
+    valores_manuais JSONB DEFAULT '[]'::jsonb,
+    historico_valores JSONB DEFAULT '[]'::jsonb,
+    vendas_realizadas JSONB DEFAULT '[]'::jsonb,
+    saved_at TEXT,
+    source TEXT DEFAULT 'Manual / Ajuste Local',
+    is_manually_edited BOOLEAN DEFAULT true,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
 -- ==============================================================================
 -- REPLICA IDENTITY FULL (Essencial para receber dados completos em eventos DELETE no Realtime)
 -- ==============================================================================
@@ -1330,6 +1440,11 @@ ALTER TABLE public.vendas REPLICA IDENTITY FULL;
 ALTER TABLE public.contas_pagar REPLICA IDENTITY FULL;
 ALTER TABLE public.contas_receber REPLICA IDENTITY FULL;
 ALTER TABLE public.turnos_caixa REPLICA IDENTITY FULL;
+ALTER TABLE public.colaboradores REPLICA IDENTITY FULL;
+ALTER TABLE public.registos_ponto REPLICA IDENTITY FULL;
+ALTER TABLE public.recibos_salario REPLICA IDENTITY FULL;
+ALTER TABLE public.escalas_trabalho REPLICA IDENTITY FULL;
+ALTER TABLE public.metas_vendas REPLICA IDENTITY FULL;
 
 -- ==============================================================================
 -- ROW LEVEL SECURITY (RLS) & POLÍTICAS DE ACESSO TOTAL (Anon / Authenticated)
@@ -1340,7 +1455,8 @@ DECLARE
     tables text[] := ARRAY[
         'profiles', 'empresas', 'lojas', 'usuarios', 'categorias', 'produtos', 
         'clientes', 'fornecedores', 'armazens', 'stock', 'vendas', 
-        'contas_pagar', 'contas_receber', 'turnos_caixa'
+        'contas_pagar', 'contas_receber', 'turnos_caixa',
+        'colaboradores', 'registos_ponto', 'recibos_salario', 'escalas_trabalho', 'metas_vendas'
     ];
 BEGIN
     FOREACH t IN ARRAY tables LOOP
@@ -1359,7 +1475,8 @@ DECLARE
     tables text[] := ARRAY[
         'profiles', 'empresas', 'lojas', 'usuarios', 'categorias', 'produtos', 
         'clientes', 'fornecedores', 'armazens', 'stock', 'vendas', 
-        'contas_pagar', 'contas_receber', 'turnos_caixa'
+        'contas_pagar', 'contas_receber', 'turnos_caixa',
+        'colaboradores', 'registos_ponto', 'recibos_salario', 'escalas_trabalho', 'metas_vendas'
     ];
 BEGIN
     FOREACH t IN ARRAY tables LOOP

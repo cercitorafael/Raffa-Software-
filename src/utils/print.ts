@@ -423,7 +423,7 @@ export function printThermalReceipt(sale: Sale, company: Company, store: Store):
         <div class="divider"></div>
 
         <div class="row">
-          <span>Subtotal:</span>
+          <span>${sale.vatMode === 'acrescido' ? 'Subtotal (s/ IVA):' : 'Subtotal:'}</span>
           <span>${formatCurrency(sale.subtotal, company.currency)}</span>
         </div>
         ${
@@ -434,10 +434,22 @@ export function printThermalReceipt(sale: Sale, company: Company, store: Store):
                </div>`
             : ''
         }
-        <div class="row">
-          <span>IVA Total Incluído:</span>
-          <span>${formatCurrency(sale.taxTotal, company.currency)}</span>
-        </div>
+        ${
+          sale.vatMode === 'acrescido'
+            ? `<div class="row bold">
+                 <span>+ IVA Somado:</span>
+                 <span>+${formatCurrency(sale.taxTotal, company.currency)}</span>
+               </div>`
+            : sale.vatMode === 'isento'
+            ? `<div class="row">
+                 <span>Regime de IVA:</span>
+                 <span>Isento (0%)</span>
+               </div>`
+            : `<div class="row">
+                 <span>IVA Total Incluído:</span>
+                 <span>${formatCurrency(sale.taxTotal, company.currency)}</span>
+               </div>`
+        }
         <div class="double-divider"></div>
         <div class="row bold" style="font-size: 13px;">
           <span>TOTAL A PAGAR:</span>
@@ -637,7 +649,8 @@ export async function downloadReceiptPdf(sale: Sale, company: Company, store: St
   y += 4;
 
   // Totals
-  doc.text('Subtotal:', 4, y);
+  const subtotalLabel = sale.vatMode === 'acrescido' ? 'Subtotal (s/ IVA):' : 'Subtotal:';
+  doc.text(subtotalLabel, 4, y);
   doc.text(formatCurrency(sale.subtotal, company.currency), pageWidth - 4, y, { align: 'right' });
   y += 3.5;
 
@@ -647,8 +660,10 @@ export async function downloadReceiptPdf(sale: Sale, company: Company, store: St
     y += 3.5;
   }
 
-  doc.text('IVA Total Incluído:', 4, y);
-  doc.text(formatCurrency(sale.taxTotal, company.currency), pageWidth - 4, y, { align: 'right' });
+  const vatPdfLabel = sale.vatMode === 'acrescido' ? '+ IVA Somado:' : sale.vatMode === 'isento' ? 'Regime de IVA (Isento):' : 'IVA Total Incluído:';
+  const vatPrefix = sale.vatMode === 'acrescido' ? '+' : '';
+  doc.text(vatPdfLabel, 4, y);
+  doc.text(`${vatPrefix}${formatCurrency(sale.taxTotal, company.currency)}`, pageWidth - 4, y, { align: 'right' });
   y += 4;
 
   doc.setLineDashPattern([], 0);
@@ -723,8 +738,18 @@ export function printInvoiceDocument(
     const rate = it.taxRate ?? 0;
     const current = taxMap.get(rate) || { base: 0, tax: 0, total: 0 };
     const itemTotal = it.total;
-    const base = rate === 0 ? itemTotal : itemTotal / (1 + rate / 100);
-    const tax = itemTotal - base;
+    let base = 0;
+    let tax = 0;
+    if (sale.vatMode === 'acrescido') {
+      tax = typeof it.taxAmount === 'number' ? it.taxAmount : Number((((it.unitPrice * it.quantity - (it.discountAmount || 0)) * rate) / 100).toFixed(2));
+      base = Number((it.unitPrice * it.quantity - (it.discountAmount || 0)).toFixed(2));
+    } else if (sale.vatMode === 'isento') {
+      base = itemTotal;
+      tax = 0;
+    } else {
+      base = rate === 0 ? itemTotal : itemTotal / (1 + rate / 100);
+      tax = itemTotal - base;
+    }
     current.base += base;
     current.tax += tax;
     current.total += itemTotal;
@@ -1222,8 +1247,8 @@ export function printInvoiceDocument(
                       : ''
                   }
                   <div class="summary-row">
-                    <span>IVA (VAT)</span>
-                    <span style="font-family: monospace;">${formatCurrency(sale.taxTotal, company.currency)}</span>
+                    <span>${sale.vatMode === 'acrescido' ? '+ IVA Somado (VAT Added)' : sale.vatMode === 'isento' ? 'Regime IVA (Isento 0%)' : 'IVA (VAT Incluído)'}</span>
+                    <span style="font-family: monospace;">${sale.vatMode === 'acrescido' ? '+' : ''}${formatCurrency(sale.taxTotal, company.currency)}</span>
                   </div>
                 </div>
 
@@ -1452,8 +1477,18 @@ export async function downloadInvoicePdf(
     const rate = it.taxRate ?? 0;
     const current = taxMap.get(rate) || { base: 0, tax: 0, total: 0 };
     const itemTotal = it.total;
-    const base = rate === 0 ? itemTotal : itemTotal / (1 + rate / 100);
-    const tax = itemTotal - base;
+    let base = 0;
+    let tax = 0;
+    if (sale.vatMode === 'acrescido') {
+      tax = typeof it.taxAmount === 'number' ? it.taxAmount : Number((((it.unitPrice * it.quantity - (it.discountAmount || 0)) * rate) / 100).toFixed(2));
+      base = Number((it.unitPrice * it.quantity - (it.discountAmount || 0)).toFixed(2));
+    } else if (sale.vatMode === 'isento') {
+      base = itemTotal;
+      tax = 0;
+    } else {
+      base = rate === 0 ? itemTotal : itemTotal / (1 + rate / 100);
+      tax = itemTotal - base;
+    }
     current.base += base;
     current.tax += tax;
     current.total += itemTotal;
@@ -1545,7 +1580,8 @@ export async function downloadInvoicePdf(
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(8);
   doc.setTextColor(55, 65, 81);
-  doc.text('S/IVA (Net Value)', 120, bottomY + 10);
+  const netLabel = sale.vatMode === 'acrescido' ? 'Incidência (Net Value)' : 'S/IVA (Net Value)';
+  doc.text(netLabel, 120, bottomY + 10);
   doc.text(formatCurrency(sale.subtotal, company.currency), 196, bottomY + 10, { align: 'right' });
   if (sale.discountTotal > 0) {
     doc.setTextColor(220, 38, 38);
@@ -1553,8 +1589,10 @@ export async function downloadInvoicePdf(
     doc.text(`-${formatCurrency(sale.discountTotal, company.currency)}`, 196, bottomY + 14, { align: 'right' });
     doc.setTextColor(55, 65, 81);
   }
-  doc.text('IVA (VAT)', 120, bottomY + (sale.discountTotal > 0 ? 18 : 15));
-  doc.text(formatCurrency(sale.taxTotal, company.currency), 196, bottomY + (sale.discountTotal > 0 ? 18 : 15), { align: 'right' });
+  const a4VatLabel = sale.vatMode === 'acrescido' ? '+ IVA Somado (VAT)' : sale.vatMode === 'isento' ? 'IVA (Isento 0%)' : 'IVA (VAT Incluído)';
+  const a4VatPrefix = sale.vatMode === 'acrescido' ? '+' : '';
+  doc.text(a4VatLabel, 120, bottomY + (sale.discountTotal > 0 ? 18 : 15));
+  doc.text(`${a4VatPrefix}${formatCurrency(sale.taxTotal, company.currency)}`, 196, bottomY + (sale.discountTotal > 0 ? 18 : 15), { align: 'right' });
 
   // Total box
   const totalBoxY = bottomY + (sale.discountTotal > 0 ? 23 : 20);

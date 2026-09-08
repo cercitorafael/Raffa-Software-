@@ -54,6 +54,8 @@ import {
   toCents,
   fromCents,
 } from '../../utils/goalCalculations';
+import { useApp } from '../../context/AppContext';
+import { pushRecordToSupabase } from '../../lib/supabaseSync';
 
 export interface MonthlyGoalItem {
   mes: number;
@@ -91,6 +93,8 @@ export const AnalyticsSalesGoalsTab: React.FC<AnalyticsSalesGoalsTabProps> = ({
   formatCurrency,
   notify,
 }) => {
+  const { currentCompany } = useApp();
+
   // Input parameters
   const [anoReferencia, setAnoReferencia] = useState<number>(2027);
   const [metaAnualTotal, setMetaAnualTotal] = useState<number>(1200000);
@@ -166,35 +170,50 @@ export const AnalyticsSalesGoalsTab: React.FC<AnalyticsSalesGoalsTabProps> = ({
 
   // Hydrate persisted goals on mount or when anoReferencia changes
   useEffect(() => {
-    try {
-      // Verifica se existe backup manual salvo para este ano
-      const hasBackup = Boolean(localStorage.getItem(`${BACKUP_KEY_PREFIX}${anoReferencia}`));
-      setHasManualBackup(hasBackup);
+    const carregarMetas = () => {
+      try {
+        // Verifica se existe backup manual salvo para este ano
+        const hasBackup = Boolean(localStorage.getItem(`${BACKUP_KEY_PREFIX}${anoReferencia}`));
+        setHasManualBackup(hasBackup);
 
-      const raw = localStorage.getItem(`${STORAGE_KEY_PREFIX}${anoReferencia}`);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (parsed && Array.isArray(parsed.metasMensais) && parsed.metasMensais.length === 12) {
-          setMetaAnualTotal(parsed.metaAnualTotal || 1200000);
-          if (parsed.estrategia) setEstrategia(parsed.estrategia);
-          if (Array.isArray(parsed.valoresManuais)) setValoresManuais(parsed.valoresManuais);
-          if (Array.isArray(parsed.historicoValores)) setHistoricoValores(parsed.historicoValores);
-          if (Array.isArray(parsed.vendasRealizadas)) setVendasRealizadas(parsed.vendasRealizadas);
-          setResultado({
-            anoReferencia,
-            metaAnualTotal: parsed.metaAnualTotal,
-            metasMensais: parsed.metasMensais,
-            source: parsed.source || 'Ajuste Manual Salvo',
-            estrategia: parsed.estrategia || 'MANUAL',
-          });
-          setLastSavedTimestamp(parsed.savedAt || null);
-          setLastExecutionTime(`Metas salvas carregadas (${parsed.savedAt || 'local'})`);
-          setIsManuallyCustomized(Boolean(parsed.isManuallyEdited || parsed.estrategia === 'MANUAL'));
+        const raw = localStorage.getItem(`${STORAGE_KEY_PREFIX}${anoReferencia}`);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (parsed && Array.isArray(parsed.metasMensais) && parsed.metasMensais.length === 12) {
+            setMetaAnualTotal(parsed.metaAnualTotal || 1200000);
+            if (parsed.estrategia) setEstrategia(parsed.estrategia);
+            if (Array.isArray(parsed.valoresManuais)) setValoresManuais(parsed.valoresManuais);
+            if (Array.isArray(parsed.historicoValores)) setHistoricoValores(parsed.historicoValores);
+            if (Array.isArray(parsed.vendasRealizadas)) setVendasRealizadas(parsed.vendasRealizadas);
+            setResultado({
+              anoReferencia,
+              metaAnualTotal: parsed.metaAnualTotal,
+              metasMensais: parsed.metasMensais,
+              source: parsed.source || 'Ajuste Manual Salvo',
+              estrategia: parsed.estrategia || 'MANUAL',
+            });
+            setLastSavedTimestamp(parsed.savedAt || null);
+            setLastExecutionTime(`Metas salvas carregadas (${parsed.savedAt || 'local/Supabase'})`);
+            setIsManuallyCustomized(Boolean(parsed.isManuallyEdited || parsed.estrategia === 'MANUAL'));
+          }
         }
+      } catch (e) {
+        console.error('Erro ao ler metas do localStorage:', e);
       }
-    } catch (e) {
-      console.error('Erro ao ler metas do localStorage:', e);
-    }
+    };
+
+    carregarMetas();
+
+    const handleRemoteUpdate = (e: Event) => {
+      const customEvt = e as CustomEvent;
+      if (customEvt.detail?.anoReferencia === anoReferencia) {
+        carregarMetas();
+      }
+    };
+    window.addEventListener('agro_sales_goals_updated', handleRemoteUpdate);
+    return () => {
+      window.removeEventListener('agro_sales_goals_updated', handleRemoteUpdate);
+    };
   }, [anoReferencia]);
 
   // Limpa o timer de debounce se o componente for desmontado
@@ -275,7 +294,10 @@ export const AnalyticsSalesGoalsTab: React.FC<AnalyticsSalesGoalsTabProps> = ({
       setSaveStatus('saving');
       const agora = new Date();
       const dataHoraStr = agora.toLocaleDateString('pt-PT') + ' às ' + agora.toLocaleTimeString('pt-PT');
+      const compId = currentCompany?.id || 'comp-1';
       const dados = {
+        id: `meta-${compId}-${ano}`,
+        companyId: compId,
         anoReferencia: ano,
         metaAnualTotal: resAtual?.metaAnualTotal || metaAnualTotal,
         estrategia: strat,
@@ -288,6 +310,7 @@ export const AnalyticsSalesGoalsTab: React.FC<AnalyticsSalesGoalsTabProps> = ({
         isManuallyEdited: true,
       };
       localStorage.setItem(`${STORAGE_KEY_PREFIX}${ano}`, JSON.stringify(dados));
+      pushRecordToSupabase('metas_vendas', 'upsert', dados);
       setLastSavedTimestamp(dataHoraStr);
       setSaveStatus('saved');
       setIsManuallyCustomized(true);
@@ -295,7 +318,7 @@ export const AnalyticsSalesGoalsTab: React.FC<AnalyticsSalesGoalsTabProps> = ({
         notify(msgNotif, 'success');
       }
     } catch (e) {
-      console.error('Erro ao salvar metas no localStorage:', e);
+      console.error('Erro ao salvar metas no localStorage e Supabase:', e);
       setSaveStatus('idle');
     }
   };
@@ -318,7 +341,10 @@ export const AnalyticsSalesGoalsTab: React.FC<AnalyticsSalesGoalsTabProps> = ({
       try {
         const agora = new Date();
         const dataHoraStr = agora.toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        const compId = currentCompany?.id || 'comp-1';
         const dados = {
+          id: `meta-${compId}-${ano}`,
+          companyId: compId,
           anoReferencia: ano,
           metaAnualTotal: resAtual?.metaAnualTotal || metaAnualTotal,
           estrategia: strat,
@@ -331,11 +357,12 @@ export const AnalyticsSalesGoalsTab: React.FC<AnalyticsSalesGoalsTabProps> = ({
           isManuallyEdited: true,
         };
         localStorage.setItem(`${STORAGE_KEY_PREFIX}${ano}`, JSON.stringify(dados));
+        pushRecordToSupabase('metas_vendas', 'upsert', dados);
         setLastSavedTimestamp(dataHoraStr);
         setSaveStatus('saved');
         setIsManuallyCustomized(true);
       } catch (e) {
-        console.error('Erro ao persistir debounced no localStorage:', e);
+        console.error('Erro ao persistir debounced no localStorage e Supabase:', e);
         setSaveStatus('idle');
       }
     }, 400);

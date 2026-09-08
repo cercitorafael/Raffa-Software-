@@ -24,6 +24,9 @@ interface PaymentModalProps {
 export const PaymentModal: React.FC<PaymentModalProps> = ({ onClose, onSuccess }) => {
   const {
     cart,
+    posVatMode,
+    setPosVatMode,
+    posDefaultTaxRate,
     globalDiscount,
     selectedCustomer,
     completeSale,
@@ -67,22 +70,51 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ onClose, onSuccess }
 
   const currencySymbol = currentCompany?.currencySymbol || currencyDefinition.symbol || 'Mt';
 
-  // Calculate gross total
+  // Calculate gross total and tax with VAT mode support
   const subtotal = cart.reduce((sum, i) => sum + Number(i.unitPrice || 0) * Number(i.quantity || 0), 0);
   const itemDiscounts = cart.reduce((sum, i) => sum + Number(i.discountAmount || 0), 0);
   const globalDiscountAmt = ((subtotal - itemDiscounts) * Number(globalDiscount || 0)) / 100;
   const totalDiscount = itemDiscounts + globalDiscountAmt;
-  const totalToPay = Math.max(0, subtotal - totalDiscount);
+  const netBase = Math.max(0, subtotal - totalDiscount);
+  const globalDiscountFactor = 1 - Number(globalDiscount || 0) / 100;
+
+  let totalTax = 0;
+  let totalToPay = 0;
+
+  if (posVatMode === 'acrescido') {
+    totalTax = cart.reduce((sum, i) => {
+      const rate = typeof i.taxRate === 'number' ? i.taxRate : posDefaultTaxRate;
+      const itemNetBase = Math.max(0, Number(i.unitPrice || 0) * Number(i.quantity || 0) - Number(i.discountAmount || 0)) * globalDiscountFactor;
+      return sum + Number(((itemNetBase * rate) / 100).toFixed(2));
+    }, 0);
+    totalTax = Number(totalTax.toFixed(2));
+    totalToPay = Number((netBase + totalTax).toFixed(2));
+  } else if (posVatMode === 'isento') {
+    totalTax = 0;
+    totalToPay = netBase;
+  } else {
+    // 'incluido'
+    totalTax = cart.reduce((sum, i) => {
+      const rate = typeof i.taxRate === 'number' ? i.taxRate : posDefaultTaxRate;
+      const itemGross = Math.max(0, Number(i.unitPrice || 0) * Number(i.quantity || 0) - Number(i.discountAmount || 0)) * globalDiscountFactor;
+      const itemBase = rate > 0 ? itemGross / (1 + rate / 100) : itemGross;
+      return sum + (itemGross - itemBase);
+    }, 0);
+    totalTax = Number(totalTax.toFixed(2));
+    totalToPay = netBase;
+  }
 
   // Remaining to pay in case of split payments
   const totalPaidSoFar = payments.reduce((sum, p) => sum + Number(p.amount || 0), 0);
   const remaining = Math.max(0, Number((totalToPay - totalPaidSoFar).toFixed(2)));
 
-  // Set initial cash amount to remaining
+  // Set initial cash amount or update if matches previous total
+  const prevTotalRef = React.useRef<number>(totalToPay);
   React.useEffect(() => {
-    if (cashTendered === 0 && totalToPay > 0) {
+    if (cashTendered === 0 || cashTendered === prevTotalRef.current) {
       setCashTendered(totalToPay);
     }
+    prevTotalRef.current = totalToPay;
   }, [totalToPay]);
 
   const handleAddSplitPayment = () => {
@@ -165,7 +197,8 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ onClose, onSuccess }
         customCustomerNif.trim() || selectedCustomer?.taxNumber || '999999990',
         customCustomerName.trim() || selectedCustomer?.name || 'Consumidor Final',
         customCustomerPhone.trim() || selectedCustomer?.phone || undefined,
-        customCustomerAddress.trim() || selectedCustomer?.address || undefined
+        customCustomerAddress.trim() || selectedCustomer?.address || undefined,
+        posVatMode
       );
       notify('Venda registada com sucesso!', 'success');
       onSuccess(completedSale);
@@ -281,14 +314,61 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ onClose, onSuccess }
         {/* Body */}
         <div className="p-6 overflow-y-auto space-y-5">
           {/* Top Banner: Total to Pay */}
-          <div className="bg-[#0d0d0d] border border-[#262626] rounded-xl p-4 flex items-center justify-between">
+          <div className="bg-[#0d0d0d] border border-[#262626] rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
               <span className="text-[10px] font-semibold uppercase text-neutral-400 tracking-widest">Total a Cobrar</span>
               <div className="text-3xl font-serif font-bold text-[#c5a47e]">{formatCurrency(totalToPay)}</div>
+              
+              {/* Regime de IVA Interativo no Modal */}
+              <div className="flex items-center gap-1.5 mt-2 flex-wrap">
+                <span className="text-[10px] uppercase font-bold text-neutral-400 tracking-wider mr-1">IVA:</span>
+                <button
+                  type="button"
+                  onClick={() => setPosVatMode('acrescido')}
+                  className={`px-2 py-0.5 rounded text-[11px] font-semibold transition-all cursor-pointer border ${
+                    posVatMode === 'acrescido'
+                      ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40 shadow-xs'
+                      : 'bg-[#181818] text-neutral-400 border-[#2b2b2b] hover:border-neutral-500 hover:text-white'
+                  }`}
+                  title="O IVA soma ao preço dos artigos no total da fatura"
+                >
+                  + IVA Acrescido ({totalTax > 0 ? `+${formatCurrency(totalTax)}` : 'Soma'})
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setPosVatMode('incluido')}
+                  className={`px-2 py-0.5 rounded text-[11px] font-semibold transition-all cursor-pointer border ${
+                    posVatMode === 'incluido'
+                      ? 'bg-[#c5a47e]/20 text-[#c5a47e] border-[#c5a47e]/40 shadow-xs'
+                      : 'bg-[#181818] text-neutral-400 border-[#2b2b2b] hover:border-neutral-500 hover:text-white'
+                  }`}
+                  title="O IVA já está embutido no preço dos artigos (PVP)"
+                >
+                  IVA Incluído ({formatCurrency(totalTax)})
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setPosVatMode('isento')}
+                  className={`px-2 py-0.5 rounded text-[11px] font-semibold transition-all cursor-pointer border ${
+                    posVatMode === 'isento'
+                      ? 'bg-neutral-700/40 text-neutral-200 border-neutral-600 shadow-xs'
+                      : 'bg-[#181818] text-neutral-400 border-[#2b2b2b] hover:border-neutral-500 hover:text-white'
+                  }`}
+                  title="Operação isenta de IVA (Art. 9º / 12º CIVA)"
+                >
+                  Isento (0%)
+                </button>
+
+                <span className="text-neutral-500 text-[10px] ml-1 font-mono">
+                  Base: {formatCurrency(netBase)}
+                </span>
+              </div>
             </div>
 
             {/* Document Type Selector */}
-            <div className="flex bg-[#141414] rounded-lg border border-[#262626] p-1 space-x-1">
+            <div className="flex bg-[#141414] rounded-lg border border-[#262626] p-1 space-x-1 self-start sm:self-auto">
               {[
                 { id: 'FS', label: 'FS (Simplificada)' },
                 { id: 'FT', label: 'FT (Fatura)' },

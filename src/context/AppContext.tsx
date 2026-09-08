@@ -46,6 +46,8 @@ import {
   LanguageOption,
   CallLog,
   ShiftType,
+  VatMode,
+  VatRate,
 } from '../types';
 import { useI18n } from '../i18n';
 import { standardizeCategoryName } from '../utils/categoryUtils';
@@ -108,6 +110,7 @@ import {
   clearSyncLogs,
   SupabaseSyncLog,
   mapSupabaseToCompany,
+  SalesGoalRecord,
 } from '../lib/supabaseSync';
 import {
   getUserProfile,
@@ -125,6 +128,35 @@ import { isEffectiveSale, calculateShiftSalesTotals } from '../utils/documentUti
 
 export interface CartItem extends SaleItem {
   image?: string;
+}
+
+export function computeCartItemTotals(
+  unitPrice: number,
+  quantity: number,
+  discountPercent: number,
+  taxRate: number,
+  vatMode: VatMode = 'acrescido'
+): { discountAmount: number; taxAmount: number; total: number } {
+  const gross = Number(quantity || 0) * Number(unitPrice || 0);
+  const discountPct = Math.max(0, Math.min(100, Number(discountPercent) || 0));
+  const discountAmount = Number(((gross * discountPct) / 100).toFixed(2));
+  const netBase = Math.max(0, gross - discountAmount);
+  const rate = Math.max(0, Number(taxRate) || 0);
+
+  if (vatMode === 'acrescido') {
+    // Preço é o valor líquido s/ IVA. O IVA SOMA ao total da fatura!
+    const taxAmount = Number(((netBase * rate) / 100).toFixed(2));
+    const total = Number((netBase + taxAmount).toFixed(2));
+    return { discountAmount, taxAmount, total };
+  } else if (vatMode === 'isento') {
+    return { discountAmount, taxAmount: 0, total: Number(netBase.toFixed(2)) };
+  } else {
+    // 'incluido': Preço tem IVA incluído (PVP)
+    const total = Number(netBase.toFixed(2));
+    const base = rate > 0 ? total / (1 + rate / 100) : total;
+    const taxAmount = Number((total - base).toFixed(2));
+    return { discountAmount, taxAmount, total };
+  }
 }
 
 export interface AppContextType {
@@ -343,10 +375,17 @@ export interface AppContextType {
   registerCashMovement: (type: 'sangria' | 'suprimento', amount: number, reason: string) => void;
   syncActiveShiftWithTodaySales: () => void;
   cart: CartItem[];
-  addToCart: (product: Product, quantity?: number) => void;
+  posVatMode: VatMode;
+  setPosVatMode: (mode: VatMode) => void;
+  posDefaultTaxRate: number;
+  setPosDefaultTaxRate: (rate: number) => void;
+  addToCart: (product: Product, quantity?: number, customTaxRate?: number, customVatMode?: VatMode) => void;
   removeFromCart: (productId: string) => void;
   updateCartQuantity: (productId: string, quantityOrDelta: number, isDelta?: boolean) => void;
   updateCartDiscount: (productId: string, discount: number) => void;
+  updateCartTaxRate: (productId: string, taxRate: number) => void;
+  updateCartItemVat: (productId: string, taxRate: number, vatMode?: VatMode) => void;
+  applyVatRateToCart: (taxRate: number, vatMode?: VatMode) => void;
   globalDiscount: number;
   setGlobalDiscount: (d: number) => void;
   selectedCustomer: Customer | null;
@@ -358,7 +397,8 @@ export interface AppContextType {
     customerTaxNumber?: string,
     customerName?: string,
     customerPhone?: string,
-    customerAddress?: string
+    customerAddress?: string,
+    saleVatMode?: VatMode
   ) => Promise<Sale>;
   registerDocSaleInShift: (amount: number, paymentMethod?: string) => void;
   salesHistory: Sale[];
@@ -804,6 +844,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     loadFromStorage('cart', [])
   );
   const [globalDiscount, setGlobalDiscount] = useState<number>(0);
+  const [posVatMode, setPosVatModeState] = useState<VatMode>(() => {
+    return loadFromStorage<VatMode>('pos_vat_mode', currentCompany?.defaultVatMode || 'acrescido');
+  });
+  const [posDefaultTaxRate, setPosDefaultTaxRateState] = useState<number>(() => {
+    const stored = loadFromStorage<number>('pos_default_tax_rate', null as any);
+    if (typeof stored === 'number') return stored;
+    return typeof currentCompany?.defaultTaxRate === 'number' ? currentCompany.defaultTaxRate : 16;
+  });
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [salesHistory, setSalesHistory] = useState<Sale[]>(() => {
     const stored = loadFromStorage<Sale[]>('salesHistory', initialSales);
@@ -1540,6 +1588,117 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           }
         }
       },
+      onEmployeeChange: (event, item, rawOld) => {
+        const empItem = item as Employee;
+        const currentCompId = currentCompanyRef.current?.id;
+        if (empItem.companyId && currentCompId && empItem.companyId !== currentCompId) {
+          return;
+        }
+        if (event === 'DELETE') {
+          const idToDelete = item.id || rawOld?.id;
+          if (idToDelete) {
+            setEmployees((prev) => prev.filter((e) => String(e.id) !== String(idToDelete)));
+          }
+        } else if (item.id) {
+          setEmployees((prev) => {
+            const exists = prev.some((e) => String(e.id) === String(empItem.id));
+            if (exists) {
+              return prev.map((e) => (String(e.id) === String(empItem.id) ? { ...e, ...empItem } : e));
+            }
+            return [empItem, ...prev];
+          });
+        }
+      },
+      onTimeEntryChange: (event, item, rawOld) => {
+        const timeItem = item as TimeClockEntry;
+        if (event === 'DELETE') {
+          const idToDelete = item.id || rawOld?.id;
+          if (idToDelete) {
+            setTimeEntries((prev) => prev.filter((t) => String(t.id) !== String(idToDelete)));
+          }
+        } else if (item.id) {
+          setTimeEntries((prev) => {
+            const exists = prev.some((t) => String(t.id) === String(timeItem.id));
+            if (exists) {
+              return prev.map((t) => (String(t.id) === String(timeItem.id) ? { ...t, ...timeItem } : t));
+            }
+            return [timeItem, ...prev];
+          });
+        }
+      },
+      onPayrollChange: (event, item, rawOld) => {
+        const payItem = item as PayrollSlip;
+        const currentCompId = currentCompanyRef.current?.id;
+        if (payItem.companyId && currentCompId && payItem.companyId !== currentCompId) {
+          return;
+        }
+        if (event === 'DELETE') {
+          const idToDelete = item.id || rawOld?.id;
+          if (idToDelete) {
+            setPayrolls((prev) => prev.filter((p) => String(p.id) !== String(idToDelete)));
+          }
+        } else if (item.id) {
+          setPayrolls((prev) => {
+            const exists = prev.some((p) => String(p.id) === String(payItem.id));
+            if (exists) {
+              return prev.map((p) => (String(p.id) === String(payItem.id) ? { ...p, ...payItem } : p));
+            }
+            return [payItem, ...prev];
+          });
+        }
+      },
+      onEmployeeShiftChange: (event, item, rawOld) => {
+        const shiftItem = item as EmployeeShift;
+        const currentCompId = currentCompanyRef.current?.id;
+        if (shiftItem.companyId && currentCompId && shiftItem.companyId !== currentCompId) {
+          return;
+        }
+        if (event === 'DELETE') {
+          const idToDelete = item.id || rawOld?.id;
+          if (idToDelete) {
+            setEmployeeShifts((prev) => prev.filter((s) => String(s.id) !== String(idToDelete)));
+          }
+        } else if (item.id) {
+          setEmployeeShifts((prev) => {
+            const exists = prev.some((s) => String(s.id) === String(shiftItem.id));
+            if (exists) {
+              return prev.map((s) => (String(s.id) === String(shiftItem.id) ? { ...s, ...shiftItem } : s));
+            }
+            return [shiftItem, ...prev];
+          });
+        }
+      },
+      onSalesGoalChange: (event, item, rawOld) => {
+        const goalItem = item as SalesGoalRecord;
+        const currentCompId = currentCompanyRef.current?.id;
+        if (goalItem.companyId && currentCompId && goalItem.companyId !== currentCompId) {
+          return;
+        }
+        const ano = goalItem.anoReferencia || goalItem.ano_referencia;
+        if (event === 'DELETE') {
+          if (ano) {
+            localStorage.removeItem(`agro_sales_goals_v2_${ano}`);
+            window.dispatchEvent(new CustomEvent('agro_sales_goals_updated', { detail: { anoReferencia: ano, deleted: true } }));
+          }
+        } else if (item.id) {
+          if (ano) {
+            const dados = {
+              anoReferencia: ano,
+              metaAnualTotal: goalItem.metaAnualTotal || goalItem.meta_anual_total,
+              estrategia: goalItem.estrategia || 'MANUAL',
+              metasMensais: goalItem.metasMensais || goalItem.metas_mensais || [],
+              valoresManuais: goalItem.valoresManuais || goalItem.valores_manuais || [],
+              historicoValores: goalItem.historicoValores || goalItem.historico_valores || [],
+              vendasRealizadas: goalItem.vendasRealizadas || goalItem.vendas_realizadas || [],
+              savedAt: goalItem.savedAt || goalItem.saved_at || new Date().toISOString(),
+              source: goalItem.source || 'Sincronizado Supabase',
+              isManuallyEdited: goalItem.isManuallyEdited ?? goalItem.is_manually_edited ?? true,
+            };
+            localStorage.setItem(`agro_sales_goals_v2_${ano}`, JSON.stringify(dados));
+            window.dispatchEvent(new CustomEvent('agro_sales_goals_updated', { detail: { anoReferencia: ano, goal: dados } }));
+          }
+        }
+      },
     });
   }, []);
 
@@ -1680,6 +1839,75 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               });
             }
           }
+          if (res.data.employees && res.data.employees.length > 0) {
+            const compEmployees = res.data.employees.filter((e) => !e.companyId || e.companyId === compId);
+            setEmployees((prev) => {
+              const updated = [...prev];
+              compEmployees.forEach((remote) => {
+                const idx = updated.findIndex((item) => String(item.id) === String(remote.id));
+                if (idx >= 0) updated[idx] = { ...updated[idx], ...remote };
+                else updated.push(remote);
+              });
+              return updated;
+            });
+          }
+          if (res.data.timeEntries && res.data.timeEntries.length > 0) {
+            setTimeEntries((prev) => {
+              const updated = [...prev];
+              res.data.timeEntries!.forEach((remote) => {
+                const idx = updated.findIndex((item) => String(item.id) === String(remote.id));
+                if (idx >= 0) updated[idx] = { ...updated[idx], ...remote };
+                else updated.push(remote);
+              });
+              return updated;
+            });
+          }
+          if (res.data.payrolls && res.data.payrolls.length > 0) {
+            const compPayrolls = res.data.payrolls.filter((p) => !p.companyId || p.companyId === compId);
+            setPayrolls((prev) => {
+              const updated = [...prev];
+              compPayrolls.forEach((remote) => {
+                const idx = updated.findIndex((item) => String(item.id) === String(remote.id));
+                if (idx >= 0) updated[idx] = { ...updated[idx], ...remote };
+                else updated.push(remote);
+              });
+              return updated;
+            });
+          }
+          if (res.data.employeeShifts && res.data.employeeShifts.length > 0) {
+            const compShifts = res.data.employeeShifts.filter((s) => !s.companyId || s.companyId === compId);
+            setEmployeeShifts((prev) => {
+              const updated = [...prev];
+              compShifts.forEach((remote) => {
+                const idx = updated.findIndex((item) => String(item.id) === String(remote.id));
+                if (idx >= 0) updated[idx] = { ...updated[idx], ...remote };
+                else updated.push(remote);
+              });
+              return updated;
+            });
+          }
+          if (res.data.salesGoals && res.data.salesGoals.length > 0) {
+            const compGoals = res.data.salesGoals.filter((g) => !g.companyId || g.companyId === compId);
+            compGoals.forEach((goal) => {
+              const ano = goal.anoReferencia || goal.ano_referencia;
+              if (ano) {
+                const dados = {
+                  anoReferencia: ano,
+                  metaAnualTotal: goal.metaAnualTotal || goal.meta_anual_total,
+                  estrategia: goal.estrategia || 'MANUAL',
+                  metasMensais: goal.metasMensais || goal.metas_mensais || [],
+                  valoresManuais: goal.valoresManuais || goal.valores_manuais || [],
+                  historicoValores: goal.historicoValores || goal.historico_valores || [],
+                  vendasRealizadas: goal.vendasRealizadas || goal.vendas_realizadas || [],
+                  savedAt: goal.savedAt || goal.saved_at || new Date().toISOString(),
+                  source: goal.source || 'Sincronizado Supabase',
+                  isManuallyEdited: goal.isManuallyEdited ?? goal.is_manually_edited ?? true,
+                };
+                localStorage.setItem(`agro_sales_goals_v2_${ano}`, JSON.stringify(dados));
+                window.dispatchEvent(new CustomEvent('agro_sales_goals_updated', { detail: { anoReferencia: ano, goal: dados } }));
+              }
+            });
+          }
         }
       } catch {
         // Silent failure in background - Realtime will continue to deliver deltas
@@ -1788,6 +2016,51 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         });
       }
     }
+    if (res.data.employees && res.data.employees.length > 0) {
+      const compEmployees = res.data.employees.filter((e) => targetCompId === 'ALL' || !e.companyId || e.companyId === targetCompId);
+      setEmployees((prev) => [...compEmployees, ...prev.filter((e) => targetCompId !== 'ALL' && e.companyId && e.companyId !== targetCompId)]);
+    }
+    if (res.data.timeEntries && res.data.timeEntries.length > 0) {
+      setTimeEntries((prev) => {
+        const updated = [...prev];
+        res.data.timeEntries!.forEach((remote) => {
+          const idx = updated.findIndex((item) => String(item.id) === String(remote.id));
+          if (idx >= 0) updated[idx] = { ...updated[idx], ...remote };
+          else updated.push(remote);
+        });
+        return updated;
+      });
+    }
+    if (res.data.payrolls && res.data.payrolls.length > 0) {
+      const compPayrolls = res.data.payrolls.filter((p) => targetCompId === 'ALL' || !p.companyId || p.companyId === targetCompId);
+      setPayrolls((prev) => [...compPayrolls, ...prev.filter((p) => targetCompId !== 'ALL' && p.companyId && p.companyId !== targetCompId)]);
+    }
+    if (res.data.employeeShifts && res.data.employeeShifts.length > 0) {
+      const compShifts = res.data.employeeShifts.filter((s) => targetCompId === 'ALL' || !s.companyId || s.companyId === targetCompId);
+      setEmployeeShifts((prev) => [...compShifts, ...prev.filter((s) => targetCompId !== 'ALL' && s.companyId && s.companyId !== targetCompId)]);
+    }
+    if (res.data.salesGoals && res.data.salesGoals.length > 0) {
+      const compGoals = res.data.salesGoals.filter((g) => targetCompId === 'ALL' || !g.companyId || g.companyId === targetCompId);
+      compGoals.forEach((goal) => {
+        const ano = goal.anoReferencia || goal.ano_referencia;
+        if (ano) {
+          const dados = {
+            anoReferencia: ano,
+            metaAnualTotal: goal.metaAnualTotal || goal.meta_anual_total,
+            estrategia: goal.estrategia || 'MANUAL',
+            metasMensais: goal.metasMensais || goal.metas_mensais || [],
+            valoresManuais: goal.valoresManuais || goal.valores_manuais || [],
+            historicoValores: goal.historicoValores || goal.historico_valores || [],
+            vendasRealizadas: goal.vendasRealizadas || goal.vendas_realizadas || [],
+            savedAt: goal.savedAt || goal.saved_at || new Date().toISOString(),
+            source: goal.source || 'Sincronizado Supabase',
+            isManuallyEdited: goal.isManuallyEdited ?? goal.is_manually_edited ?? true,
+          };
+          localStorage.setItem(`agro_sales_goals_v2_${ano}`, JSON.stringify(dados));
+          window.dispatchEvent(new CustomEvent('agro_sales_goals_updated', { detail: { anoReferencia: ano, goal: dados } }));
+        }
+      });
+    }
 
     const totalPulled = Object.values(res.counts).reduce((a, b) => a + b, 0);
     if (totalPulled > 0 || res.errors.length === 0) {
@@ -1862,6 +2135,39 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return items.filter((item: any) => !item?.companyId || item.companyId === options.companyId);
     };
 
+    // Read local sales goals for push
+    const localSalesGoals: SalesGoalRecord[] = [];
+    try {
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && key.startsWith('agro_sales_goals_v2_')) {
+          const raw = localStorage.getItem(key);
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            const ano = parsed.anoReferencia || parseInt(key.replace('agro_sales_goals_v2_', ''), 10);
+            if (ano) {
+              localSalesGoals.push({
+                id: `meta-${options?.companyId || currentCompany?.id || 'comp-1'}-${ano}`,
+                companyId: options?.companyId || currentCompany?.id || 'comp-1',
+                anoReferencia: ano,
+                metaAnualTotal: parsed.metaAnualTotal || 0,
+                estrategia: parsed.estrategia || 'MANUAL',
+                metasMensais: parsed.metasMensais || [],
+                valoresManuais: parsed.valoresManuais || [],
+                historicoValores: parsed.historicoValores || [],
+                vendasRealizadas: parsed.vendasRealizadas || [],
+                savedAt: parsed.savedAt || new Date().toISOString(),
+                source: parsed.source || 'Local App',
+                isManuallyEdited: parsed.isManuallyEdited ?? true,
+              });
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('Erro ao ler metas locais:', e);
+    }
+
     const res = await pushAllToSupabase({
       companies: options?.companyId && options.companyId !== 'ALL'
         ? companies.filter((c) => c.id === options.companyId)
@@ -1878,6 +2184,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       accountsPayable: filterByCompany(accountsPayable),
       accountsReceivable: filterByCompany(accountsReceivable),
       shifts: shiftsHistory,
+      employees: filterByCompany(employees),
+      timeEntries: timeEntries,
+      payrolls: filterByCompany(payrolls),
+      employeeShifts: filterByCompany(employeeShifts),
+      salesGoals: localSalesGoals,
     }, options);
     const totalSent = Object.values(res.uploaded).reduce((a, b) => a + b, 0);
     if (res.errors.length === 0) {
@@ -4190,7 +4501,77 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     [stock, currentStore?.defaultWarehouseId, warehouses, currentCompany?.id]
   );
 
-  const addToCart = (product: Product, quantity = 1) => {
+  const setPosVatMode = (mode: VatMode) => {
+    setPosVatModeState(mode);
+    saveToStorage('pos_vat_mode', mode);
+    setCart((prev) =>
+      prev.map((item) => {
+        const discountPct = Number(item.discountPercent ?? item.discount ?? 0);
+        const unitPrice = Number(item.unitPrice || 0);
+        const rate = typeof item.taxRate === 'number' ? item.taxRate : posDefaultTaxRate;
+        const calc = computeCartItemTotals(unitPrice, item.quantity, discountPct, rate, mode);
+        return {
+          ...item,
+          vatMode: mode,
+          taxAmount: calc.taxAmount,
+          total: calc.total,
+          discountAmount: calc.discountAmount,
+        };
+      })
+    );
+  };
+
+  const setPosDefaultTaxRate = (rate: number) => {
+    setPosDefaultTaxRateState(rate);
+    saveToStorage('pos_default_tax_rate', rate);
+  };
+
+  const updateCartTaxRate = (productId: string, taxRate: number) => {
+    updateCartItemVat(productId, taxRate);
+  };
+
+  const updateCartItemVat = (productId: string, taxRate: number, itemVatMode?: VatMode) => {
+    setCart((prev) =>
+      prev.map((item) => {
+        if (item.productId === productId) {
+          const mode = itemVatMode || item.vatMode || posVatMode;
+          const discountPct = Number(item.discountPercent ?? item.discount ?? 0);
+          const unitPrice = Number(item.unitPrice || 0);
+          const calc = computeCartItemTotals(unitPrice, item.quantity, discountPct, taxRate, mode);
+          return {
+            ...item,
+            taxRate,
+            vatMode: mode,
+            taxAmount: calc.taxAmount,
+            total: calc.total,
+            discountAmount: calc.discountAmount,
+          };
+        }
+        return item;
+      })
+    );
+  };
+
+  const applyVatRateToCart = (taxRate: number, modeOverride?: VatMode) => {
+    const targetMode = modeOverride || posVatMode;
+    setCart((prev) =>
+      prev.map((item) => {
+        const discountPct = Number(item.discountPercent ?? item.discount ?? 0);
+        const unitPrice = Number(item.unitPrice || 0);
+        const calc = computeCartItemTotals(unitPrice, item.quantity, discountPct, taxRate, targetMode);
+        return {
+          ...item,
+          taxRate,
+          vatMode: targetMode,
+          taxAmount: calc.taxAmount,
+          total: calc.total,
+          discountAmount: calc.discountAmount,
+        };
+      })
+    );
+  };
+
+  const addToCart = (product: Product, quantity = 1, customTaxRate?: number, customVatMode?: VatMode) => {
     const available = getAvailableStock(product.id);
     let addedSuccessfully = false;
 
@@ -4209,18 +4590,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
 
       addedSuccessfully = true;
-      const targetTaxRate = typeof product.taxRate === 'number' ? product.taxRate : 23;
+      const mode = customVatMode || posVatMode;
+      const targetTaxRate =
+        typeof customTaxRate === 'number'
+          ? customTaxRate
+          : typeof product.taxRate === 'number'
+          ? product.taxRate
+          : typeof currentCompany?.defaultTaxRate === 'number'
+          ? currentCompany.defaultTaxRate
+          : posDefaultTaxRate;
+
       if (idx >= 0) {
         const item = prev[idx];
         const newQty = targetQty;
         const discountPct = Number(item.discountPercent ?? item.discount ?? 0);
         const unitPrice = Number(item.unitPrice || product.price || 0);
-        const gross = newQty * unitPrice;
-        const discountAmount = (gross * discountPct) / 100;
-        const total = Math.max(0, gross - discountAmount);
         const rate = typeof item.taxRate === 'number' ? item.taxRate : targetTaxRate;
-        const base = total / (1 + rate / 100);
-        const taxAmount = total - base;
+        const itemMode = item.vatMode || mode;
+        const calc = computeCartItemTotals(unitPrice, newQty, discountPct, rate, itemMode);
 
         const updated = [...prev];
         updated[idx] = {
@@ -4228,22 +4615,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           quantity: newQty,
           unitPrice,
           taxRate: rate,
-          taxAmount,
+          taxAmount: calc.taxAmount,
           discountPercent: discountPct,
           discount: discountPct,
-          discountAmount,
-          total,
+          discountAmount: calc.discountAmount,
+          total: calc.total,
+          vatMode: itemMode,
         };
         return updated;
       }
 
       const unitPrice = Number(product.price || 0);
-      const gross = quantity * unitPrice;
-      const discountPct = 0;
-      const discountAmount = 0;
-      const total = gross;
-      const base = total / (1 + targetTaxRate / 100);
-      const taxAmount = total - base;
+      const calc = computeCartItemTotals(unitPrice, quantity, 0, targetTaxRate, mode);
 
       return [
         ...prev,
@@ -4254,11 +4637,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           quantity,
           unitPrice,
           taxRate: targetTaxRate,
-          taxAmount,
+          taxAmount: calc.taxAmount,
           discountPercent: 0,
           discount: 0,
           discountAmount: 0,
-          total,
+          total: calc.total,
+          vatMode: mode,
           image: product.imageUrl,
         },
       ];
@@ -4287,20 +4671,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         if (item.productId === productId) {
           const discountPct = Number(item.discountPercent ?? item.discount ?? 0);
           const unitPrice = Number(item.unitPrice || 0);
-          const gross = newQty * unitPrice;
-          const discountAmount = (gross * discountPct) / 100;
-          const total = Math.max(0, gross - discountAmount);
-          const rate = typeof item.taxRate === 'number' ? item.taxRate : 23;
-          const base = total / (1 + rate / 100);
-          const taxAmount = total - base;
+          const rate = typeof item.taxRate === 'number' ? item.taxRate : posDefaultTaxRate;
+          const mode = item.vatMode || posVatMode;
+          const calc = computeCartItemTotals(unitPrice, newQty, discountPct, rate, mode);
           return {
             ...item,
             quantity: newQty,
             discountPercent: discountPct,
             discount: discountPct,
-            discountAmount,
-            taxAmount,
-            total,
+            discountAmount: calc.discountAmount,
+            taxAmount: calc.taxAmount,
+            total: calc.total,
           };
         }
         return item;
@@ -4314,19 +4695,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         if (item.productId === productId) {
           const discountPct = Math.max(0, Math.min(100, Number(discount) || 0));
           const unitPrice = Number(item.unitPrice || 0);
-          const gross = item.quantity * unitPrice;
-          const discountAmount = (gross * discountPct) / 100;
-          const total = Math.max(0, gross - discountAmount);
-          const rate = typeof item.taxRate === 'number' ? item.taxRate : 23;
-          const base = total / (1 + rate / 100);
-          const taxAmount = total - base;
+          const rate = typeof item.taxRate === 'number' ? item.taxRate : posDefaultTaxRate;
+          const mode = item.vatMode || posVatMode;
+          const calc = computeCartItemTotals(unitPrice, item.quantity, discountPct, rate, mode);
           return {
             ...item,
             discount: discountPct,
             discountPercent: discountPct,
-            discountAmount,
-            taxAmount,
-            total,
+            discountAmount: calc.discountAmount,
+            taxAmount: calc.taxAmount,
+            total: calc.total,
           };
         }
         return item;
@@ -4346,15 +4724,60 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     customerTaxNumber?: string,
     customerName?: string,
     customerPhone?: string,
-    customerAddress?: string
+    customerAddress?: string,
+    saleVatMode?: VatMode
   ): Promise<Sale> => {
     if (!cart || cart.length === 0) throw new Error('Carrinho vazio');
 
-    const subtotal = cart.reduce((acc, item) => acc + Number(item.unitPrice || 0) * Number(item.quantity || 0), 0);
+    const currentVatMode = saleVatMode || posVatMode;
+    const subtotalRaw = cart.reduce((acc, item) => acc + Number(item.unitPrice || 0) * Number(item.quantity || 0), 0);
     const itemDiscounts = cart.reduce((acc, item) => acc + Number(item.discountAmount || 0), 0);
-    const globalDiscountAmt = ((subtotal - itemDiscounts) * Number(globalDiscount || 0)) / 100;
-    const totalDiscount = itemDiscounts + globalDiscountAmt;
-    const finalTotal = Math.max(0, subtotal - totalDiscount);
+    const globalDiscountAmt = ((subtotalRaw - itemDiscounts) * Number(globalDiscount || 0)) / 100;
+    const totalDiscount = Number((itemDiscounts + globalDiscountAmt).toFixed(2));
+    const netBase = Math.max(0, subtotalRaw - totalDiscount);
+
+    let subtotal = Number(subtotalRaw.toFixed(2));
+    let taxTotal = 0;
+    let finalTotal = 0;
+
+    const globalDiscountFactor = 1 - Number(globalDiscount || 0) / 100;
+    const taxSummary: Record<number, { base: number; tax: number }> = {};
+
+    if (currentVatMode === 'acrescido') {
+      // Preço é valor líquido sem IVA. O IVA SOMA ao total da fatura!
+      cart.forEach((i) => {
+        const rate = typeof i.taxRate === 'number' ? i.taxRate : posDefaultTaxRate;
+        const itemNetBase = Math.max(0, Number(i.unitPrice || 0) * Number(i.quantity || 0) - Number(i.discountAmount || 0)) * globalDiscountFactor;
+        const itemTax = Number(((itemNetBase * rate) / 100).toFixed(2));
+        if (!taxSummary[rate]) taxSummary[rate] = { base: 0, tax: 0 };
+        taxSummary[rate].base += itemNetBase;
+        taxSummary[rate].tax += itemTax;
+      });
+      taxTotal = Object.values(taxSummary).reduce((acc, t) => acc + t.tax, 0);
+      taxTotal = Number(taxTotal.toFixed(2));
+      finalTotal = Number((netBase + taxTotal).toFixed(2));
+      subtotal = Number(subtotalRaw.toFixed(2));
+    } else if (currentVatMode === 'isento') {
+      taxTotal = 0;
+      finalTotal = Math.max(0, Number((subtotalRaw - totalDiscount).toFixed(2)));
+      subtotal = Number(subtotalRaw.toFixed(2));
+    } else {
+      // 'incluido': Preço tem IVA incluído (PVP)
+      cart.forEach((i) => {
+        const rate = typeof i.taxRate === 'number' ? i.taxRate : posDefaultTaxRate;
+        const itemGross = Math.max(0, Number(i.unitPrice || 0) * Number(i.quantity || 0) - Number(i.discountAmount || 0)) * globalDiscountFactor;
+        const itemBase = rate > 0 ? itemGross / (1 + rate / 100) : itemGross;
+        const itemTax = itemGross - itemBase;
+        if (!taxSummary[rate]) taxSummary[rate] = { base: 0, tax: 0 };
+        taxSummary[rate].base += itemBase;
+        taxSummary[rate].tax += itemTax;
+      });
+      taxTotal = Object.values(taxSummary).reduce((acc, t) => acc + t.tax, 0);
+      taxTotal = Number(taxTotal.toFixed(2));
+      finalTotal = Math.max(0, Number((subtotalRaw - totalDiscount).toFixed(2)));
+      subtotal = Number((finalTotal - taxTotal).toFixed(2));
+    }
+
     const dateStr = new Date().toISOString();
 
     const seq = salesHistory.length + 1;
@@ -4364,18 +4787,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const prevHash = prevSale ? prevSale.fiscalHash : '';
     const fiscalHash = generateFiscalHash(dateStr, invNumber, finalTotal, prevHash);
 
-    // Calculate tax breakdown
-    const taxSummary: Record<number, { base: number; tax: number }> = {};
-    cart.forEach((i) => {
-      const rate = typeof i.taxRate === 'number' ? i.taxRate : 23;
-      const base = i.total / (1 + rate / 100);
-      const tax = i.total - base;
-      if (!taxSummary[rate]) taxSummary[rate] = { base: 0, tax: 0 };
-      taxSummary[rate].base += base;
-      taxSummary[rate].tax += tax;
-    });
-
-    const taxTotal = Object.values(taxSummary).reduce((acc, t) => acc + t.tax, 0);
     const totalPaid = paymentMethods.reduce((sum, p) => sum + Number(p.amount || 0), 0);
     const totalTendered = paymentMethods.reduce(
       (sum, p) => sum + Number(p.tenderedAmount !== undefined ? p.tenderedAmount : p.amount || 0),
@@ -4408,6 +4819,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       discountTotal: totalDiscount,
       taxTotal,
       total: finalTotal,
+      vatMode: currentVatMode,
       changeAmount,
       payments: paymentMethods.map((p) => {
         const rawAmount = Number(p.amount || 0);
@@ -5429,13 +5841,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       status: emp.status || 'ativo',
     };
     setEmployees((prev) => [newEmp, ...prev]);
+    pushRecordToSupabase('colaboradores', 'upsert', newEmp);
     emitEvent('RH', 'hr.employee.created', { employeeId: id, name: newEmp.name, role: newEmp.role });
     sound.playSuccessChime();
   };
 
   const updateEmployee = (id: string, updates: Partial<Employee>) => {
     setEmployees((prev) =>
-      prev.map((e) => (e.id === id ? { ...e, ...updates } : e))
+      prev.map((e) => {
+        if (e.id === id) {
+          const updated = { ...e, ...updates };
+          pushRecordToSupabase('colaboradores', 'upsert', updated);
+          return updated;
+        }
+        return e;
+      })
     );
     emitEvent('RH', 'hr.employee.updated', { employeeId: id, updates });
     sound.playSuccessChime();
@@ -5444,6 +5864,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const deleteEmployee = (id: string) => {
     const target = employees.find((e) => e.id === id);
     setEmployees((prev) => prev.filter((e) => e.id !== id));
+    pushRecordToSupabase('colaboradores', 'delete', { id });
     emitEvent('RH', 'hr.employee.deleted', { employeeId: id, name: target?.name, companyId: target?.companyId });
     sound.playSuccessChime();
     notify(`Colaborador "${target?.name || id}" eliminado com sucesso.`, 'success');
@@ -5453,6 +5874,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const id = `tc-${Date.now()}`;
     const newEntry: TimeClockEntry = { ...entry, id };
     setTimeEntries((prev) => [newEntry, ...prev]);
+    pushRecordToSupabase('registos_ponto', 'upsert', newEntry);
     emitEvent('RH', 'hr.timeclock.manual_entry', { entryId: id, employee: entry.employeeName });
     sound.playSuccessChime();
     notify(`Ponto de ${entry.employeeName} registado com sucesso.`, 'success');
@@ -5460,7 +5882,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const updateTimeEntry = (id: string, updates: Partial<TimeClockEntry>) => {
     setTimeEntries((prev) =>
-      prev.map((t) => (t.id === id ? { ...t, ...updates } : t))
+      prev.map((t) => {
+        if (t.id === id) {
+          const updated = { ...t, ...updates };
+          pushRecordToSupabase('registos_ponto', 'upsert', updated);
+          return updated;
+        }
+        return t;
+      })
     );
     emitEvent('RH', 'hr.timeclock.updated', { entryId: id, updates });
     sound.playSuccessChime();
@@ -5470,6 +5899,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const deleteTimeEntry = (id: string) => {
     const target = timeEntries.find((t) => t.id === id);
     setTimeEntries((prev) => prev.filter((t) => t.id !== id));
+    pushRecordToSupabase('registos_ponto', 'delete', { id });
     emitEvent('RH', 'hr.timeclock.deleted', { entryId: id, employee: target?.employeeName });
     sound.playSuccessChime();
     notify('Registo de ponto eliminado com sucesso.', 'success');
@@ -5477,15 +5907,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const approveTimeEntry = (id: string, approvedBy = 'Diretor RH') => {
     setTimeEntries((prev) =>
-      prev.map((t) =>
-        t.id === id
-          ? {
-              ...t,
-              status: 'aprovado',
-              approvedBy: approvedBy || 'Diretor RH',
-            }
-          : t
-      )
+      prev.map((t) => {
+        if (t.id === id) {
+          const updated = {
+            ...t,
+            status: 'aprovado' as const,
+            approvedBy: approvedBy || 'Diretor RH',
+          };
+          pushRecordToSupabase('registos_ponto', 'upsert', updated);
+          return updated;
+        }
+        return t;
+      })
     );
     emitEvent('RH', 'hr.timeclock.approved', { entryId: id, approvedBy });
     sound.playSuccessChime();
@@ -5512,6 +5945,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       status: 'em_curso',
     };
     setTimeEntries((prev) => [newEntry, ...prev]);
+    pushRecordToSupabase('registos_ponto', 'upsert', newEntry);
     emitEvent('RH', 'hr.timeclock.clock_in', { employee: emp.name, time: timeStr });
     sound.playSuccessChime();
     notify(`Picagem de Entrada registada para ${emp.name}.`, 'success');
@@ -5524,12 +5958,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setTimeEntries((prev) =>
       prev.map((t) => {
         if (t.employeeId === employeeId && t.status === 'em_curso') {
-          return {
+          const updated = {
             ...t,
             clockOut: timeStr,
             totalHours: 8.0,
-            status: 'concluido',
+            status: 'concluido' as const,
           };
+          pushRecordToSupabase('registos_ponto', 'upsert', updated);
+          return updated;
         }
         return t;
       })
@@ -5549,6 +5985,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       monthYear: slip.monthYear || (slip as any).month || new Date().toISOString().slice(0, 7),
     };
     setPayrolls((prev) => [newSlip, ...prev]);
+    pushRecordToSupabase('recibos_salario', 'upsert', newSlip);
     emitEvent('RH', 'hr.payroll.created', { payrollId: id, employee: slip.employeeName, companyId: compId });
     sound.playSuccessChime();
     notify(`Recibo de vencimento de ${slip.employeeName} criado com sucesso.`, 'success');
@@ -5556,7 +5993,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const updatePayrollSlip = (id: string, updates: Partial<PayrollSlip>) => {
     setPayrolls((prev) =>
-      prev.map((p) => (p.id === id ? { ...p, ...updates } : p))
+      prev.map((p) => {
+        if (p.id === id) {
+          const updated = { ...p, ...updates };
+          pushRecordToSupabase('recibos_salario', 'upsert', updated);
+          return updated;
+        }
+        return p;
+      })
     );
     emitEvent('RH', 'hr.payroll.updated', { payrollId: id, updates });
     sound.playSuccessChime();
@@ -5570,6 +6014,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       saveToStorage('payrolls', updated);
       return updated;
     });
+    pushRecordToSupabase('recibos_salario', 'delete', { id });
     emitEvent('RH', 'hr.payroll.deleted', { payrollId: id, employee: target?.employeeName });
     sound.playSuccessChime();
     notify(`Recibo de vencimento ${target?.employeeName ? `de ${target.employeeName}` : ''} eliminado com sucesso.`, 'success');
@@ -5577,6 +6022,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const clearAllPayrolls = () => {
     const count = payrolls.length;
+    payrolls.forEach((p) => pushRecordToSupabase('recibos_salario', 'delete', { id: p.id }));
     setPayrolls([]);
     saveToStorage('payrolls', []);
     emitEvent('RH', 'hr.payroll.cleared', { count });
@@ -5587,15 +6033,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const markPayrollPaid = (id: string) => {
     const target = payrolls.find((p) => p.id === id);
     setPayrolls((prev) =>
-      prev.map((p) =>
-        p.id === id
-          ? {
-              ...p,
-              status: 'pago',
-              paymentDate: new Date().toISOString().split('T')[0],
-            }
-          : p
-      )
+      prev.map((p) => {
+        if (p.id === id) {
+          const updated = {
+            ...p,
+            status: 'pago' as const,
+            paymentDate: new Date().toISOString().split('T')[0],
+          };
+          pushRecordToSupabase('recibos_salario', 'upsert', updated);
+          return updated;
+        }
+        return p;
+      })
     );
     emitEvent('RH', 'hr.payroll.paid', { payrollId: id, employee: target?.employeeName });
     sound.playSuccessChime();
@@ -5637,11 +6086,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         netSalary: net,
         companySocialSecurity: compSS,
         totalEmployerCost: employerCost,
-        status: 'pendente',
+        status: 'pendente' as const,
       };
     });
 
     setPayrolls((prev) => [...newSlips, ...prev]);
+    pushBatchRecordsToSupabase('recibos_salario', 'upsert', newSlips);
     emitEvent('RH', 'hr.payroll.monthly_processed', {
       companyId: compId,
       monthYear,
@@ -5657,6 +6107,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const id = `sh-${Date.now()}`;
     const newShift: EmployeeShift = { ...shift, id, ...(shift as any), companyId: compId };
     setEmployeeShifts((prev) => [newShift, ...prev]);
+    pushRecordToSupabase('escalas_trabalho', 'upsert', newShift);
     emitEvent('RH', 'hr.shift.created', { shiftId: id, companyId: compId });
     sound.playSuccessChime();
     notify('Escala de turno agendada com sucesso.', 'success');
@@ -5664,7 +6115,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const updateEmployeeShift = (id: string, updates: Partial<EmployeeShift>) => {
     setEmployeeShifts((prev) =>
-      prev.map((s) => (s.id === id ? { ...s, ...updates } : s))
+      prev.map((s) => {
+        if (s.id === id) {
+          const updated = { ...s, ...updates };
+          pushRecordToSupabase('escalas_trabalho', 'upsert', updated);
+          return updated;
+        }
+        return s;
+      })
     );
     emitEvent('RH', 'hr.shift.updated', { shiftId: id, updates });
     sound.playSuccessChime();
@@ -5673,6 +6131,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const deleteEmployeeShift = (id: string) => {
     setEmployeeShifts((prev) => prev.filter((s) => s.id !== id));
+    pushRecordToSupabase('escalas_trabalho', 'delete', { id });
     emitEvent('RH', 'hr.shift.deleted', { shiftId: id });
     sound.playSuccessChime();
     notify('Turno de serviço eliminado com sucesso.', 'success');
@@ -6267,10 +6726,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         registerCashMovement,
         syncActiveShiftWithTodaySales,
         cart,
+        posVatMode,
+        setPosVatMode,
+        posDefaultTaxRate,
+        setPosDefaultTaxRate,
         addToCart,
         removeFromCart,
         updateCartQuantity,
         updateCartDiscount,
+        updateCartTaxRate,
+        updateCartItemVat,
+        applyVatRateToCart,
         globalDiscount,
         setGlobalDiscount,
         selectedCustomer,
