@@ -32,6 +32,7 @@ import {
   Eye,
   RefreshCw,
   ShieldAlert,
+  Calculator,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -136,7 +137,7 @@ export const AnalyticsSalesGoalsTab: React.FC<AnalyticsSalesGoalsTabProps> = ({
       { mes: 11, nomeMes: 'Novembro', pesoPercentual: 10.0, valorMeta: 120000 },
       { mes: 12, nomeMes: 'Dezembro', pesoPercentual: 11.25, valorMeta: 135000 },
     ],
-    source: 'gemini-3.8-flash',
+    source: 'Motor Local Reconciliado (Sem IA)',
     estrategia: 'HISTORICO',
   });
   const [lastExecutionTime, setLastExecutionTime] = useState<string>('Execução inicial predefinida');
@@ -388,7 +389,7 @@ export const AnalyticsSalesGoalsTab: React.FC<AnalyticsSalesGoalsTabProps> = ({
       anoReferencia,
       metaAnualTotal: finalTotal,
       metasMensais,
-      source: 'Aplicação Manual (Operador)',
+      source: 'Motor Manual Local (Sem IA)',
       estrategia: 'MANUAL',
     };
 
@@ -609,153 +610,145 @@ export const AnalyticsSalesGoalsTab: React.FC<AnalyticsSalesGoalsTabProps> = ({
     }
   };
 
-  // Executa o cálculo via API com o Gemini AI ou fallback seguro do backend
-  const executarGerarMetas = async () => {
+  // Motor de cálculo 100% determinístico e local (Sem IA)
+  const handleCalcularMetasLocalmente = (customValores?: number[], customEstrategia?: SalesGoalStrategy) => {
     setLoading(true);
+    const strat = customEstrategia || estrategia;
     try {
-      const effectiveMetaAnual = estrategia === 'MANUAL' ? (totalManual > 0 ? totalManual : metaAnualTotal) : metaAnualTotal;
-      const payload = {
-        anoReferencia,
-        metaAnualTotal: effectiveMetaAnual,
-        estrategia,
-        valoresManuais: estrategia === 'MANUAL' ? (totalManual > 0 ? valoresManuais : undefined) : undefined,
-        historicoAnoAnterior: historicoValores,
-      };
+      if (strat === 'MANUAL') {
+        const rawValores = customValores || valoresManuais;
+        let targetValores = [...rawValores];
+        const soma = targetValores.reduce((acc, v) => acc + (Number(v) || 0), 0);
 
-      try {
-        const res = await fetch('/api/metas/gerar', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        });
-
-        if (res.ok) {
-          const data: GeneratedGoalsResponse = await res.json();
-          setResultado(data);
-          if (estrategia === 'MANUAL' && data.metaAnualTotal) {
-            setMetaAnualTotal(data.metaAnualTotal);
-          }
-          setLastExecutionTime(new Date().toLocaleTimeString('pt-PT'));
-
-          if (notify) {
-            if (estrategia === 'HISTORICO' && totalHistorico === 0) {
-              notify(
-                `Atenção: A empresa não possui histórico de vendas. Conforme a regra, as metas calculadas ficaram a zero (0 MT). Utilize LINEAR ou MANUAL para definir metas sem histórico.`,
-                'info'
-              );
-            } else {
-              notify(
-                `Metas comerciais para ${data.anoReferencia} calculadas com sucesso via ${data.source || 'Motor IA'} (${data.estrategia || estrategia})!`,
-                'success'
-              );
-            }
-          }
-          return;
+        // Se todos os meses estiverem zerados mas houver meta anual alvo, divide igualmente
+        if (soma === 0 && metaAnualTotal > 0) {
+          const parcelas = distribuirMetaLinear(metaAnualTotal);
+          targetValores = parcelas.map((p) => p.valorMeta);
+          setValoresManuais(targetValores);
         }
-      } catch (networkErr) {
-        console.warn('API /api/metas/gerar temporariamente inacessível, aplicando fallback local determinístico:', networkErr);
-      }
 
-      // Fallback local seguro: NUNCA exibe erro de cálculo
-      if (estrategia === 'MANUAL') {
-        handleAplicarMetasManualmente();
-      } else if (estrategia === 'LINEAR') {
+        const { totalMetaAnual, metasMensais } = distribuirMetaManual(targetValores);
+        const finalTotal = totalMetaAnual > 0 ? totalMetaAnual : metaAnualTotal;
+
+        const novoResultado: GeneratedGoalsResponse = {
+          anoReferencia,
+          metaAnualTotal: finalTotal,
+          metasMensais,
+          source: 'Motor Manual Local (Sem IA)',
+          estrategia: 'MANUAL',
+        };
+
+        setResultado(novoResultado);
+        setMetaAnualTotal(finalTotal);
+        setEstrategia('MANUAL');
+        setIsManuallyCustomized(true);
+        setLastExecutionTime(`Metas manuais calculadas e aplicadas (${new Date().toLocaleTimeString('pt-PT')})`);
+
+        salvarMetasLocalmenteSincrono(
+          novoResultado,
+          targetValores,
+          vendasRealizadas,
+          historicoValores,
+          anoReferencia,
+          'MANUAL',
+          `Metas manuais de ${anoReferencia} calculadas e aplicadas com sucesso (${formatCurrency(finalTotal)})!`
+        );
+      } else if (strat === 'LINEAR') {
         const parcelas = distribuirMetaLinear(metaAnualTotal);
-        const novoRes: GeneratedGoalsResponse = {
+        const nextValores = parcelas.map((p) => p.valorMeta);
+        setValoresManuais(nextValores);
+
+        const novoResultado: GeneratedGoalsResponse = {
           anoReferencia,
           metaAnualTotal,
           metasMensais: parcelas,
-          source: 'Motor Linear Local Reconciliado',
+          source: 'Motor Linear Local (Sem IA)',
           estrategia: 'LINEAR',
         };
-        setResultado(novoRes);
-        salvarMetasLocalmenteSincrono(novoRes, valoresManuais, vendasRealizadas, historicoValores, anoReferencia, 'LINEAR');
-        if (notify) {
-          notify(`Metas lineares para ${anoReferencia} aplicadas com sucesso (${formatCurrency(metaAnualTotal)})!`, 'success');
-        }
+
+        setResultado(novoResultado);
+        setEstrategia('LINEAR');
+        setIsManuallyCustomized(true);
+        setLastExecutionTime(`Metas lineares calculadas (${new Date().toLocaleTimeString('pt-PT')})`);
+
+        salvarMetasLocalmenteSincrono(
+          novoResultado,
+          nextValores,
+          vendasRealizadas,
+          historicoValores,
+          anoReferencia,
+          'LINEAR',
+          `Metas lineares de ${anoReferencia} calculadas com sucesso (${formatCurrency(metaAnualTotal)})!`
+        );
       } else {
+        // HISTORICO
         const somaHist = historicoValores.reduce((acc, v) => acc + (Number(v) || 0), 0);
+        let parcelas: MonthlyGoalItem[];
+        let finalTotal = metaAnualTotal;
+
         if (somaHist === 0 || metaAnualTotal === 0) {
-          const metasZeradas = MONTH_NAMES.map((nomeMes, idx) => ({
+          parcelas = MONTH_NAMES.map((nomeMes, idx) => ({
             mes: idx + 1,
             nomeMes,
             pesoPercentual: 0,
             valorMeta: 0,
           }));
-          const novoRes: GeneratedGoalsResponse = {
-            anoReferencia,
-            metaAnualTotal: 0,
-            metasMensais: metasZeradas,
-            source: 'Motor Sazonal Local (Histórico 0 MT)',
-            estrategia: 'HISTORICO',
-          };
-          setResultado(novoRes);
+          finalTotal = 0;
           setMetaAnualTotal(0);
-          salvarMetasLocalmenteSincrono(novoRes, valoresManuais, vendasRealizadas, historicoValores, anoReferencia, 'HISTORICO');
-          if (notify) {
-            notify('Empresa sem histórico anterior: metas calculadas a zero (0 MT).', 'info');
-          }
         } else {
-          const parcelas = distribuirMetaSazonal(metaAnualTotal, historicoValores);
-          const novoRes: GeneratedGoalsResponse = {
-            anoReferencia,
-            metaAnualTotal,
-            metasMensais: parcelas,
-            source: 'Motor Sazonal Local',
-            estrategia: 'HISTORICO',
-          };
-          setResultado(novoRes);
-          salvarMetasLocalmenteSincrono(novoRes, valoresManuais, vendasRealizadas, historicoValores, anoReferencia, 'HISTORICO');
-          if (notify) {
-            notify(`Metas para ${anoReferencia} calculadas via histórico com sucesso (${formatCurrency(metaAnualTotal)})!`, 'success');
-          }
+          parcelas = distribuirMetaSazonal(metaAnualTotal, historicoValores);
         }
+
+        const nextValores = parcelas.map((p) => p.valorMeta);
+        setValoresManuais(nextValores);
+
+        const novoResultado: GeneratedGoalsResponse = {
+          anoReferencia,
+          metaAnualTotal: finalTotal,
+          metasMensais: parcelas,
+          source: 'Motor Sazonal Histórico (Sem IA)',
+          estrategia: 'HISTORICO',
+        };
+
+        setResultado(novoResultado);
+        setEstrategia('HISTORICO');
+        setLastExecutionTime(`Metas calculadas via histórico (${new Date().toLocaleTimeString('pt-PT')})`);
+
+        salvarMetasLocalmenteSincrono(
+          novoResultado,
+          nextValores,
+          vendasRealizadas,
+          historicoValores,
+          anoReferencia,
+          'HISTORICO',
+          somaHist === 0
+            ? 'Empresa sem histórico de vendas: metas calculadas a zero (0 MT).'
+            : `Metas proporcionais de ${anoReferencia} calculadas com sucesso (${formatCurrency(finalTotal)})!`
+        );
       }
     } catch (err: any) {
-      console.error('Falha ao gerar metas, aplicando fallback manual:', err);
-      handleAplicarMetasManualmente();
+      console.error('Erro no cálculo local de metas:', err);
+      if (notify) notify(`Erro ao calcular metas: ${err.message}`, 'error');
     } finally {
       setLoading(false);
     }
   };
 
-  // Intercepta a geração para proteger alterações manuais salvas
-  const handleGerarMetas = () => {
-    if (isManuallyCustomized && estrategia === 'MANUAL') {
-      setPendingAction({
-        titulo: 'Substituir metas manuais pela projeção da IA?',
-        descricao: `Você possui metas mensais editadas manualmente para ${anoReferencia}. Recalcular agora substituirá esses valores pela projeção automática. Um backup de segurança será gravado automaticamente e poderá ser restaurado a qualquer momento.`,
-        executar: () => {
-          criarBackupManual();
-          executarGerarMetas();
-        },
-      });
-      setShowOverwriteModal(true);
-    } else {
-      executarGerarMetas();
-    }
-  };
-
-  // Intercepta a troca de estratégia para alertar sobre perdas de dados manuais
+  // Intercepta a troca de estratégia e aplica imediatamente o cálculo correspondente
   const solicitarMudancaEstrategia = (novaEstrategia: SalesGoalStrategy) => {
     if (novaEstrategia === estrategia) return;
 
     if (isManuallyCustomized && estrategia === 'MANUAL') {
-      setPendingAction({
-        titulo: `Mudar estratégia de distribuição para "${novaEstrategia}"?`,
-        descricao: `Você possui metas mensais personalizadas manualmente. Ao mudar para a estratégia "${novaEstrategia}", os valores serão recalculados de acordo com essa regra. Um backup dos seus valores manuais será mantido para restauração.`,
-        executar: () => {
-          criarBackupManual();
-          setEstrategia(novaEstrategia);
-          setIsManuallyCustomized(false);
-        },
-      });
-      setShowOverwriteModal(true);
+      criarBackupManual();
+    }
+    setEstrategia(novaEstrategia);
+    if (novaEstrategia === 'MANUAL') {
+      setShowEditManual(true);
+      handleCalcularMetasLocalmente(undefined, 'MANUAL');
+    } else if (novaEstrategia === 'LINEAR') {
+      handleCalcularMetasLocalmente(undefined, 'LINEAR');
     } else {
-      setEstrategia(novaEstrategia);
-      if (novaEstrategia === 'MANUAL') {
-        setShowEditManual(true);
-      }
+      handleCalcularMetasLocalmente(undefined, 'HISTORICO');
     }
   };
 
@@ -854,18 +847,18 @@ export const AnalyticsSalesGoalsTab: React.FC<AnalyticsSalesGoalsTabProps> = ({
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 relative z-10">
           <div>
             <div className="flex items-center space-x-2 text-[#c5a47e] text-xs font-bold uppercase tracking-wider mb-1">
-              <Sparkles className="w-4 h-4 text-[#c5a47e] animate-pulse" />
-              <span>Motor Inteligente de Planeamento Comercial</span>
-              <span className="bg-[#c5a47e]/20 text-[#c5a47e] px-2 py-0.5 rounded-full border border-[#c5a47e]/30 text-[10px] font-mono">
-                Gemini 2.5/3.8 Flash Engine
+              <Calculator className="w-4 h-4 text-[#c5a47e]" />
+              <span>Motor Contábil de Planeamento Comercial</span>
+              <span className="bg-[#c5a47e]/20 text-[#c5a47e] px-2 py-0.5 rounded-full border border-[#c5a47e]/30 text-[10px] font-mono whitespace-nowrap">
+                Motor Matemático Local (Sem IA)
               </span>
             </div>
             <h2 className="text-xl lg:text-2xl font-black text-white tracking-tight">
               Geração e Distribuição de Metas Comerciais
             </h2>
             <p className="text-xs lg:text-sm text-neutral-400 mt-1 max-w-2xl">
-              Calcule metas anuais e mensais com inteligência artificial estruturada. Suporta as estratégias comerciais:{' '}
-              <strong className="text-neutral-200">HISTORICO</strong> (projeção proporcional), <strong className="text-neutral-200">MANUAL</strong> (definido pelo operador por mês) ou <strong className="text-neutral-200">LINEAR</strong> (divisão igual por 12).
+              Calcule metas anuais e mensais com reconciliação matemática precisa (zero discrepância de centavos). Suporta as estratégias comerciais:{' '}
+              <strong className="text-neutral-200">MANUAL</strong> (definido pelo operador por mês), <strong className="text-neutral-200">LINEAR</strong> (divisão igual por 12) ou <strong className="text-neutral-200">HISTORICO</strong> (projeção proporcional).
             </p>
           </div>
 
@@ -916,7 +909,7 @@ export const AnalyticsSalesGoalsTab: React.FC<AnalyticsSalesGoalsTabProps> = ({
             <button
               onClick={() => setShowDartModal(true)}
               className="flex items-center space-x-1.5 px-3 py-2 bg-blue-950/40 hover:bg-blue-900/50 text-blue-300 border border-blue-700/50 rounded-lg text-xs font-semibold transition-all cursor-pointer"
-              title="Visualizar e copiar código Dart / Flutter com Gemini AI"
+              title="Visualizar e copiar código Dart / Flutter com o algoritmo contábil"
             >
               <Code2 className="w-3.5 h-3.5 text-blue-400" />
               <span>Código Dart (Flutter)</span>
@@ -1300,7 +1293,7 @@ export const AnalyticsSalesGoalsTab: React.FC<AnalyticsSalesGoalsTabProps> = ({
                     <span className="text-xs font-bold text-white block">
                       Aplicação de Metas Comerciais Manualmente ({anoReferencia})
                     </span>
-                    <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                    <span className="px-2.5 py-0.5 rounded-full text-[11px] font-mono font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 whitespace-nowrap inline-flex items-center shrink-0">
                       Soma: {formatCurrency(totalManual)}
                     </span>
                   </div>
@@ -1330,9 +1323,9 @@ export const AnalyticsSalesGoalsTab: React.FC<AnalyticsSalesGoalsTabProps> = ({
                 <button
                   type="button"
                   id="btn-aplicar-metas-painel-manual"
-                  onClick={() => handleAplicarMetasManualmente()}
+                  onClick={() => handleCalcularMetasLocalmente(undefined, 'MANUAL')}
                   className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold transition-all shadow-md flex items-center space-x-1.5 cursor-pointer"
-                  title="Aplicar os valores manuais agora no sistema e gráficos"
+                  title="Aplicar e consolidar os valores manuais no sistema e gráficos (Sem IA)"
                 >
                   <CheckCircle2 className="w-3.5 h-3.5" />
                   <span>Aplicar Metas Agora ({formatCurrency(totalManual || metaAnualTotal)})</span>
@@ -1364,7 +1357,7 @@ export const AnalyticsSalesGoalsTab: React.FC<AnalyticsSalesGoalsTabProps> = ({
                   <h4 className="text-xs font-bold text-white">
                     Valores Definidos Diretamente pelo Operador para Cada Mês ({anoReferencia})
                   </h4>
-                  <span className="px-2 py-0.5 rounded-full text-[10px] font-mono bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 font-bold">
+                  <span className="px-2.5 py-0.5 rounded-full text-[11px] font-mono bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 font-bold whitespace-nowrap inline-flex items-center shrink-0">
                     Soma: {formatCurrency(totalManual)}
                   </span>
                 </div>
@@ -1525,8 +1518,8 @@ export const AnalyticsSalesGoalsTab: React.FC<AnalyticsSalesGoalsTabProps> = ({
             <div className="flex items-center space-x-2">
               <Cpu className="w-4 h-4 text-[#c5a47e]" />
               <span>
-                Motor ativo:{' '}
-                <strong className="text-white font-mono">{resultado?.source || 'gemini-3.8-flash'}</strong>
+                Motor de cálculo:{' '}
+                <strong className="text-white font-mono">{resultado?.source || 'Motor Local Reconciliado (Sem IA)'}</strong>
               </span>
             </div>
             {saveStatus === 'saving' ? (
@@ -1551,9 +1544,9 @@ export const AnalyticsSalesGoalsTab: React.FC<AnalyticsSalesGoalsTabProps> = ({
             <button
               type="button"
               id="btn-aplicar-metas-manualmente-bar"
-              onClick={() => handleAplicarMetasManualmente()}
+              onClick={() => handleCalcularMetasLocalmente(undefined, 'MANUAL')}
               className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl text-xs shadow-md flex items-center justify-center space-x-1.5 transition-all cursor-pointer"
-              title="Aplicar e salvar as metas definidas manualmente sem depender de chamadas externas de IA"
+              title="Calcular e consolidar as metas definidas manualmente (Sem IA)"
             >
               <CheckCircle2 className="w-4 h-4 text-white" />
               <span>Aplicar Metas Manualmente</span>
@@ -1571,9 +1564,11 @@ export const AnalyticsSalesGoalsTab: React.FC<AnalyticsSalesGoalsTabProps> = ({
 
             <button
               type="button"
-              onClick={handleGerarMetas}
+              id="btn-calcular-metas-sem-ia"
+              onClick={() => handleCalcularMetasLocalmente()}
               disabled={loading}
               className="w-full sm:w-auto px-5 py-2.5 bg-gradient-to-r from-[#c5a47e] to-[#ab875e] hover:from-[#d6b793] hover:to-[#be986c] text-neutral-950 font-bold rounded-xl text-xs shadow-md flex items-center justify-center space-x-2 transition-all cursor-pointer disabled:opacity-50"
+              title="Calcular e aplicar metas sem IA (cálculo determinístico instantâneo e local)"
             >
               {loading ? (
                 <>
@@ -1582,8 +1577,8 @@ export const AnalyticsSalesGoalsTab: React.FC<AnalyticsSalesGoalsTabProps> = ({
                 </>
               ) : (
                 <>
-                  <Sparkles className="w-3.5 h-3.5 text-neutral-950" />
-                  <span>Calcular Metas com Gemini AI</span>
+                  <Calculator className="w-4 h-4 text-neutral-950" />
+                  <span>Calcular Metas (Sem IA)</span>
                 </>
               )}
             </button>
