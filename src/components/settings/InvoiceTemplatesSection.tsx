@@ -102,6 +102,8 @@ export const InvoiceTemplatesSection: React.FC = () => {
     customerName: 'CARLOS',
     customerNif: '402172967',
     customerTaxNumber: '402172967',
+    customerPhone: '+258 84 123 4567',
+    customerAddress: 'Av. Eduardo Mondlane, Ribaue',
     operatorName: 'Administrador',
     notes: 'Exemplo de fatura para validação de modelo.',
     items: [
@@ -557,7 +559,10 @@ export const InvoiceTemplatesSection: React.FC = () => {
 
                     <div className="text-right text-[9px] pt-1">
                       <div className="font-bold text-neutral-900 uppercase">CARLOS</div>
+                      <div className="text-neutral-600">Av. Eduardo Mondlane, Ribaue</div>
                       <div className="text-neutral-600">Moçambique</div>
+                      <div className="text-neutral-600">Tel: +258 84 123 4567</div>
+                      <div className="text-neutral-500 font-mono text-[8.5px]">NUIT: 402172967</div>
                     </div>
                   </div>
 

@@ -2084,9 +2084,17 @@ export const FinanceModule: React.FC = () => {
                   <p className="font-bold text-white text-sm">
                     {selectedSaleForPreview.customerName || 'Consumidor Final'}
                   </p>
-                  <p className="text-neutral-400 font-mono text-xs mt-0.5">
-                    NIF / NUIT: {selectedSaleForPreview.customerNif || selectedSaleForPreview.customerTaxNumber || '999999990'}
-                  </p>
+                  <div className="flex flex-wrap gap-x-3 gap-y-1 text-neutral-400 font-mono text-xs mt-1">
+                    <span>NIF / NUIT: {selectedSaleForPreview.customerNif || selectedSaleForPreview.customerTaxNumber || '999999990'}</span>
+                    {selectedSaleForPreview.customerPhone && (
+                      <span className="text-neutral-300">Tel: {selectedSaleForPreview.customerPhone}</span>
+                    )}
+                  </div>
+                  {selectedSaleForPreview.customerAddress && selectedSaleForPreview.customerAddress !== 'Balcão de Venda' && (
+                    <p className="text-neutral-400 text-xs mt-1">
+                      Morada: {selectedSaleForPreview.customerAddress}
+                    </p>
+                  )}
                 </div>
 
                 {/* Items Table */}

@@ -385,6 +385,22 @@ export function printThermalReceipt(sale: Sale, company: Company, store: Store):
           <span>NUIT/NIF:</span>
           <span>${sale.customerTaxNumber || sale.customerNif || 'Consumidor'}</span>
         </div>
+        ${
+          sale.customerPhone
+            ? `<div class="row" style="font-size: 10px;">
+          <span>Telefone:</span>
+          <span>${sale.customerPhone}</span>
+        </div>`
+            : ''
+        }
+        ${
+          sale.customerAddress && sale.customerAddress !== 'Balcão de Venda'
+            ? `<div class="row" style="font-size: 10px;">
+          <span>Morada:</span>
+          <span style="text-align: right; max-width: 65%; word-break: break-word;">${sale.customerAddress}</span>
+        </div>`
+            : ''
+        }
         <div class="row" style="font-size: 10px;">
           <span>Operador:</span>
           <span>${sale.operatorName || 'Caixa'}</span>
@@ -582,6 +598,15 @@ export async function downloadReceiptPdf(sale: Sale, company: Company, store: St
   y += 3.5;
   doc.text(`NIF/NUIT: ${sale.customerTaxNumber || sale.customerNif || 'Consumidor'}`, 4, y);
   y += 3.5;
+  if (sale.customerPhone) {
+    doc.text(`Telefone: ${sale.customerPhone}`, 4, y);
+    y += 3.5;
+  }
+  if (sale.customerAddress && sale.customerAddress !== 'Balcão de Venda') {
+    const addrLines = doc.splitTextToSize(`Morada: ${sale.customerAddress}`, pageWidth - 8);
+    doc.text(addrLines, 4, y);
+    y += (addrLines.length * 3.2);
+  }
   doc.text(`Operador: ${sale.operatorName || 'Caixa'}`, 4, y);
   y += 4;
 
@@ -907,7 +932,8 @@ export function printInvoiceDocument(
             text-align: right;
             font-size: 11px;
             padding-top: 4px;
-            max-width: 40%;
+            max-width: 48%;
+            word-break: break-word;
           }
           .customer-label {
             font-size: 9px;
@@ -1062,7 +1088,17 @@ export function printInvoiceDocument(
               <div class="customer-section">
                 <div class="customer-label">Exmo.(a) Sr.(a) / Cliente:</div>
                 <div class="customer-title">${sale.customerName || 'Consumidor Final'}</div>
-                <div style="color: #4b5563;">${company.country || 'Moçambique'}</div>
+                ${
+                  sale.customerAddress && sale.customerAddress !== 'Balcão de Venda'
+                    ? `<div class="customer-address" style="color: #4b5563; font-size: 10px; margin-top: 1px; word-break: break-word;">${sale.customerAddress}</div>`
+                    : ''
+                }
+                <div style="color: #4b5563; font-size: 10px;">${company.country || 'Moçambique'}</div>
+                ${
+                  sale.customerPhone
+                    ? `<div class="customer-phone" style="color: #4b5563; font-size: 10px; margin-top: 1px;">Tel: <strong>${sale.customerPhone}</strong></div>`
+                    : ''
+                }
                 ${
                   sale.customerTaxNumber || sale.customerNif
                     ? `<div style="font-family: monospace; font-size: 10px; margin-top: 2px;">NUIT: <strong>${sale.customerTaxNumber || sale.customerNif}</strong></div>`
@@ -1292,21 +1328,48 @@ export async function downloadInvoicePdf(
   doc.text(`E-mail: ${company.email || ''} | Tel: ${company.phone || company.mobile || ''}`, 14, compY + 17);
 
   // Customer Right Top
+  let custY = 16;
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(11);
+  doc.setFontSize(7.5);
+  doc.setTextColor(107, 114, 128);
+  doc.text('EXMO.(A) SR.(A) / CLIENTE:', 196, custY, { align: 'right' });
+  custY += 4.2;
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(10.5);
   doc.setTextColor(15, 23, 42);
-  doc.text(sale.customerName || 'Consumidor Final', 196, 20, { align: 'right' });
+  const custName = (sale.customerName || 'Consumidor Final').toUpperCase();
+  doc.text(custName, 196, custY, { align: 'right' });
+  custY += 4.2;
+
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(8.5);
   doc.setTextColor(75, 85, 99);
-  doc.text(company.country || 'Moçambique', 196, 25, { align: 'right' });
+
+  if (sale.customerAddress && sale.customerAddress !== 'Balcão de Venda') {
+    const addressLines = doc.splitTextToSize(sale.customerAddress, 72);
+    doc.text(addressLines, 196, custY, { align: 'right' });
+    custY += addressLines.length * 3.6;
+  }
+
+  doc.text(company.country || 'Moçambique', 196, custY, { align: 'right' });
+  custY += 3.8;
+
+  if (sale.customerPhone) {
+    doc.text(`Tel: ${sale.customerPhone}`, 196, custY, { align: 'right' });
+    custY += 3.8;
+  }
+
   if (sale.customerTaxNumber || sale.customerNif) {
-    doc.text(`NUIT: ${sale.customerTaxNumber || sale.customerNif}`, 196, 29.5, { align: 'right' });
+    doc.setFont('helvetica', 'bold');
+    doc.text(`NUIT: ${sale.customerTaxNumber || sale.customerNif}`, 196, custY, { align: 'right' });
+    doc.setFont('helvetica', 'normal');
+    custY += 4;
   }
 
   // Document Title
   const docTypeName = getDocumentTitle(sale.invoiceType, false);
-  const docTitleY = Math.max(compY + 23, 46);
+  const docTitleY = Math.max(compY + 23, custY + 3, 46);
 
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(11);

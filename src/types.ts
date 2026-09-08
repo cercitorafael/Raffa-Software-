@@ -402,6 +402,8 @@ export interface Sale {
   customerName?: string;
   customerTaxNumber?: string; // NIF
   customerNif?: string;
+  customerPhone?: string;
+  customerAddress?: string;
   items: SaleItem[];
   subtotal: number;
   discountTotal: number;

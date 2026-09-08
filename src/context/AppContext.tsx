@@ -356,7 +356,9 @@ export interface AppContextType {
     paymentMethods: PaymentRecord[],
     invoiceType?: InvoiceType,
     customerTaxNumber?: string,
-    customerName?: string
+    customerName?: string,
+    customerPhone?: string,
+    customerAddress?: string
   ) => Promise<Sale>;
   registerDocSaleInShift: (amount: number, paymentMethod?: string) => void;
   salesHistory: Sale[];
@@ -4342,7 +4344,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     paymentMethods: PaymentRecord[],
     invoiceType: InvoiceType = 'FS',
     customerTaxNumber?: string,
-    customerName?: string
+    customerName?: string,
+    customerPhone?: string,
+    customerAddress?: string
   ): Promise<Sale> => {
     if (!cart || cart.length === 0) throw new Error('Carrinho vazio');
 
@@ -4425,6 +4429,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       customerNif: customerTaxNumber || selectedCustomer?.taxNumber || '999999990',
       customerTaxNumber: customerTaxNumber || selectedCustomer?.taxNumber || '999999990',
       customerName: customerName || selectedCustomer?.name || 'Consumidor Final',
+      customerPhone: customerPhone || selectedCustomer?.phone || undefined,
+      customerAddress: customerAddress || selectedCustomer?.address || undefined,
       customerId: selectedCustomer?.id,
       fiscalHash,
       previousHash: prevHash,

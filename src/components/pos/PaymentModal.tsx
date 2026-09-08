@@ -58,6 +58,12 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ onClose, onSuccess }
   const [customCustomerNif, setCustomCustomerNif] = useState<string>(
     selectedCustomer?.taxNumber || '999999990'
   );
+  const [customCustomerPhone, setCustomCustomerPhone] = useState<string>(
+    selectedCustomer?.phone || ''
+  );
+  const [customCustomerAddress, setCustomCustomerAddress] = useState<string>(
+    selectedCustomer?.address && selectedCustomer?.address !== 'Balcão de Venda' ? selectedCustomer.address : ''
+  );
 
   const currencySymbol = currentCompany?.currencySymbol || currencyDefinition.symbol || 'Mt';
 
@@ -157,7 +163,9 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ onClose, onSuccess }
         finalPayments,
         invoiceType,
         customCustomerNif.trim() || selectedCustomer?.taxNumber || '999999990',
-        customCustomerName.trim() || selectedCustomer?.name || 'Consumidor Final'
+        customCustomerName.trim() || selectedCustomer?.name || 'Consumidor Final',
+        customCustomerPhone.trim() || selectedCustomer?.phone || undefined,
+        customCustomerAddress.trim() || selectedCustomer?.address || undefined
       );
       notify('Venda registada com sucesso!', 'success');
       onSuccess(completedSale);
@@ -198,23 +206,31 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ onClose, onSuccess }
             
             {/* Customer info display or inline editor */}
             {!isEditingCustomerInfo ? (
-              <div className="flex items-center space-x-2 mt-0.5">
-                <p className="text-xs text-neutral-300">
-                  Cliente: <span className="font-bold text-white">{customCustomerName}</span>{' '}
+              <div className="flex items-center space-x-2 mt-0.5 flex-wrap">
+                <p className="text-xs text-neutral-300 flex items-center gap-1.5 flex-wrap">
+                  <span>Cliente: <span className="font-bold text-white">{customCustomerName}</span></span>
                   <span className="font-mono text-[#c5a47e]">(NIF {customCustomerNif})</span>
+                  {customCustomerPhone && (
+                    <span className="text-neutral-400 text-[11px]">• Tel: {customCustomerPhone}</span>
+                  )}
+                  {customCustomerAddress && (
+                    <span className="text-neutral-400 text-[11px] truncate max-w-[160px]" title={customCustomerAddress}>
+                      • {customCustomerAddress}
+                    </span>
+                  )}
                 </p>
                 <button
                   type="button"
                   onClick={() => setIsEditingCustomerInfo(true)}
                   className="px-1.5 py-0.5 bg-[#1f1f1f] hover:bg-[#c5a47e] hover:text-black text-[#c5a47e] text-[10px] rounded flex items-center space-x-1 border border-[#333] cursor-pointer"
-                  title="Editar NIF / Nome para a Fatura"
+                  title="Editar Dados do Cliente para a Fatura"
                 >
                   <Edit2 className="w-2.5 h-2.5" />
                   <span>Editar</span>
                 </button>
               </div>
             ) : (
-              <div className="flex items-center gap-2 mt-1.5">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 mt-2 bg-[#141414] p-2.5 rounded-lg border border-[#2e2e2e]">
                 <input
                   type="text"
                   value={customCustomerName}
@@ -227,16 +243,33 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ onClose, onSuccess }
                   value={customCustomerNif}
                   onChange={(e) => setCustomCustomerNif(e.target.value)}
                   placeholder="NIF / NUIT"
-                  className="px-2 py-1 bg-[#1a1a1a] border border-[#3a3a3a] rounded text-xs text-[#c5a47e] font-mono w-28"
+                  className="px-2 py-1 bg-[#1a1a1a] border border-[#3a3a3a] rounded text-xs text-[#c5a47e] font-mono"
                 />
-                <button
-                  type="button"
-                  onClick={() => setIsEditingCustomerInfo(false)}
-                  className="p-1 bg-[#c5a47e] hover:bg-[#b5946e] text-black rounded cursor-pointer"
-                  title="Confirmar"
-                >
-                  <Check className="w-3.5 h-3.5" />
-                </button>
+                <input
+                  type="tel"
+                  value={customCustomerPhone}
+                  onChange={(e) => setCustomCustomerPhone(e.target.value)}
+                  placeholder="Telefone (ex: 84...)"
+                  className="px-2 py-1 bg-[#1a1a1a] border border-[#3a3a3a] rounded text-xs text-white"
+                />
+                <div className="flex gap-1.5">
+                  <input
+                    type="text"
+                    value={customCustomerAddress}
+                    onChange={(e) => setCustomCustomerAddress(e.target.value)}
+                    placeholder="Morada / Endereço"
+                    className="flex-1 px-2 py-1 bg-[#1a1a1a] border border-[#3a3a3a] rounded text-xs text-white"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setIsEditingCustomerInfo(false)}
+                    className="px-2.5 py-1 bg-[#c5a47e] hover:bg-[#b5946e] text-black font-semibold rounded text-xs cursor-pointer flex items-center space-x-1 shrink-0"
+                    title="Confirmar"
+                  >
+                    <Check className="w-3.5 h-3.5" />
+                    <span>OK</span>
+                  </button>
+                </div>
               </div>
             )}
           </div>

@@ -179,6 +179,7 @@ export const DocumentsModule: React.FC = () => {
   const [customerNif, setCustomerNif] = useState<string>('999999990');
   const [customerName, setCustomerName] = useState<string>('Consumidor Final');
   const [customerAddress, setCustomerAddress] = useState<string>('Lisboa, Portugal');
+  const [customerPhone, setCustomerPhone] = useState<string>('');
   const [customerEmail, setCustomerEmail] = useState<string>('');
   const [paymentTerm, setPaymentTerm] = useState<string>('pronto');
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<PaymentMethod>('cartao');
@@ -396,12 +397,14 @@ export const DocumentsModule: React.FC = () => {
     if (c) {
       setCustomerNif(c.taxNumber || '999999990');
       setCustomerName(c.name);
-      setCustomerAddress(`${c.address || ''}, ${c.city || ''}`);
+      setCustomerAddress(c.address ? `${c.address}${c.city ? `, ${c.city}` : ''}` : '');
+      setCustomerPhone(c.phone || '');
       setCustomerEmail(c.email || '');
     } else {
       setCustomerNif('999999990');
       setCustomerName('Consumidor Final');
-      setCustomerAddress('Lisboa, Portugal');
+      setCustomerAddress('');
+      setCustomerPhone('');
       setCustomerEmail('');
     }
   };
@@ -800,6 +803,8 @@ export const DocumentsModule: React.FC = () => {
       customerName: customerName.trim() || 'Consumidor Final',
       customerNif: customerNif.trim() || '999999990',
       customerTaxNumber: customerNif.trim() || '999999990',
+      customerPhone: customerPhone.trim() || undefined,
+      customerAddress: customerAddress.trim() || undefined,
       items: docItems.map(({ tempId, ...rest }) => rest),
       subtotal,
       discountTotal: 0,
@@ -1240,6 +1245,17 @@ export const DocumentsModule: React.FC = () => {
                       value={customerAddress}
                       onChange={(e) => setCustomerAddress(e.target.value)}
                       placeholder="Morada de faturação"
+                      className="w-full px-3 py-2 bg-[#0c0c0c] border border-[#262626] rounded-xl text-white focus:outline-hidden focus:border-[#c5a47e]"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-neutral-400 block mb-1 font-semibold">Telefone / Telemóvel</label>
+                    <input
+                      type="tel"
+                      value={customerPhone}
+                      onChange={(e) => setCustomerPhone(e.target.value)}
+                      placeholder="ex: +258 84 123 4567"
                       className="w-full px-3 py-2 bg-[#0c0c0c] border border-[#262626] rounded-xl text-white focus:outline-hidden focus:border-[#c5a47e]"
                     />
                   </div>
@@ -2616,7 +2632,13 @@ export const DocumentsModule: React.FC = () => {
                         <div className="font-bold text-neutral-900 uppercase">
                           {selectedDocForPreview.customerName || 'CARLOS'}
                         </div>
-                        <div className="text-neutral-600">Moçambique</div>
+                        {selectedDocForPreview.customerAddress && selectedDocForPreview.customerAddress !== 'Balcão de Venda' && (
+                          <div className="text-neutral-600 max-w-[200px] truncate">{selectedDocForPreview.customerAddress}</div>
+                        )}
+                        <div className="text-neutral-600">{currentCompany.country || 'Moçambique'}</div>
+                        {selectedDocForPreview.customerPhone && (
+                          <div className="text-neutral-600">Tel: {selectedDocForPreview.customerPhone}</div>
+                        )}
                         <div className="text-neutral-500 font-mono text-[8.5px]">
                           NUIT: {selectedDocForPreview.customerNif || selectedDocForPreview.customerTaxNumber || '---------'}
                         </div>
@@ -2799,6 +2821,12 @@ export const DocumentsModule: React.FC = () => {
                       <span className="text-[8px] text-neutral-500 uppercase font-semibold block">Exmo.(a) Senhor(a):</span>
                       <strong className="text-neutral-900">{selectedDocForPreview.customerName || 'Consumidor Final'}</strong>
                       <span className="text-neutral-600 font-mono ml-2">NIF: {selectedDocForPreview.customerNif || '999999990'}</span>
+                      {selectedDocForPreview.customerPhone && (
+                        <span className="text-neutral-600 ml-2">• Tel: {selectedDocForPreview.customerPhone}</span>
+                      )}
+                      {selectedDocForPreview.customerAddress && selectedDocForPreview.customerAddress !== 'Balcão de Venda' && (
+                        <div className="text-neutral-600 mt-0.5">Morada: {selectedDocForPreview.customerAddress}</div>
+                      )}
                     </div>
 
                     {/* Table */}

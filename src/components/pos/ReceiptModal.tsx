@@ -47,7 +47,7 @@ ${sale.invoiceType === 'FS' ? 'FATURA SIMPLIFICADA' : sale.invoiceType === 'FT' 
 Nº: ${sale.invoiceNumber}
 Data: ${formatDate(sale.date)}
 Cliente: ${sale.customerName || 'Consumidor Final'} (NIF: ${sale.customerTaxNumber || sale.customerNif || 'Consumidor'})
-Operador: ${sale.operatorName || 'Caixa'}
+${sale.customerPhone ? `Telefone: ${sale.customerPhone}\n` : ''}${sale.customerAddress && sale.customerAddress !== 'Balcão de Venda' ? `Morada: ${sale.customerAddress}\n` : ''}Operador: ${sale.operatorName || 'Caixa'}
 ------------------------------------------------
 ${sale.items.map((i) => `${i.productName.padEnd(24, ' ')} x${i.quantity}  ${formatCurrency(i.total)}`).join('\n')}
 ------------------------------------------------
@@ -128,6 +128,20 @@ Obrigado pela sua preferência!
                 <span>NUIT/NIF:</span>
                 <span className="font-medium text-neutral-200">{sale.customerTaxNumber || sale.customerNif || 'Consumidor'}</span>
               </div>
+              {sale.customerPhone && (
+                <div className="flex justify-between text-[10px] text-neutral-400">
+                  <span>Telefone:</span>
+                  <span className="font-medium text-neutral-200">{sale.customerPhone}</span>
+                </div>
+              )}
+              {sale.customerAddress && sale.customerAddress !== 'Balcão de Venda' && (
+                <div className="flex justify-between text-[10px] text-neutral-400">
+                  <span>Morada:</span>
+                  <span className="font-medium text-neutral-200 text-right truncate max-w-[180px]" title={sale.customerAddress}>
+                    {sale.customerAddress}
+                  </span>
+                </div>
+              )}
               <div className="flex justify-between text-[10px] text-neutral-400">
                 <span>Operador:</span>
                 <span>{sale.operatorName || 'Caixa'}</span>
