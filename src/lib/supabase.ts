@@ -868,13 +868,19 @@ export async function testarConexaoSupabase(): Promise<{
     const { data, error } = await supabase.from('usuarios').select('id').limit(1);
 
     if (error) {
-      // Código 42P01 indica que o banco está acessível mas a tabela ainda não foi criada
-      if (error.code === '42P01' || error.message?.includes('relation "usuarios" does not exist') || error.message?.includes('does not exist')) {
+      // Código 42P01 ou PGRST205 indica que o banco está acessível mas a tabela ainda não foi criada
+      if (
+        error.code === '42P01' ||
+        error.code === 'PGRST205' ||
+        error.message?.includes('schema cache') ||
+        error.message?.includes('relation "usuarios" does not exist') ||
+        error.message?.includes('does not exist')
+      ) {
         return {
           conectado: true,
           mensagem: 'Conectado ao Supabase! Porém as tabelas ainda precisam de ser criadas (execute o script SQL).',
           tabelaExiste: false,
-          detalhes: { urlValida: true, chaveValida: true, pingOk: true, erro: 'Tabelas não criadas (42P01)' },
+          detalhes: { urlValida: true, chaveValida: true, pingOk: true, erro: 'Tabelas não criadas (42P01 / PGRST205)' },
         };
       }
 
@@ -958,7 +964,12 @@ export async function diagnosticarTodasTabelasSupabase(): Promise<{
         .select('*', { count: 'exact', head: true });
 
       if (error) {
-        if (error.code === '42P01' || error.message?.includes('does not exist')) {
+        if (
+          error.code === '42P01' ||
+          error.code === 'PGRST205' ||
+          error.message?.includes('does not exist') ||
+          error.message?.includes('schema cache')
+        ) {
           results[t.name] = {
             table: t.name,
             label: t.label,
@@ -1076,12 +1087,64 @@ CREATE TABLE IF NOT EXISTS public.empresas (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
--- Garantir que colunas de subscrição existem se a tabela já tiver sido criada antes
+-- Garantir que colunas adicionais existem se a tabela já tiver sido criada antes
 ALTER TABLE public.empresas ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'active';
 ALTER TABLE public.empresas ADD COLUMN IF NOT EXISTS billing_cycle TEXT DEFAULT 'monthly';
 ALTER TABLE public.empresas ADD COLUMN IF NOT EXISTS subscription_expires_at TIMESTAMP WITH TIME ZONE;
 ALTER TABLE public.empresas ADD COLUMN IF NOT EXISTS subscription_started_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now());
 ALTER TABLE public.empresas ADD COLUMN IF NOT EXISTS plan TEXT DEFAULT 'Plano Profissional';
+ALTER TABLE public.empresas ADD COLUMN IF NOT EXISTS industry TEXT;
+ALTER TABLE public.empresas ADD COLUMN IF NOT EXISTS sector TEXT;
+ALTER TABLE public.empresas ADD COLUMN IF NOT EXISTS default_tax_rate NUMERIC DEFAULT 16;
+ALTER TABLE public.empresas ADD COLUMN IF NOT EXISTS default_vat_mode TEXT DEFAULT 'acrescido';
+ALTER TABLE public.empresas ADD COLUMN IF NOT EXISTS vat_rates JSONB DEFAULT '[]'::jsonb;
+ALTER TABLE public.empresas ADD COLUMN IF NOT EXISTS logo_position TEXT DEFAULT 'left';
+ALTER TABLE public.empresas ADD COLUMN IF NOT EXISTS requerimento_doc JSONB;
+ALTER TABLE public.empresas ADD COLUMN IF NOT EXISTS memoria_descritiva_doc JSONB;
+
+-- Garantir colunas multi-tenant e compatibilidade nas restantes tabelas
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS company_id TEXT DEFAULT 'RAFFA ALIADOS DO CAMPO, LDA';
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS role TEXT DEFAULT 'admin';
+
+ALTER TABLE public.lojas ADD COLUMN IF NOT EXISTS company_id TEXT DEFAULT 'comp-1';
+
+ALTER TABLE public.usuarios ADD COLUMN IF NOT EXISTS company_id TEXT DEFAULT 'comp-1';
+ALTER TABLE public.usuarios ADD COLUMN IF NOT EXISTS store_id TEXT DEFAULT 'store-1';
+ALTER TABLE public.usuarios ADD COLUMN IF NOT EXISTS role TEXT DEFAULT 'caixa';
+ALTER TABLE public.usuarios ADD COLUMN IF NOT EXISTS pin TEXT DEFAULT '1234';
+ALTER TABLE public.usuarios ADD COLUMN IF NOT EXISTS permissions JSONB;
+
+ALTER TABLE public.categorias ADD COLUMN IF NOT EXISTS company_id TEXT DEFAULT 'comp-1';
+
+ALTER TABLE public.produtos ADD COLUMN IF NOT EXISTS company_id TEXT DEFAULT 'comp-1';
+ALTER TABLE public.produtos ADD COLUMN IF NOT EXISTS has_batch_control BOOLEAN DEFAULT false;
+ALTER TABLE public.produtos ADD COLUMN IF NOT EXISTS supplier_id TEXT;
+
+ALTER TABLE public.clientes ADD COLUMN IF NOT EXISTS company_id TEXT DEFAULT 'comp-1';
+ALTER TABLE public.clientes ADD COLUMN IF NOT EXISTS loyalty_points NUMERIC DEFAULT 0;
+ALTER TABLE public.clientes ADD COLUMN IF NOT EXISTS loyalty_tier TEXT DEFAULT 'Bronze';
+ALTER TABLE public.clientes ADD COLUMN IF NOT EXISTS total_spent NUMERIC DEFAULT 0;
+ALTER TABLE public.clientes ADD COLUMN IF NOT EXISTS credit_limit NUMERIC DEFAULT 0;
+ALTER TABLE public.clientes ADD COLUMN IF NOT EXISTS current_credit NUMERIC DEFAULT 0;
+
+ALTER TABLE public.fornecedores ADD COLUMN IF NOT EXISTS company_id TEXT DEFAULT 'comp-1';
+ALTER TABLE public.armazens ADD COLUMN IF NOT EXISTS company_id TEXT DEFAULT 'comp-1';
+ALTER TABLE public.stock ADD COLUMN IF NOT EXISTS company_id TEXT DEFAULT 'comp-1';
+
+ALTER TABLE public.vendas ADD COLUMN IF NOT EXISTS company_id TEXT DEFAULT 'comp-1';
+ALTER TABLE public.vendas ADD COLUMN IF NOT EXISTS shift_id TEXT;
+ALTER TABLE public.vendas ADD COLUMN IF NOT EXISTS fiscal_hash TEXT;
+ALTER TABLE public.vendas ADD COLUMN IF NOT EXISTS previous_hash TEXT;
+ALTER TABLE public.vendas ADD COLUMN IF NOT EXISTS atcud TEXT;
+
+ALTER TABLE public.contas_pagar ADD COLUMN IF NOT EXISTS company_id TEXT DEFAULT 'comp-1';
+ALTER TABLE public.contas_receber ADD COLUMN IF NOT EXISTS company_id TEXT DEFAULT 'comp-1';
+ALTER TABLE public.turnos_caixa ADD COLUMN IF NOT EXISTS company_id TEXT DEFAULT 'comp-1';
+ALTER TABLE public.colaboradores ADD COLUMN IF NOT EXISTS company_id TEXT DEFAULT 'comp-1';
+ALTER TABLE public.registos_ponto ADD COLUMN IF NOT EXISTS company_id TEXT DEFAULT 'comp-1';
+ALTER TABLE public.recibos_salario ADD COLUMN IF NOT EXISTS company_id TEXT DEFAULT 'comp-1';
+ALTER TABLE public.escalas_trabalho ADD COLUMN IF NOT EXISTS company_id TEXT DEFAULT 'comp-1';
+ALTER TABLE public.metas_vendas ADD COLUMN IF NOT EXISTS company_id TEXT DEFAULT 'comp-1';
 
 -- 2. TABELA DE LOJAS & FILIAIS
 CREATE TABLE IF NOT EXISTS public.lojas (

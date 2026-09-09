@@ -111,6 +111,8 @@ import {
   SupabaseSyncLog,
   mapSupabaseToCompany,
   SalesGoalRecord,
+  closeAllOpenShiftsInSupabase,
+  fetchLatestShiftFromSupabase,
 } from '../lib/supabaseSync';
 import {
   getUserProfile,
@@ -374,6 +376,7 @@ export interface AppContextType {
   closeShift: (notesOrCounted?: string | number, notes?: string) => CashShift | null;
   registerCashMovement: (type: 'sangria' | 'suprimento', amount: number, reason: string) => void;
   syncActiveShiftWithTodaySales: () => void;
+  reconcileActiveShift: (companyId?: string) => Promise<void>;
   cart: CartItem[];
   posVatMode: VatMode;
   setPosVatMode: (mode: VatMode) => void;
@@ -840,6 +843,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (stored && stored.status === 'aberto' && typeof stored.initialCash === 'number') {
       if (stored.companyId && initialComp?.id && stored.companyId !== initialComp.id) {
         return null;
+      }
+      // Se o turno armazenado foi aberto num dia anterior ou tem mais de 18 horas, não manter aberto
+      if (stored.openedAt) {
+        const openedDate = new Date(stored.openedAt);
+        const todayStr = new Date().toDateString();
+        const diffHours = (Date.now() - openedDate.getTime()) / (1000 * 60 * 60);
+        if (openedDate.toDateString() !== todayStr || diffHours > 18) {
+          saveToStorage('activeShift', null);
+          return null;
+        }
       }
       return stored;
     }
@@ -1594,7 +1607,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             });
           } else if (shiftItem.status === 'fechado') {
             setActiveShift((curr) => {
-              if (curr && String(curr.id) === String(shiftItem.id)) {
+              // Se o turno recebido for fechado e pertencer a esta empresa:
+              // Se tiver o mesmo ID, ou se o turno atual pertencer a esta mesma empresa, fechar o caixa imediatamente.
+              if (
+                !curr ||
+                String(curr.id) === String(shiftItem.id) ||
+                !curr.companyId ||
+                curr.companyId === shiftItem.companyId
+              ) {
                 saveToStorage('activeShift', null);
                 return null;
               }
@@ -1831,22 +1851,32 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             const compAR = res.data.accountsReceivable.filter((a) => a.companyId === compId);
             setAccountsReceivable((prev) => [...compAR, ...prev.filter((a) => a.companyId !== compId)]);
           }
-          if (res.data.shifts && res.data.shifts.length > 0) {
+          if (res.data.shifts) {
             const compShifts = res.data.shifts.filter((s: CashShift) => s.companyId === compId);
-            setShiftsHistory((prev) => {
-              const other = prev.filter((s) => s.companyId !== compId);
-              return [...compShifts, ...other];
-            });
-            // Reconcile active cash shift strictly for THIS company
-            const openShift = compShifts.find(
-              (s: CashShift) => s.status === 'aberto' && s.companyId === compId
-            );
-            if (openShift) {
-              setActiveShift(openShift);
-              saveToStorage('activeShift', openShift);
+            if (compShifts.length > 0) {
+              setShiftsHistory((prev) => {
+                const other = prev.filter((s) => s.companyId !== compId);
+                return [...compShifts, ...other];
+              });
+              // Reconciliação robusta do caixa ativo estritamente para ESTA empresa
+              // Ordena por data de abertura (o turno mais recente em primeiro)
+              const sortedCompShifts = [...compShifts].sort(
+                (a, b) => new Date(b.openedAt || 0).getTime() - new Date(a.openedAt || 0).getTime()
+              );
+              const latestShift = sortedCompShifts[0];
+
+              if (latestShift && latestShift.status === 'aberto' && !latestShift.closedAt) {
+                setActiveShift(latestShift);
+                saveToStorage('activeShift', latestShift);
+              } else {
+                // Se o turno mais recente foi encerrado, o caixa está FECHADO em todos os dispositivos!
+                setActiveShift(null);
+                saveToStorage('activeShift', null);
+              }
             } else {
+              // Não existem turnos para esta empresa no Supabase -> Caixa fechado
               setActiveShift((curr) => {
-                if (curr && (curr.companyId !== compId || !compShifts.some((s: CashShift) => String(s.id) === String(curr.id) && s.status === 'aberto'))) {
+                if (curr && curr.companyId === compId) {
                   saveToStorage('activeShift', null);
                   return null;
                 }
@@ -1929,10 +1959,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
     };
 
-    // Run silent pull 2.5 seconds after app boot
-    const bootTimer = setTimeout(executeSilentPull, 2500);
-    // And periodically every 60 seconds
-    timer = setInterval(executeSilentPull, 60000);
+    // Run silent pull 200ms after app boot for instant multi-device alignment
+    const bootTimer = setTimeout(executeSilentPull, 200);
+    // And periodically every 30 seconds
+    timer = setInterval(executeSilentPull, 30000);
 
     const handleFocus = () => {
       executeSilentPull();
@@ -2009,26 +2039,27 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const compAR = res.data.accountsReceivable.filter((a) => targetCompId === 'ALL' || a.companyId === targetCompId);
       setAccountsReceivable((prev) => [...compAR, ...prev.filter((a) => targetCompId !== 'ALL' && a.companyId !== targetCompId)]);
     }
-    if (res.data.shifts && res.data.shifts.length > 0) {
+    if (res.data.shifts) {
       const compShifts = res.data.shifts.filter((s: CashShift) => targetCompId === 'ALL' || s.companyId === targetCompId);
-      setShiftsHistory((prev) => {
-        const other = prev.filter((s) => targetCompId !== 'ALL' && s.companyId !== targetCompId);
-        return [...compShifts, ...other];
-      });
-      const openShift = compShifts.find(
-        (s: CashShift) => s.status === 'aberto' && (targetCompId === 'ALL' || s.companyId === targetCompId)
-      );
-      if (openShift) {
-        setActiveShift(openShift);
-        saveToStorage('activeShift', openShift);
-      } else {
-        setActiveShift((curr) => {
-          if (curr && targetCompId !== 'ALL' && (curr.companyId !== targetCompId || !compShifts.some((s) => String(s.id) === String(curr.id) && s.status === 'aberto'))) {
-            saveToStorage('activeShift', null);
-            return null;
-          }
-          return curr;
+      if (compShifts.length > 0) {
+        setShiftsHistory((prev) => {
+          const other = prev.filter((s) => targetCompId !== 'ALL' && s.companyId !== targetCompId);
+          return [...compShifts, ...other];
         });
+        const sortedCompShifts = [...compShifts].sort(
+          (a, b) => new Date(b.openedAt || 0).getTime() - new Date(a.openedAt || 0).getTime()
+        );
+        const latestShift = sortedCompShifts[0];
+        if (latestShift && latestShift.status === 'aberto' && !latestShift.closedAt) {
+          setActiveShift(latestShift);
+          saveToStorage('activeShift', latestShift);
+        } else {
+          setActiveShift(null);
+          saveToStorage('activeShift', null);
+        }
+      } else if (targetCompId !== 'ALL') {
+        setActiveShift(null);
+        saveToStorage('activeShift', null);
       }
     }
     if (res.data.employees && res.data.employees.length > 0) {
@@ -2497,6 +2528,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
+  const reconcileActiveShift = useCallback(async (companyId?: string) => {
+    const compId = companyId || currentCompanyRef.current?.id;
+    if (!compId) return;
+    try {
+      const latest = await fetchLatestShiftFromSupabase(compId);
+      if (latest && latest.status === 'aberto' && !latest.closedAt) {
+        setActiveShift(latest);
+        saveToStorage('activeShift', latest);
+      } else {
+        setActiveShift(null);
+        saveToStorage('activeShift', null);
+      }
+    } catch {
+      // Ignorar erros transitórios de rede
+    }
+  }, []);
+
   // ==================== AUTHENTICATION & SECURITY ====================
   const login = useCallback(
     async ({
@@ -2706,6 +2754,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       });
 
       sound.playSuccessChime();
+      reconcileActiveShift(targetCompanyId);
       notify(`Bem-vindo, ${user.name}! Empresa: ${matchedCompany?.name || 'Sede'}`, 'success');
       return { success: true };
     },
@@ -2781,10 +2830,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       });
 
       sound.playSuccessChime();
+      reconcileActiveShift(targetCompanyId);
       notify(`Operador autenticado: ${user.name} (${user.role.toUpperCase()})`, 'success');
       return { success: true };
     },
-    [users, companies, stores, terminals, currentCompany.id, notify]
+    [users, companies, stores, terminals, currentCompany.id, notify, reconcileActiveShift]
   );
 
   const quickLogin = useCallback(
@@ -2821,9 +2871,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       });
 
       sound.playSuccessChime();
+      reconcileActiveShift(targetCompanyId);
       notify(`Sessão iniciada como ${user.name}`, 'success');
     },
-    [companies, stores, terminals, currentCompany.id, notify]
+    [companies, stores, terminals, currentCompany.id, notify, reconcileActiveShift]
   );
 
   const logout = useCallback(() => {
@@ -4351,6 +4402,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       plannedDurationHours: plannedHours,
       expectedCloseAt: expectedClose,
     };
+    // Fechar previamente qualquer turno que possa ter ficado como aberto órfão no Supabase
+    closeAllOpenShiftsInSupabase(currentCompany.id, now.toISOString());
     setActiveShift(shift);
     saveToStorage('activeShift', shift);
     pushRecordToSupabase('turnos_caixa', 'upsert', shift);
@@ -4390,10 +4443,26 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       notes: noteText,
     };
 
+    // 1. Limpar o caixa imediatamente no dispositivo local
     setActiveShift(null);
     saveToStorage('activeShift', null);
-    setShiftsHistory((prev) => [closed, ...prev]);
+
+    // 2. Atualizar o histórico local
+    setShiftsHistory((prev) => [
+      closed,
+      ...prev.map((s) =>
+        s.companyId === closed.companyId && s.status === 'aberto'
+          ? { ...s, status: 'fechado' as const, closedAt: closed.closedAt }
+          : s
+      ),
+    ]);
+
+    // 3. Enviar o turno fechado para o Supabase
     pushRecordToSupabase('turnos_caixa', 'upsert', closed);
+
+    // 4. Fechar em definitivo quaisquer turnos abertos desta empresa no Supabase
+    // Isso garante que nenhum outro dispositivo que consulte o Supabase encontre um turno aberto!
+    closeAllOpenShiftsInSupabase(closed.companyId, closed.closedAt);
 
     emitEvent('POS', 'pos.shift.closed', {
       shiftId: closed.id,
@@ -6785,6 +6854,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         closeShift,
         registerCashMovement,
         syncActiveShiftWithTodaySales,
+        reconcileActiveShift,
         cart,
         posVatMode,
         setPosVatMode,

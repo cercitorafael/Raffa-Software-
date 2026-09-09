@@ -68,6 +68,7 @@ export const POSModule: React.FC = () => {
     updateCustomer,
     clearCart,
     activeShift,
+    reconcileActiveShift,
     salesHistory,
     lastCompletedSale,
     setLastCompletedSale,
@@ -95,6 +96,11 @@ export const POSModule: React.FC = () => {
   const [discountInput, setDiscountInput] = useState<number>(0);
   const [showSalesHistoryModal, setShowSalesHistoryModal] = useState(false);
   const [selectedCartProductId, setSelectedCartProductId] = useState<string | null>(null);
+
+  // Sincronizar estado do turno de caixa entre múltiplos dispositivos ao abrir o POS
+  useEffect(() => {
+    reconcileActiveShift();
+  }, [reconcileActiveShift]);
 
   // Global Keyboard Shortcuts for POS (Delete / Backspace to remove item, F12 to checkout)
   useEffect(() => {
@@ -852,58 +858,48 @@ export const POSModule: React.FC = () => {
                         >
                           <div className="truncate mr-2">
                             <span className="font-semibold text-white block truncate">{c.name}</span>
-                            <span className="text-[10px] text-neutral-400 font-mono flex items-center gap-1.5 flex-wrap">
-                              <span>NIF: {c.taxNumber}</span>
-                              {c.phone && <span>• Tel: {c.phone}</span>}
-                              {c.address && c.address !== 'Balcão de Venda' && (
-                                <span className="truncate max-w-[120px]">• {c.address}</span>
-                              )}
+                            <span className="text-[10px] text-neutral-400 font-mono">
+                              NIF: {c.taxNumber} {c.phone && `• Tel: ${c.phone}`}
                             </span>
                           </div>
-                          <span className="text-[10px] text-[#c5a47e] font-mono shrink-0">{c.loyaltyPoints} pts</span>
+                          <span className="text-[10px] text-[#c5a47e] bg-[#c5a47e]/10 px-1.5 py-0.5 rounded-sm">
+                            {c.loyaltyTier || 'Bronze'}
+                          </span>
                         </div>
                       ))}
                   </div>
                 )}
               </div>
 
-              {/* NIF e Telefone em 2 colunas */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+              {/* NIF e Telefone */}
+              <div className="grid grid-cols-2 gap-1.5">
                 <input
                   type="text"
-                  placeholder="NIF / NUIT (opcional, 999999990)"
+                  placeholder="NIF / NUIT (999999990)..."
                   value={directCustomerNif}
                   onChange={(e) => setDirectCustomerNif(e.target.value)}
                   className="w-full px-2.5 py-1.5 bg-[#0d0d0d] border border-[#2e2e2e] rounded-md text-xs font-mono text-white placeholder-neutral-500 focus:outline-hidden focus:border-[#c5a47e]"
                 />
-                <div className="relative">
-                  <div className="absolute inset-y-0 left-0 pl-2.5 flex items-center pointer-events-none text-neutral-500">
-                    <Phone className="w-3 h-3 text-[#c5a47e]/70" />
-                  </div>
-                  <input
-                    type="tel"
-                    placeholder="Telefone (ex: 84 123 4567)"
-                    value={directCustomerPhone}
-                    onChange={(e) => setDirectCustomerPhone(e.target.value)}
-                    className="w-full pl-7 pr-2.5 py-1.5 bg-[#0d0d0d] border border-[#2e2e2e] rounded-md text-xs text-white placeholder-neutral-500 focus:outline-hidden focus:border-[#c5a47e]"
-                  />
-                </div>
+                <input
+                  type="tel"
+                  placeholder="Telefone (opcional)..."
+                  value={directCustomerPhone}
+                  onChange={(e) => setDirectCustomerPhone(e.target.value)}
+                  className="w-full px-2.5 py-1.5 bg-[#0d0d0d] border border-[#2e2e2e] rounded-md text-xs text-white placeholder-neutral-500 focus:outline-hidden focus:border-[#c5a47e]"
+                />
               </div>
 
-              {/* Morada e Botão Aplicar */}
-              <div className="flex gap-1.5">
-                <div className="relative flex-1">
-                  <div className="absolute inset-y-0 left-0 pl-2.5 flex items-center pointer-events-none text-neutral-500">
-                    <MapPin className="w-3 h-3 text-[#c5a47e]/70" />
-                  </div>
-                  <input
-                    type="text"
-                    placeholder="Morada / Endereço (ex: Av. 24 de Julho)..."
-                    value={directCustomerAddress}
-                    onChange={(e) => setDirectCustomerAddress(e.target.value)}
-                    className="w-full pl-7 pr-2.5 py-1.5 bg-[#0d0d0d] border border-[#2e2e2e] rounded-md text-xs text-white placeholder-neutral-500 focus:outline-hidden focus:border-[#c5a47e]"
-                  />
-                </div>
+              {/* Morada / Endereço */}
+              <input
+                type="text"
+                placeholder="Morada do cliente (ex: Av. 24 de Julho, Maputo)..."
+                value={directCustomerAddress}
+                onChange={(e) => setDirectCustomerAddress(e.target.value)}
+                className="w-full px-2.5 py-1.5 bg-[#0d0d0d] border border-[#2e2e2e] rounded-md text-xs text-white placeholder-neutral-500 focus:outline-hidden focus:border-[#c5a47e]"
+              />
+
+              {/* Botões de Ação */}
+              <div className="flex items-center justify-between pt-1">
                 <button
                   type="button"
                   onClick={() => {
@@ -913,56 +909,64 @@ export const POSModule: React.FC = () => {
                     const trimmedAddress = directCustomerAddress.trim();
 
                     if (!trimmedName) {
-                      notify('Por favor digite o nome do cliente', 'warning');
+                      notify('Insira pelo menos o nome do cliente.', 'warning');
                       return;
                     }
 
-                    // Check if exists or create a temporary/durable customer
+                    // Look for existing or create ad-hoc customer representation
                     const existing = customers.find(
-                      (c) => (trimmedNif !== '999999990' && c.taxNumber === trimmedNif) || c.name.toLowerCase() === trimmedName.toLowerCase()
+                      (c) => c.taxNumber === trimmedNif || c.name.toLowerCase() === trimmedName.toLowerCase()
                     );
 
                     if (existing) {
-                      const updated: Customer = {
-                        ...existing,
-                        phone: trimmedPhone || existing.phone,
-                        address: trimmedAddress || existing.address,
-                        taxNumber: trimmedNif !== '999999990' ? trimmedNif : existing.taxNumber,
-                      };
-                      updateCustomer(existing.id, updated);
-                      setSelectedCustomer(updated);
+                      setSelectedCustomer(existing);
+                      notify(`Cliente "${existing.name}" associado à venda!`, 'success');
                     } else {
+                      // Create a temporary/persisted customer record
                       const newCust: Customer = {
-                        id: `cust-pos-${Date.now()}`,
-                        companyId: currentCompany.id,
+                        id: `cust-adhoc-${Date.now()}`,
+                        companyId: currentCompany?.id || 'default-comp',
                         name: trimmedName,
                         taxNumber: trimmedNif,
-                        email: `${trimmedName.toLowerCase().replace(/\s+/g, '.')}@email.com`,
-                        phone: trimmedPhone,
+                        phone: trimmedPhone || '999999999',
                         address: trimmedAddress || 'Balcão de Venda',
-                        city: currentCompany?.city || 'Lisboa',
+                        city: currentCompany?.city || 'Maputo',
+                        postalCode: currentCompany?.postalCode || '1100',
                         country: currentCompany?.country || 'MZ',
-                        postalCode: '1000-001',
+                        email: `${trimmedName.toLowerCase().replace(/\s+/g, '.')}@cliente.local`,
                         loyaltyPoints: 0,
-                        loyaltyTier: 'bronze',
+                        loyaltyTier: 'Bronze',
                         totalSpent: 0,
-                        ordersCount: 0,
-                        creditLimit: 0,
-                        currentCredit: 0,
-                        createdAt: new Date().toISOString().split('T')[0],
+                        createdAt: new Date().toISOString(),
                       };
-                      const created = addCustomer(newCust);
-                      setSelectedCustomer(created || newCust);
+                      addCustomer(newCust);
+                      setSelectedCustomer(newCust);
+                      notify(`Novo cliente "${newCust.name}" registado e associado!`, 'success');
                     }
-
                     setIsTypingCustomer(false);
                     setShowCustomerDropdown(false);
-                    notify(`Cliente "${trimmedName}" associado à venda!`, 'success');
                   }}
-                  className="px-3.5 py-1.5 bg-[#c5a47e] text-black font-bold rounded-md text-xs hover:bg-[#b5946e] cursor-pointer flex items-center space-x-1.5 shrink-0 shadow-sm"
+                  className="px-3 py-1.5 bg-[#c5a47e] hover:bg-[#b5946e] text-black rounded-md text-xs font-bold transition-colors cursor-pointer flex items-center space-x-1"
                 >
                   <Check className="w-3.5 h-3.5" />
-                  <span>Aplicar</span>
+                  <span>Aplicar à Venda</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedCustomer(null);
+                    setDirectCustomerName('');
+                    setDirectCustomerNif('');
+                    setDirectCustomerPhone('');
+                    setDirectCustomerAddress('');
+                    setIsTypingCustomer(false);
+                    setShowCustomerDropdown(false);
+                    notify('Consumidor Final reposto!', 'info');
+                  }}
+                  className="px-2 py-1.5 text-neutral-400 hover:text-rose-400 text-xs transition-colors cursor-pointer"
+                >
+                  Limpar (Consumidor Final)
                 </button>
               </div>
             </div>

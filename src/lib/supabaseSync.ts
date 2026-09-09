@@ -111,6 +111,20 @@ const MAX_LOGS = 150;
 // Local pending sync queue for offline / retry support
 const PENDING_SYNC_STORAGE_KEY = 'erp_pending_supabase_queue';
 
+export function isTableMissingError(error: any): boolean {
+  if (!error) return false;
+  const code = String(error.code || '');
+  const msg = String(error.message || '').toLowerCase();
+  return (
+    code === '42P01' ||
+    code === 'PGRST205' ||
+    msg.includes('does not exist') ||
+    msg.includes('schema cache') ||
+    msg.includes('could not find the table') ||
+    (msg.includes('relation') && msg.includes('does not exist'))
+  );
+}
+
 interface PendingSyncQueueItem {
   id: string;
   table: TableSyncName;
@@ -163,11 +177,19 @@ export async function flushPendingSyncQueue(): Promise<number> {
       const res = await pushRecordToSupabaseDirect(item.table, item.action, item.record, false);
       if (res.success) {
         successCount++;
+      } else if (
+        isTableMissingError(res.error) ||
+        (typeof res.error === 'string' &&
+          (res.error.includes('ainda não') || res.error.includes('não configurada') || res.error.includes('PGRST205')))
+      ) {
+        // Discard item if the remote table does not exist yet to prevent infinite retry loops & console warnings
       } else {
         remaining.push(item);
       }
-    } catch {
-      remaining.push(item);
+    } catch (err: any) {
+      if (!isTableMissingError(err)) {
+        remaining.push(item);
+      }
     }
   }
 
@@ -745,8 +767,8 @@ export function mapShiftToSupabase(s: Partial<CashShift>) {
     closed_at: s.closedAt || null,
     status: s.status || 'aberto',
     initial_cash: s.initialCash || 0,
-    final_cash_reported: s.finalCashReported || null,
-    final_cash_system: s.finalCashSystem || null,
+    final_cash_reported: typeof s.finalCashReported === 'number' ? s.finalCashReported : null,
+    final_cash_system: typeof s.finalCashSystem === 'number' ? s.finalCashSystem : null,
     cash_difference: s.cashDifference || 0,
     total_sales: s.totalSales || 0,
     total_cash: s.totalCash || 0,
@@ -1367,8 +1389,8 @@ export async function pushRecordToSupabaseDirect(
 
       const { error } = await supabase.from(table).delete().eq('id', id);
       if (error) {
-        if (error.code === '42P01') {
-          return { success: false, error: 'Tabela ainda não criada no Supabase' };
+        if (isTableMissingError(error)) {
+          return { success: false, error: `Tabela "${table}" ainda não criada no Supabase (PGRST205/42P01)` };
         }
         if (shouldQueueOnFailure) {
           enqueuePendingSync(table, action, record);
@@ -1417,8 +1439,8 @@ export async function pushRecordToSupabaseDirect(
 
     return { success: true };
   } catch (error: any) {
-    if (error?.code === '42P01' || error?.message?.includes('does not exist')) {
-      return { success: false, error: 'Tabela ainda não configurada no Supabase' };
+    if (isTableMissingError(error)) {
+      return { success: false, error: `Tabela "${table}" ainda não configurada no Supabase (PGRST205/42P01)` };
     }
     if (shouldQueueOnFailure) {
       enqueuePendingSync(table, action, record);
@@ -1469,8 +1491,8 @@ export async function pushBatchRecordsToSupabase(
     });
     return { success: true };
   } catch (error: any) {
-    if (error?.code === '42P01' || error?.message?.includes('does not exist')) {
-      return { success: false, error: 'Tabela ainda não configurada no Supabase' };
+    if (isTableMissingError(error)) {
+      return { success: false, error: `Tabela "${table}" ainda não configurada no Supabase (PGRST205/42P01)` };
     }
     // Queue individual items for retry
     records.forEach((r) => enqueuePendingSync(table, action, r));
@@ -1552,6 +1574,8 @@ export async function pullTableFromSupabase(
       query = query.order('date', { ascending: false });
     } else if (table === 'metas_vendas') {
       query = query.order('ano_referencia', { ascending: false });
+    } else if (table === 'turnos_caixa') {
+      query = query.order('opened_at', { ascending: false });
     }
 
     // Apply Profile scoping
@@ -1561,7 +1585,7 @@ export async function pullTableFromSupabase(
 
     const { data, error } = await query;
     if (error) {
-      const errorMsg = error.code === '42P01' || error.message?.includes('does not exist')
+      const errorMsg = isTableMissingError(error)
         ? `Tabela "${table}" ainda não existe no Supabase. Execute o script SQL no Supabase.`
         : `Erro ao ler "${table}": ${error.message}`;
       
@@ -1661,7 +1685,7 @@ export async function pushTableToSupabase(
       const { error } = await supabase.from(table).upsert(chunk);
       if (error) {
         let cleanMsg = error.message;
-        if (error.code === '42P01' || error.message?.includes('does not exist')) {
+        if (isTableMissingError(error)) {
           cleanMsg = `Tabela "${table}" não existe no Supabase. Crie as tabelas com o script SQL.`;
         } else if (error.code === '42501' || error.message?.includes('row-level security') || error.message?.includes('policy')) {
           cleanMsg = `Bloqueado por RLS na tabela "${table}". Verifique as políticas de acesso no Supabase.`;
@@ -1770,6 +1794,8 @@ export async function pullAllFromSupabase(options?: {
         query = query.order('date', { ascending: false });
       } else if (table === 'metas_vendas') {
         query = query.order('ano_referencia', { ascending: false });
+      } else if (table === 'turnos_caixa') {
+        query = query.order('opened_at', { ascending: false });
       }
 
       // Apply profile filter if specified for profiles table
@@ -1779,7 +1805,7 @@ export async function pullAllFromSupabase(options?: {
 
       const { data, error } = await query;
       if (error) {
-        const errorMsg = (error.code === '42P01' || error.message?.includes('does not exist'))
+        const errorMsg = isTableMissingError(error)
           ? `Tabela "${table}" ainda não existe no Supabase (execute o script SQL).`
           : `Erro na tabela "${table}": ${error.message}`;
         result.errors.push(errorMsg);
@@ -1919,7 +1945,7 @@ export async function pushAllToSupabase(
         const { error } = await supabase.from(table).upsert(chunk);
         if (error) {
           let errorMsg = `Erro na tabela "${table}": ${error.message}`;
-          if (error.code === '42P01' || error.message?.includes('does not exist')) {
+          if (isTableMissingError(error)) {
             errorMsg = `Tabela "${table}" ainda não existe no Supabase. Execute o script SQL no Supabase.`;
           } else if (error.code === '42501' || error.message?.includes('row-level security') || error.message?.includes('policy')) {
             errorMsg = `Permissão negada (RLS) na tabela "${table}". Verifique as políticas de segurança.`;
@@ -1992,4 +2018,60 @@ export async function pushAllToSupabase(
   });
 
   return result;
+}
+
+/**
+ * Fecha em definitivo quaisquer turnos que tenham ficado abertos para uma determinada empresa no Supabase.
+ * Isso garante que nenhum dispositivo secundário encontre um turno "aberto" órfão após o fecho de caixa.
+ */
+export async function closeAllOpenShiftsInSupabase(
+  companyId: string,
+  closedAt?: string
+): Promise<{ success: boolean; error?: any }> {
+  try {
+    const closeTime = closedAt || new Date().toISOString();
+    const { error } = await supabase
+      .from('turnos_caixa')
+      .update({
+        status: 'fechado',
+        closed_at: closeTime,
+        updated_at: closeTime,
+      })
+      .eq('company_id', companyId)
+      .eq('status', 'aberto');
+
+    if (error) {
+      if (!isTableMissingError(error)) {
+        console.warn('[closeAllOpenShiftsInSupabase] Supabase update warning:', error.message);
+      }
+      return { success: false, error };
+    }
+    return { success: true };
+  } catch (err: any) {
+    console.warn('[closeAllOpenShiftsInSupabase] Exception:', err);
+    return { success: false, error: err };
+  }
+}
+
+/**
+ * Consulta especificamente o último turno registado para a empresa no Supabase.
+ * Ordenado decrescentemente por data de abertura (o mais recente primeiro).
+ */
+export async function fetchLatestShiftFromSupabase(companyId: string): Promise<CashShift | null> {
+  try {
+    const { data, error } = await supabase
+      .from('turnos_caixa')
+      .select('*')
+      .eq('company_id', companyId)
+      .order('opened_at', { ascending: false })
+      .limit(1);
+
+    if (error || !data || data.length === 0) {
+      return null;
+    }
+    return mapSupabaseToShift(data[0]);
+  } catch (err) {
+    console.warn('[fetchLatestShiftFromSupabase] Exception:', err);
+    return null;
+  }
 }
