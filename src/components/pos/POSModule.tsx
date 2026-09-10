@@ -10,10 +10,8 @@ import {
   Minus,
   Trash2,
   User,
-  Percent,
   Check,
   AlertCircle,
-  Clock,
   Sparkles,
   History,
   RotateCcw,
@@ -1061,102 +1059,6 @@ export const POSModule: React.FC = () => {
           )}
         </div>
 
-        {/* Barra de Opções de IVA no Ponto de Venda */}
-        <div className="px-3 py-2 bg-[#121212] border-b border-[#262626] flex flex-col gap-1.5 shrink-0">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-1.5 text-neutral-300">
-              <Receipt className="w-3.5 h-3.5 text-[#c5a47e]" />
-              <span className="text-[11px] font-semibold">Regime de IVA:</span>
-            </div>
-
-            {/* Selector de Regime de IVA */}
-            <div className="flex items-center bg-[#0a0a0a] p-0.5 rounded-lg border border-[#262626]">
-              <button
-                type="button"
-                onClick={() => {
-                  setPosVatMode('acrescido');
-                  notify('Regime alterado: +IVA Acrescido (Soma nas faturas)', 'info');
-                }}
-                className={`px-2 py-1 rounded-md text-[10px] font-medium transition-all cursor-pointer ${
-                  posVatMode === 'acrescido'
-                    ? 'bg-emerald-500/20 border border-emerald-500/50 text-emerald-400 font-bold shadow-xs'
-                    : 'text-neutral-400 hover:text-white'
-                }`}
-                title="O IVA será somado ao valor líquido e somará nas faturas emitidas"
-              >
-                + IVA (Acrescido)
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  setPosVatMode('incluido');
-                  notify('Regime alterado: IVA Incluído no PVP', 'info');
-                }}
-                className={`px-2 py-1 rounded-md text-[10px] font-medium transition-all cursor-pointer ${
-                  posVatMode === 'incluido'
-                    ? 'bg-[#c5a47e]/20 border border-[#c5a47e]/50 text-[#c5a47e] font-bold shadow-xs'
-                    : 'text-neutral-400 hover:text-white'
-                }`}
-                title="O preço de venda já inclui IVA (regime retalho habitual)"
-              >
-                IVA Incluído
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  setPosVatMode('isento');
-                  notify('Regime alterado: Isento de IVA (0%)', 'info');
-                }}
-                className={`px-2 py-1 rounded-md text-[10px] font-medium transition-all cursor-pointer ${
-                  posVatMode === 'isento'
-                    ? 'bg-neutral-800 border border-neutral-600 text-neutral-200 font-bold shadow-xs'
-                    : 'text-neutral-400 hover:text-white'
-                }`}
-                title="Operação isenta de imposto (0%)"
-              >
-                Isento
-              </button>
-            </div>
-          </div>
-
-          {/* Taxa Padrão & Botão Aplicar a Todos */}
-          <div className="flex items-center justify-between text-[10.5px] text-neutral-400 pt-1 border-t border-[#1e1e1e]">
-            <div className="flex items-center space-x-1.5">
-              <span>Taxa padrão:</span>
-              <select
-                value={posDefaultTaxRate}
-                onChange={(e) => {
-                  const rate = Number(e.target.value);
-                  setPosDefaultTaxRate(rate);
-                }}
-                className="bg-[#0a0a0a] border border-[#2a2a2a] rounded px-1.5 py-0.5 text-[10.5px] font-mono font-semibold text-neutral-200 focus:outline-hidden"
-              >
-                {activeVatRates.map((r) => (
-                  <option key={r.id || r.rate} value={r.rate}>
-                    {r.rate}% {r.name ? `(${r.name})` : ''}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {cart.length > 0 && (
-              <button
-                type="button"
-                onClick={() => {
-                  applyVatRateToCart(posDefaultTaxRate);
-                  notify(`Taxa de IVA ${posDefaultTaxRate}% aplicada a todos os artigos!`, 'success');
-                }}
-                className="text-[10px] text-[#c5a47e] hover:text-[#d6b791] font-medium transition-colors hover:underline cursor-pointer"
-                title="Aplicar esta taxa a todas as linhas do cesto atual"
-              >
-                Aplicar taxa a todos
-              </button>
-            )}
-          </div>
-        </div>
-
         {/* Cart Items List */}
         <div className="flex-1 overflow-y-auto p-3 space-y-2">
           {cart.length === 0 ? (
@@ -1336,46 +1238,6 @@ export const POSModule: React.FC = () => {
 
         {/* Cart Totals & Checkout Panel */}
         <div className="p-4 bg-[#141414] border-t border-[#262626] space-y-3">
-          {/* Quick Actions (Global Discount, Open Drawer, Shift, Z Reports) */}
-          <div className="grid grid-cols-3 gap-1.5 text-xs">
-            <button
-              onClick={() => setShowDiscountModal(true)}
-              className={`flex items-center justify-center space-x-1 py-1.5 px-1.5 rounded-lg border text-[11px] font-semibold transition-colors ${
-                globalDiscount > 0
-                  ? 'bg-amber-500/10 border-amber-500/30 text-amber-400'
-                  : 'bg-[#0d0d0d] border-[#262626] text-neutral-300 hover:bg-[#1a1a1a]'
-              }`}
-            >
-              <Percent className="w-3.5 h-3.5 text-neutral-400 shrink-0" />
-              <span className="truncate">Desc. {globalDiscount > 0 ? `${globalDiscount}%` : ''}</span>
-            </button>
-
-            <button
-              onClick={() => {
-                sound.playDrawerSound();
-                setShiftModalInitialMode('info');
-                setShowShiftModal(true);
-              }}
-              className="flex items-center justify-center space-x-1 py-1.5 px-1.5 bg-[#0d0d0d] border border-[#262626] hover:bg-[#1a1a1a] text-neutral-300 rounded-lg text-[11px] font-semibold transition-colors"
-              title="Gerir Caixa e Turno atual"
-            >
-              <Clock className="w-3.5 h-3.5 text-[#c5a47e] shrink-0" />
-              <span className="truncate">Turno</span>
-            </button>
-
-            <button
-              onClick={() => {
-                setShiftModalInitialMode('history');
-                setShowShiftModal(true);
-              }}
-              className="flex items-center justify-center space-x-1 py-1.5 px-1.5 bg-[#0d0d0d] border border-[#262626] hover:bg-[#1a1a1a] text-neutral-300 hover:text-white rounded-lg text-[11px] font-semibold transition-colors"
-              title="Aceder aos relatórios Z anteriores"
-            >
-              <FileText className="w-3.5 h-3.5 text-[#c5a47e] shrink-0" />
-              <span className="truncate">Relatórios Z</span>
-            </button>
-          </div>
-
           {/* Subtotals & Taxes */}
           <div className="space-y-1.5 text-xs text-neutral-400 pt-1">
             <div className="flex justify-between">
