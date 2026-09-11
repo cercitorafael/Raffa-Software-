@@ -31,6 +31,10 @@ import {
   Receipt,
   FileSpreadsheet,
   ShieldAlert,
+  MapPin,
+  Navigation,
+  Compass,
+  Loader2,
 } from 'lucide-react';
 import { Customer, CallLog } from '../../types';
 import { CustomerCallModal } from './CustomerCallModal';
@@ -113,7 +117,11 @@ export const CRMModule: React.FC = () => {
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
   const [address, setAddress] = useState('');
-  const [city, setCity] = useState('Lisboa');
+  const [city, setCity] = useState(currentCompany?.city || 'Maputo');
+  const [location, setLocation] = useState('');
+  const [postalCode, setPostalCode] = useState(currentCompany?.postalCode || '');
+  const [notes, setNotes] = useState('');
+  const [isLocating, setIsLocating] = useState(false);
 
   // Edit Customer Form State
   const [editName, setEditName] = useState('');
@@ -122,6 +130,7 @@ export const CRMModule: React.FC = () => {
   const [editPhone, setEditPhone] = useState('');
   const [editAddress, setEditAddress] = useState('');
   const [editCity, setEditCity] = useState('');
+  const [editLocation, setEditLocation] = useState('');
   const [editPostalCode, setEditPostalCode] = useState('');
   const [editTier, setEditTier] = useState<'bronze' | 'prata' | 'ouro' | 'platina'>('bronze');
   const [editNotes, setEditNotes] = useState('');
@@ -139,7 +148,10 @@ export const CRMModule: React.FC = () => {
       (c.name || '').toLowerCase().includes(q) ||
       (c.taxNumber || '').includes(q) ||
       (c.email || '').toLowerCase().includes(q) ||
-      (c.phone || '').includes(q)
+      (c.phone || '').includes(q) ||
+      (c.address || '').toLowerCase().includes(q) ||
+      (c.city || '').toLowerCase().includes(q) ||
+      (c.location || '').toLowerCase().includes(q)
     );
   });
 
@@ -157,6 +169,33 @@ export const CRMModule: React.FC = () => {
     return matchesQuery && matchesOutcome;
   });
 
+  const handleGetGPSLocation = (target: 'new' | 'edit') => {
+    if (!navigator.geolocation) {
+      notify('Geolocalização não suportada pelo navegador.', 'error');
+      return;
+    }
+    setIsLocating(true);
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        setIsLocating(false);
+        const lat = position.coords.latitude.toFixed(5);
+        const lng = position.coords.longitude.toFixed(5);
+        const gpsTag = `GPS: ${lat}, ${lng}`;
+        if (target === 'new') {
+          setLocation((prev) => (prev ? `${prev} (${gpsTag})` : gpsTag));
+        } else {
+          setEditLocation((prev) => (prev ? `${prev} (${gpsTag})` : gpsTag));
+        }
+        notify('Coordenadas GPS de localização capturadas com sucesso!', 'success');
+      },
+      (err) => {
+        setIsLocating(false);
+        notify(`Não foi possível obter a localização: ${err.message}`, 'error');
+      },
+      { timeout: 8000, enableHighAccuracy: true }
+    );
+  };
+
   const handleOpenEdit = (cust: Customer) => {
     setEditingCustomer(cust);
     setEditName(cust.name || '');
@@ -165,6 +204,7 @@ export const CRMModule: React.FC = () => {
     setEditPhone(cust.phone || '');
     setEditAddress(cust.address || '');
     setEditCity(cust.city || '');
+    setEditLocation(cust.location || '');
     setEditPostalCode(cust.postalCode || '');
     setEditTier(((cust.loyaltyTier || 'bronze').toLowerCase()) as any);
     setEditNotes(cust.notes || '');
@@ -181,6 +221,7 @@ export const CRMModule: React.FC = () => {
       phone: editPhone.trim(),
       address: editAddress.trim(),
       city: editCity.trim(),
+      location: editLocation.trim(),
       postalCode: editPostalCode.trim(),
       loyaltyTier: editTier,
       notes: editNotes.trim(),
@@ -199,30 +240,35 @@ export const CRMModule: React.FC = () => {
 
   const handleCreateCustomer = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name || !taxNumber) return;
+    if (!name.trim() || !taxNumber.trim()) return;
 
     addCustomer({
       companyId: currentCompany.id,
-      name,
-      taxNumber,
-      email: email || `${name.toLowerCase().replace(/\s+/g, '.')}@email.pt`,
-      phone: phone || '+351 900 000 000',
-      address: address || 'Rua Central, nº 10',
-      city,
-      country: 'PT',
-      postalCode: '1000-001',
+      name: name.trim(),
+      taxNumber: taxNumber.trim(),
+      email: email.trim() || `${name.toLowerCase().replace(/\s+/g, '.')}@email.mz`,
+      phone: phone.trim(),
+      address: address.trim() || 'Balcão / Loja Principal',
+      city: city.trim() || currentCompany?.city || 'Maputo',
+      location: location.trim(),
+      country: currentCompany?.country || 'MZ',
+      postalCode: postalCode.trim() || currentCompany?.postalCode || '',
       loyaltyPoints: 50,
       loyaltyTier: 'bronze',
-      notes: 'Cliente registado no balcão',
+      notes: notes.trim() || 'Cliente registado no CRM',
     });
 
-    notify(`Cliente "${name}" registado com sucesso!`, 'success');
+    notify(`Cliente "${name}" registado com sucesso com morada e localização!`, 'success');
     setShowNewCustModal(false);
     setName('');
     setTaxNumber('');
     setEmail('');
     setPhone('');
     setAddress('');
+    setCity(currentCompany?.city || 'Maputo');
+    setLocation('');
+    setPostalCode(currentCompany?.postalCode || '');
+    setNotes('');
   };
 
   // Launch Softphone / VoIP Call
@@ -639,7 +685,7 @@ export const CRMModule: React.FC = () => {
                     <th className="p-3">Nome do Cliente</th>
                     <th className="p-3">NIF Fiscal</th>
                     <th className="p-3">Contactos & Telefone</th>
-                    <th className="p-3">Localidade</th>
+                    <th className="p-3">Localização & Morada</th>
                     <th className="p-3 text-center">Nível Fidelidade</th>
                     <th className="p-3 text-right">Pontos</th>
                     <th className="p-3 text-right">Total Acumulado</th>
@@ -691,7 +737,32 @@ export const CRMModule: React.FC = () => {
                           )}
                         </td>
 
-                        <td className="p-3 text-neutral-300">{cust.city || 'Lisboa'}{cust.country ? `, ${cust.country}` : ''}</td>
+                        <td className="p-3 text-neutral-300">
+                          <div className="flex items-start space-x-1.5 max-w-xs">
+                            <MapPin className="w-3.5 h-3.5 text-[#c5a47e] shrink-0 mt-0.5" />
+                            <div className="text-xs leading-tight min-w-0">
+                              <span className="text-neutral-200 font-medium block truncate" title={cust.address || 'Sem morada'}>
+                                {cust.address || 'Balcão / Loja'}
+                              </span>
+                              <div className="flex items-center space-x-1 text-[11px] text-neutral-400 truncate">
+                                <span>{[cust.location, cust.city].filter(Boolean).join(' • ') || cust.country || 'Sem localização'}</span>
+                                {(cust.address || cust.location) && (
+                                  <a
+                                    href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
+                                      [cust.address, cust.location, cust.city, cust.country].filter(Boolean).join(', ')
+                                    )}`}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="text-[#c5a47e] hover:text-[#d4b896] inline-flex items-center ml-1"
+                                    title="Abrir Morada e Localização no Google Maps"
+                                  >
+                                    <ExternalLink className="w-2.5 h-2.5" />
+                                  </a>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        </td>
                         <td className="p-3 text-center">
                           <span
                             className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
@@ -930,71 +1001,203 @@ export const CRMModule: React.FC = () => {
       {/* NEW CUSTOMER MODAL */}
       {showNewCustModal && (
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-[#141414] border border-[#262626] text-[#e5e5e5] rounded-xl shadow-2xl max-w-md w-full p-6 space-y-4">
-            <h4 className="text-sm font-serif font-bold text-[#c5a47e] pb-2 border-b border-[#262626]">
-              Registar Novo Cliente
-            </h4>
-            <form onSubmit={handleCreateCustomer} className="space-y-3 text-xs">
-              <div>
-                <label className="font-semibold text-neutral-300 block mb-1">Nome Completo / Empresa</label>
-                <input
-                  type="text"
-                  required
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  placeholder="Nome do cliente"
-                  className="w-full px-3 py-2 bg-[#0d0d0d] border border-[#262626] rounded-lg text-[#e5e5e5] placeholder-neutral-600 focus:outline-hidden focus:border-[#c5a47e]"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
+          <div className="bg-[#141414] border border-[#262626] text-[#e5e5e5] rounded-xl shadow-2xl max-w-lg w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between pb-3 border-b border-[#262626]">
+              <div className="flex items-center space-x-2.5">
+                <div className="w-8 h-8 rounded-lg bg-[#c5a47e]/15 border border-[#c5a47e]/30 flex items-center justify-center text-[#c5a47e]">
+                  <MapPin className="w-4 h-4" />
+                </div>
                 <div>
-                  <label className="font-semibold text-neutral-300 block mb-1">NIF Fiscal</label>
+                  <h4 className="text-base font-serif font-bold text-[#c5a47e]">
+                    Registar Novo Cliente
+                  </h4>
+                  <p className="text-[11px] text-neutral-400">
+                    Insira a identificação, contactos, morada e localização
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowNewCustModal(false)}
+                className="p-1 rounded-md text-neutral-400 hover:text-white cursor-pointer transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateCustomer} className="space-y-4 text-xs">
+              {/* Secção 1: Identificação */}
+              <div className="space-y-3">
+                <div className="flex items-center space-x-1.5 text-[11px] font-bold text-neutral-300 uppercase tracking-wider">
+                  <Users className="w-3.5 h-3.5 text-[#c5a47e]" />
+                  <span>Identificação & Contactos</span>
+                </div>
+
+                <div>
+                  <label className="font-semibold text-neutral-300 block mb-1">
+                    Nome Completo / Razão Social <span className="text-rose-400">*</span>
+                  </label>
                   <input
                     type="text"
                     required
-                    value={taxNumber}
-                    onChange={(e) => setTaxNumber(e.target.value)}
-                    placeholder="234567890"
-                    className="w-full px-3 py-2 bg-[#0d0d0d] border border-[#262626] rounded-lg font-mono text-[#e5e5e5] placeholder-neutral-600 focus:outline-hidden focus:border-[#c5a47e]"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    placeholder="ex: João Silva ou Sociedade Comercial Lda"
+                    className="w-full px-3 py-2 bg-[#0d0d0d] border border-[#262626] rounded-lg text-[#e5e5e5] placeholder-neutral-600 focus:outline-hidden focus:border-[#c5a47e]"
                   />
                 </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="font-semibold text-neutral-300 block mb-1">
+                      NIF / NUIT Fiscal <span className="text-rose-400">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={taxNumber}
+                      onChange={(e) => setTaxNumber(e.target.value)}
+                      placeholder="999999990"
+                      className="w-full px-3 py-2 bg-[#0d0d0d] border border-[#262626] rounded-lg font-mono text-[#e5e5e5] placeholder-neutral-600 focus:outline-hidden focus:border-[#c5a47e]"
+                    />
+                  </div>
+                  <div>
+                    <label className="font-semibold text-neutral-300 block mb-1">Telefone / Telemóvel</label>
+                    <input
+                      type="text"
+                      value={phone}
+                      onChange={(e) => setPhone(e.target.value)}
+                      placeholder="+258 84 000 0000"
+                      className="w-full px-3 py-2 bg-[#0d0d0d] border border-[#262626] rounded-lg text-[#e5e5e5] placeholder-neutral-600 focus:outline-hidden focus:border-[#c5a47e]"
+                    />
+                  </div>
+                </div>
+
                 <div>
-                  <label className="font-semibold text-neutral-300 block mb-1">Telefone</label>
+                  <label className="font-semibold text-neutral-300 block mb-1">Email</label>
                   <input
-                    type="text"
-                    value={phone}
-                    onChange={(e) => setPhone(e.target.value)}
-                    placeholder="+351 9..."
+                    type="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="cliente@exemplo.mz"
                     className="w-full px-3 py-2 bg-[#0d0d0d] border border-[#262626] rounded-lg text-[#e5e5e5] placeholder-neutral-600 focus:outline-hidden focus:border-[#c5a47e]"
                   />
                 </div>
               </div>
 
-              <div>
-                <label className="font-semibold text-neutral-300 block mb-1">Email</label>
-                <input
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="cliente@exemplo.pt"
+              {/* Secção 2: Morada e Localização */}
+              <div className="pt-2 border-t border-[#262626] space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-1.5 text-[11px] font-bold text-neutral-300 uppercase tracking-wider">
+                    <MapPin className="w-3.5 h-3.5 text-[#c5a47e]" />
+                    <span>Morada & Localização Geográfica</span>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => handleGetGPSLocation('new')}
+                    disabled={isLocating}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[#1f1f1f] hover:bg-[#2a2a2a] text-[#c5a47e] hover:text-[#e5cbb0] border border-[#383838] text-[10px] font-semibold transition-colors cursor-pointer disabled:opacity-50 shadow-xs"
+                    title="Preencher automaticamente com a localização atual do dispositivo"
+                  >
+                    {isLocating ? (
+                      <Loader2 className="w-3 h-3 animate-spin text-[#c5a47e]" />
+                    ) : (
+                      <Navigation className="w-3 h-3 text-[#c5a47e]" />
+                    )}
+                    <span>{isLocating ? 'A obter GPS...' : 'Obter GPS Atual'}</span>
+                  </button>
+                </div>
+
+                <div>
+                  <label className="font-semibold text-neutral-300 block mb-1">
+                    Morada / Endereço Físico (Rua, Avenida, Nº, Edifício)
+                  </label>
+                  <input
+                    type="text"
+                    value={address}
+                    onChange={(e) => setAddress(e.target.value)}
+                    placeholder="ex: Av. 24 de Julho, Edifício Platinum, nº 123, 3º Andar"
+                    className="w-full px-3 py-2 bg-[#0d0d0d] border border-[#262626] rounded-lg text-[#e5e5e5] placeholder-neutral-600 focus:outline-hidden focus:border-[#c5a47e]"
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="font-semibold text-neutral-300 block mb-1">
+                      Cidade / Província
+                    </label>
+                    <input
+                      type="text"
+                      value={city}
+                      onChange={(e) => setCity(e.target.value)}
+                      placeholder="ex: Maputo, Matola, Beira, Nampula..."
+                      className="w-full px-3 py-2 bg-[#0d0d0d] border border-[#262626] rounded-lg text-[#e5e5e5] placeholder-neutral-600 focus:outline-hidden focus:border-[#c5a47e]"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="font-semibold text-neutral-300 block mb-1">
+                      Localização / Bairro / Ponto de Referência
+                    </label>
+                    <input
+                      type="text"
+                      value={location}
+                      onChange={(e) => setLocation(e.target.value)}
+                      placeholder="ex: Polana Cimento, Bairro Central, Perto do Millenium BIM..."
+                      className="w-full px-3 py-2 bg-[#0d0d0d] border border-[#262626] rounded-lg text-[#e5e5e5] placeholder-neutral-600 focus:outline-hidden focus:border-[#c5a47e]"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="font-semibold text-neutral-300 block mb-1">Código Postal (Opcional)</label>
+                    <input
+                      type="text"
+                      value={postalCode}
+                      onChange={(e) => setPostalCode(e.target.value)}
+                      placeholder="ex: 1100"
+                      className="w-full px-3 py-2 bg-[#0d0d0d] border border-[#262626] rounded-lg text-[#e5e5e5] placeholder-neutral-600 focus:outline-hidden focus:border-[#c5a47e]"
+                    />
+                  </div>
+                  <div>
+                    <label className="font-semibold text-neutral-300 block mb-1">País</label>
+                    <input
+                      type="text"
+                      disabled
+                      value={currentCompany?.country === 'PT' ? 'Portugal (PT)' : 'Moçambique (MZ)'}
+                      className="w-full px-3 py-2 bg-[#121212] border border-[#262626] rounded-lg text-neutral-400 cursor-not-allowed"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Secção 3: Notas Adicionais */}
+              <div className="pt-2 border-t border-[#262626]">
+                <label className="font-semibold text-neutral-300 block mb-1">Observações / Notas do Cliente</label>
+                <textarea
+                  rows={2}
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                  placeholder="Instruções de entrega, preferências ou observações sobre o cliente..."
                   className="w-full px-3 py-2 bg-[#0d0d0d] border border-[#262626] rounded-lg text-[#e5e5e5] placeholder-neutral-600 focus:outline-hidden focus:border-[#c5a47e]"
                 />
               </div>
 
-              <div className="flex space-x-2 pt-2">
+              <div className="flex space-x-2 pt-3 border-t border-[#262626]">
                 <button
                   type="button"
                   onClick={() => setShowNewCustModal(false)}
-                  className="flex-1 py-2 bg-[#0d0d0d] hover:bg-[#1a1a1a] text-neutral-300 border border-[#262626] rounded-lg font-bold"
+                  className="flex-1 py-2.5 bg-[#0d0d0d] hover:bg-[#1a1a1a] text-neutral-300 border border-[#262626] rounded-lg font-bold cursor-pointer transition-colors"
                 >
                   Cancelar
                 </button>
                 <button
                   type="submit"
-                  className="flex-1 py-2 bg-[#c5a47e] hover:bg-[#d4b896] text-black rounded-lg font-bold uppercase tracking-wider"
+                  className="flex-1 py-2.5 bg-[#c5a47e] hover:bg-[#d4b896] text-black rounded-lg font-bold uppercase tracking-wider cursor-pointer shadow-md transition-all"
                 >
-                  Gravar Cliente
+                  Registar Cliente
                 </button>
               </div>
             </form>
@@ -1053,7 +1256,7 @@ export const CRMModule: React.FC = () => {
                     type="text"
                     value={editPhone}
                     onChange={(e) => setEditPhone(e.target.value)}
-                    placeholder="+351 9..."
+                    placeholder="+258 84 000 0000"
                     className="w-full px-3 py-2 bg-[#0d0d0d] border border-[#262626] rounded-lg text-[#e5e5e5] placeholder-neutral-600 focus:outline-hidden focus:border-[#c5a47e]"
                   />
                 </div>
@@ -1066,7 +1269,7 @@ export const CRMModule: React.FC = () => {
                     type="email"
                     value={editEmail}
                     onChange={(e) => setEditEmail(e.target.value)}
-                    placeholder="cliente@exemplo.pt"
+                    placeholder="cliente@exemplo.mz"
                     className="w-full px-3 py-2 bg-[#0d0d0d] border border-[#262626] rounded-lg text-[#e5e5e5] placeholder-neutral-600 focus:outline-hidden focus:border-[#c5a47e]"
                   />
                 </div>
@@ -1085,37 +1288,71 @@ export const CRMModule: React.FC = () => {
                 </div>
               </div>
 
-              <div>
-                <label className="font-semibold text-neutral-300 block mb-1">Morada / Endereço</label>
-                <input
-                  type="text"
-                  value={editAddress}
-                  onChange={(e) => setEditAddress(e.target.value)}
-                  placeholder="Rua, Avenida, Número..."
-                  className="w-full px-3 py-2 bg-[#0d0d0d] border border-[#262626] rounded-lg text-[#e5e5e5] placeholder-neutral-600 focus:outline-hidden focus:border-[#c5a47e]"
-                />
-              </div>
+              {/* Morada e Localização */}
+              <div className="pt-2 border-t border-[#262626] space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold text-neutral-300 block">Morada e Localização</span>
+                  <button
+                    type="button"
+                    onClick={() => handleGetGPSLocation('edit')}
+                    disabled={isLocating}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[#1f1f1f] hover:bg-[#2a2a2a] text-[#c5a47e] border border-[#383838] text-[10px] font-semibold cursor-pointer disabled:opacity-50 shadow-xs"
+                    title="Capturar localização atual"
+                  >
+                    {isLocating ? (
+                      <Loader2 className="w-3 h-3 animate-spin text-[#c5a47e]" />
+                    ) : (
+                      <Navigation className="w-3 h-3 text-[#c5a47e]" />
+                    )}
+                    <span>Obter GPS</span>
+                  </button>
+                </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="font-semibold text-neutral-300 block mb-1">Cidade / Localidade</label>
+                  <label className="font-semibold text-neutral-300 block mb-1">Morada / Endereço</label>
                   <input
                     type="text"
-                    value={editCity}
-                    onChange={(e) => setEditCity(e.target.value)}
-                    placeholder="Lisboa, Porto, Nampula..."
+                    value={editAddress}
+                    onChange={(e) => setEditAddress(e.target.value)}
+                    placeholder="Rua, Avenida, Número..."
                     className="w-full px-3 py-2 bg-[#0d0d0d] border border-[#262626] rounded-lg text-[#e5e5e5] placeholder-neutral-600 focus:outline-hidden focus:border-[#c5a47e]"
                   />
                 </div>
-                <div>
-                  <label className="font-semibold text-neutral-300 block mb-1">Código Postal</label>
-                  <input
-                    type="text"
-                    value={editPostalCode}
-                    onChange={(e) => setEditPostalCode(e.target.value)}
-                    placeholder="1000-001"
-                    className="w-full px-3 py-2 bg-[#0d0d0d] border border-[#262626] rounded-lg text-[#e5e5e5] placeholder-neutral-600 focus:outline-hidden focus:border-[#c5a47e]"
-                  />
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="font-semibold text-neutral-300 block mb-1">Cidade / Província</label>
+                    <input
+                      type="text"
+                      value={editCity}
+                      onChange={(e) => setEditCity(e.target.value)}
+                      placeholder="Maputo, Matola, Beira, Lisboa..."
+                      className="w-full px-3 py-2 bg-[#0d0d0d] border border-[#262626] rounded-lg text-[#e5e5e5] placeholder-neutral-600 focus:outline-hidden focus:border-[#c5a47e]"
+                    />
+                  </div>
+                  <div>
+                    <label className="font-semibold text-neutral-300 block mb-1">Localização / Bairro / Ponto de Referência</label>
+                    <input
+                      type="text"
+                      value={editLocation}
+                      onChange={(e) => setEditLocation(e.target.value)}
+                      placeholder="Bairro Central, Polana, etc."
+                      className="w-full px-3 py-2 bg-[#0d0d0d] border border-[#262626] rounded-lg text-[#e5e5e5] placeholder-neutral-600 focus:outline-hidden focus:border-[#c5a47e]"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="font-semibold text-neutral-300 block mb-1">Código Postal</label>
+                    <input
+                      type="text"
+                      value={editPostalCode}
+                      onChange={(e) => setEditPostalCode(e.target.value)}
+                      placeholder="1100"
+                      className="w-full px-3 py-2 bg-[#0d0d0d] border border-[#262626] rounded-lg text-[#e5e5e5] placeholder-neutral-600 focus:outline-hidden focus:border-[#c5a47e]"
+                    />
+                  </div>
                 </div>
               </div>
 

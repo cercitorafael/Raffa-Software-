@@ -574,6 +574,7 @@ export interface Customer {
   city: string;
   postalCode: string;
   country?: string;
+  location?: string; // Localização detalhada, bairro, zona ou ponto de referência
   segment?: 'vip' | 'recorrente' | 'novo' | 'em_risco';
   loyaltyPoints: number;
   loyaltyTier: 'Bronze' | 'Prata' | 'Ouro' | 'Platina' | 'bronze' | 'prata' | 'ouro' | 'platina' | string;

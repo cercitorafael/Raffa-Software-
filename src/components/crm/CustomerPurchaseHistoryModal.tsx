@@ -15,6 +15,7 @@ import {
   FileText,
   Printer,
   Sparkles,
+  MapPin,
 } from 'lucide-react';
 import { Customer, Sale } from '../../types';
 import { useApp } from '../../context/AppContext';
@@ -172,6 +173,14 @@ export const CustomerPurchaseHistoryModal: React.FC<CustomerPurchaseHistoryModal
                     <span className="flex items-center gap-1">
                       <Mail className="w-3 h-3 text-indigo-400" />
                       <strong className="text-slate-200">{customer.email}</strong>
+                    </span>
+                  )}
+                  {(customer.address || customer.city || customer.location) && (
+                    <span className="flex items-center gap-1">
+                      <MapPin className="w-3 h-3 text-amber-400" />
+                      <span className="text-slate-300">
+                        {[customer.address, customer.location, customer.city].filter(Boolean).join(', ')}
+                      </span>
                     </span>
                   )}
                 </div>

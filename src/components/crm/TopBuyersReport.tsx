@@ -553,7 +553,9 @@ export const TopBuyersReport: React.FC<TopBuyersReportProps> = ({
                                 <span>Sem telefone</span>
                               )}
                               <span>•</span>
-                              <span>{customer.city || 'Portugal'}</span>
+                              <span className="truncate max-w-[200px]" title={[customer.address, customer.location, customer.city].filter(Boolean).join(', ')}>
+                                {[customer.location, customer.city].filter(Boolean).join(' • ') || customer.address || customer.city || 'Sem morada'}
+                              </span>
                             </div>
                           </div>
                         </div>
