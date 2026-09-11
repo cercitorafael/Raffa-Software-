@@ -4,6 +4,7 @@ import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI, Type } from '@google/genai';
 import { z } from 'zod';
 import 'dotenv/config';
+import { obterExtratoInventarioArmazem } from './controllers/inventarioController.js';
 
 const PORT = 3000;
 
@@ -271,6 +272,10 @@ async function startServer() {
       hasGeminiKey: Boolean(process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== 'MY_GEMINI_API_KEY'),
     });
   });
+
+  // Extrato de Inventário por Armazém (Kardex e Stock Retroativo na Data Limite)
+  app.get('/api/inventario/extrato-armazem', obterExtratoInventarioArmazem);
+  app.get('/api/inventario/extrato', obterExtratoInventarioArmazem);
 
   // Commercial Targets (Metas Comerciais) Engine with Gemini 3.8 / 3.6 Flash
   app.post('/api/metas/gerar', async (req, res) => {

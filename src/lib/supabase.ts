@@ -1286,6 +1286,29 @@ CREATE TABLE IF NOT EXISTS public.stock (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
+-- 9.1. TABELA DE ESTOQUE ATUAL POR ARMAZÉM / LOJA
+CREATE TABLE IF NOT EXISTS public.estoque_atual (
+    id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    loja_id TEXT NOT NULL,
+    produto_id TEXT NOT NULL,
+    quantidade NUMERIC DEFAULT 0,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+-- 9.2. TABELA DE MOVIMENTOS DE ESTOQUE (KARDEX E AUDITORIA DE INVENTÁRIO)
+CREATE TABLE IF NOT EXISTS public.movimentos_estoque (
+    id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    armazem_id TEXT NOT NULL,
+    produto_id TEXT NOT NULL,
+    quantidade NUMERIC NOT NULL,
+    tipo_movimento TEXT NOT NULL,
+    data_movimento TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
+    usuario_id TEXT,
+    referencia_id TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
 -- 10. TABELA DE VENDAS & FATURAÇÃO
 CREATE TABLE IF NOT EXISTS public.vendas (
     id TEXT PRIMARY KEY,
@@ -1537,7 +1560,7 @@ DECLARE
     t text;
     tables text[] := ARRAY[
         'profiles', 'empresas', 'lojas', 'usuarios', 'categorias', 'produtos', 
-        'clientes', 'fornecedores', 'armazens', 'stock', 'vendas', 
+        'clientes', 'fornecedores', 'armazens', 'stock', 'estoque_atual', 'movimentos_estoque', 'vendas', 
         'contas_pagar', 'contas_receber', 'turnos_caixa',
         'colaboradores', 'registos_ponto', 'recibos_salario', 'escalas_trabalho', 'metas_vendas'
     ];
@@ -1552,4 +1575,37 @@ BEGIN
     END LOOP;
 END $$;
 `;
+
+/**
+ * Consulta de Extrato de Inventário por Armazém e Data Limite (Retroativo / Kardex)
+ */
+export async function obterExtratoInventarioArmazemClient(params: {
+  armazem_id: string;
+  data_limite: string;
+  produto_id?: string;
+}): Promise<{
+  armazem_id: string;
+  produto_id: string;
+  data_consulta: string;
+  saldo_atual: number;
+  movimentacoes_apos_data: number;
+  stock_na_data: number;
+  extrato_movimentos: any[];
+}> {
+  const queryParams = new URLSearchParams({
+    armazem_id: params.armazem_id,
+    data_limite: params.data_limite,
+  });
+  if (params.produto_id && params.produto_id !== 'all' && params.produto_id !== 'TODOS') {
+    queryParams.set('produto_id', params.produto_id);
+  }
+
+  const response = await fetch(`/api/inventario/extrato-armazem?${queryParams.toString()}`);
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ error: 'Falha na requisição' }));
+    throw new Error(err.error || 'Falha ao consultar extrato do armazém');
+  }
+  return response.json();
+}
+
 

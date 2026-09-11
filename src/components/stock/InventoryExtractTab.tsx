@@ -40,6 +40,7 @@ import {
   exportInventoryExtractCsv,
 } from '../../utils/print';
 import { InventoryExtractRow, StockMovement } from '../../types';
+import { obterExtratoInventarioArmazemClient } from '../../lib/supabase';
 
 export const InventoryExtractTab: React.FC = () => {
   const {
@@ -86,6 +87,17 @@ export const InventoryExtractTab: React.FC = () => {
   const [showNewEntryModal, setShowNewEntryModal] = useState(false);
   const [showQuickAdjustModal, setShowQuickAdjustModal] = useState(false);
   const [quickActionProduct, setQuickActionProduct] = useState<any>(null);
+
+  // Extrato por Armazém e Data Limite (Kardex e Retroativo)
+  const [showDateLimitModal, setShowDateLimitModal] = useState(false);
+  const [dateLimitWhId, setDateLimitWhId] = useState<string>(warehouses[0]?.id || 'wh-1');
+  const [dateLimitProdId, setDateLimitProdId] = useState<string>('all');
+  const [dateLimitValue, setDateLimitValue] = useState<string>(() => {
+    const now = new Date();
+    return now.toISOString().slice(0, 19);
+  });
+  const [dateLimitLoading, setDateLimitLoading] = useState(false);
+  const [dateLimitResult, setDateLimitResult] = useState<any | null>(null);
 
   // Form States
   const [entryForm, setEntryForm] = useState({
@@ -577,6 +589,130 @@ export const InventoryExtractTab: React.FC = () => {
     notify('Ajuste de inventário concluído com sucesso!', 'success');
   };
 
+  // Consultar extrato e stock calculado na data limite por armazém
+  const handleQueryDateLimitExtract = async () => {
+    if (!dateLimitWhId || !dateLimitValue) {
+      notify('Selecione o armazém e a data limite de consulta.', 'warning');
+      return;
+    }
+
+    setDateLimitLoading(true);
+    try {
+      // 1. Tentar consultar no endpoint do backend / Supabase
+      const res = await obterExtratoInventarioArmazemClient({
+        armazem_id: dateLimitWhId,
+        data_limite: new Date(dateLimitValue).toISOString(),
+        produto_id: dateLimitProdId !== 'all' ? dateLimitProdId : undefined,
+      });
+
+      // Se a base do Supabase retornou vazio (ou tabela local), consolidar com dados do runtime se necessário
+      if (res && res.extrato_movimentos && res.extrato_movimentos.length === 0 && stockMovements.length > 0) {
+        const relevantStock = stock.filter((s) => {
+          if (s.warehouseId !== dateLimitWhId) return false;
+          if (dateLimitProdId !== 'all' && s.productId !== dateLimitProdId) return false;
+          return true;
+        });
+        const localCurrentStock = relevantStock.reduce((acc, s) => acc + (Number(s.quantity) || 0), 0);
+        const limitTimestamp = new Date(dateLimitValue).getTime();
+
+        const movsApos = stockMovements.filter((m) => {
+          const wh = m.targetWarehouseId || m.originWarehouseId || m.sourceWarehouseId;
+          if (wh !== dateLimitWhId) return false;
+          if (dateLimitProdId !== 'all' && m.productId !== dateLimitProdId) return false;
+          const t = new Date(m.timestamp || m.date || 0).getTime();
+          return t > limitTimestamp;
+        });
+        const totalApos = movsApos.reduce((acc, m) => {
+          const isOut = isOutMovement(m);
+          return acc + (isOut ? -(Math.abs(m.quantity || 0)) : Math.abs(m.quantity || 0));
+        }, 0);
+
+        const movsAte = stockMovements
+          .filter((m) => {
+            const wh = m.targetWarehouseId || m.originWarehouseId || m.sourceWarehouseId;
+            if (wh !== dateLimitWhId) return false;
+            if (dateLimitProdId !== 'all' && m.productId !== dateLimitProdId) return false;
+            const t = new Date(m.timestamp || m.date || 0).getTime();
+            return t <= limitTimestamp;
+          })
+          .sort((a, b) => new Date(a.timestamp || 0).getTime() - new Date(b.timestamp || 0).getTime());
+
+        setDateLimitResult({
+          armazem_id: dateLimitWhId,
+          produto_id: dateLimitProdId || 'TODOS',
+          data_consulta: dateLimitValue,
+          saldo_atual: res.saldo_atual || localCurrentStock,
+          movimentacoes_apos_data: res.movimentacoes_apos_data || totalApos,
+          stock_na_data: (res.saldo_atual || localCurrentStock) - (res.movimentacoes_apos_data || totalApos),
+          extrato_movimentos: res.extrato_movimentos.length > 0 ? res.extrato_movimentos : movsAte.map((m) => ({
+            id: m.id,
+            tipo_movimento: m.type,
+            quantidade: m.quantity,
+            data_movimento: m.timestamp || m.date,
+            usuario_id: userMap.get(m.operatorId) || m.operatorId,
+            referencia_id: m.referenceDoc,
+          })),
+        });
+      } else {
+        setDateLimitResult(res);
+      }
+
+      notify('Cálculo de extrato e stock na data limite processado!', 'success');
+    } catch (err: any) {
+      // Fallback determinístico local em caso de erro de rede
+      const relevantStock = stock.filter((s) => {
+        if (s.warehouseId !== dateLimitWhId) return false;
+        if (dateLimitProdId !== 'all' && s.productId !== dateLimitProdId) return false;
+        return true;
+      });
+      const localCurrentStock = relevantStock.reduce((acc, s) => acc + (Number(s.quantity) || 0), 0);
+      const limitTimestamp = new Date(dateLimitValue).getTime();
+
+      const movsApos = stockMovements.filter((m) => {
+        const wh = m.targetWarehouseId || m.originWarehouseId || m.sourceWarehouseId;
+        if (wh !== dateLimitWhId) return false;
+        if (dateLimitProdId !== 'all' && m.productId !== dateLimitProdId) return false;
+        const t = new Date(m.timestamp || m.date || 0).getTime();
+        return t > limitTimestamp;
+      });
+      const totalApos = movsApos.reduce((acc, m) => {
+        const isOut = isOutMovement(m);
+        return acc + (isOut ? -(Math.abs(m.quantity || 0)) : Math.abs(m.quantity || 0));
+      }, 0);
+
+      const movsAte = stockMovements
+        .filter((m) => {
+          const wh = m.targetWarehouseId || m.originWarehouseId || m.sourceWarehouseId;
+          if (wh !== dateLimitWhId) return false;
+          if (dateLimitProdId !== 'all' && m.productId !== dateLimitProdId) return false;
+          const t = new Date(m.timestamp || m.date || 0).getTime();
+          return t <= limitTimestamp;
+        })
+        .sort((a, b) => new Date(a.timestamp || 0).getTime() - new Date(b.timestamp || 0).getTime());
+
+      setDateLimitResult({
+        armazem_id: dateLimitWhId,
+        produto_id: dateLimitProdId || 'TODOS',
+        data_consulta: dateLimitValue,
+        saldo_atual: localCurrentStock,
+        movimentacoes_apos_data: totalApos,
+        stock_na_data: localCurrentStock - totalApos,
+        extrato_movimentos: movsAte.map((m) => ({
+          id: m.id,
+          tipo_movimento: m.type,
+          quantidade: m.quantity,
+          data_movimento: m.timestamp || m.date,
+          usuario_id: userMap.get(m.operatorId) || m.operatorId,
+          referencia_id: m.referenceDoc,
+        })),
+      });
+
+      notify('Extrato calculado com sucesso via motor de stock!', 'info');
+    } finally {
+      setDateLimitLoading(false);
+    }
+  };
+
   // Reset Filters
   const resetFilters = () => {
     setPeriodType('month');
@@ -692,6 +828,21 @@ export const InventoryExtractTab: React.FC = () => {
             >
               <Sparkles className="w-3.5 h-3.5 text-[#c5a47e]" />
               <span>Sincronizar Stock</span>
+            </button>
+
+            {/* Botão Extrato por Data Limite / Kardex Armazém */}
+            <button
+              type="button"
+              onClick={() => {
+                setDateLimitWhId(selectedWarehouse !== 'all' ? selectedWarehouse : (warehouses[0]?.id || 'wh-1'));
+                setDateLimitProdId(selectedProduct !== 'all' ? selectedProduct : 'all');
+                setShowDateLimitModal(true);
+              }}
+              className="px-3 py-1.5 bg-[#1a1714] hover:bg-[#28241f] text-[#c5a47e] text-xs font-bold rounded-lg border border-[#c5a47e]/30 transition-colors flex items-center space-x-1.5 cursor-pointer"
+              title="Calcular extrato por armazém e stock retroativo na data limite"
+            >
+              <RotateCcw className="w-3.5 h-3.5 text-[#c5a47e]" />
+              <span>Extrato Data Limite</span>
             </button>
           </div>
 
@@ -1692,6 +1843,234 @@ export const InventoryExtractTab: React.FC = () => {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: Extrato por Armazém & Data Limite (Retroativo / Kardex) */}
+      {showDateLimitModal && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-[#141414] border border-[#333] rounded-xl max-w-3xl w-full p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between pb-3 border-b border-[#262626]">
+              <div className="flex items-center space-x-2">
+                <div className="p-2 bg-[#c5a47e]/15 text-[#c5a47e] rounded-lg border border-[#c5a47e]/30">
+                  <RotateCcw className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-white">
+                    Extrato de Inventário por Armazém (Data Limite)
+                  </h3>
+                  <p className="text-xs text-neutral-400">
+                    Cálculo retroativo auditável: <span className="text-[#c5a47e] font-mono font-semibold">Stock na Data = Stock Atual - Movimentações Pós-Data</span>
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowDateLimitModal(false);
+                  setDateLimitResult(null);
+                }}
+                className="text-neutral-400 hover:text-white p-1 rounded-lg hover:bg-[#262626] transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Inputs Form */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-[#0d0d0d] p-4 rounded-xl border border-[#262626]">
+              <div>
+                <label className="block text-xs font-semibold text-neutral-300 mb-1">
+                  Armazém *
+                </label>
+                <select
+                  value={dateLimitWhId}
+                  onChange={(e) => setDateLimitWhId(e.target.value)}
+                  className="w-full bg-[#141414] border border-[#333] rounded-lg px-3 py-2 text-xs text-neutral-200 focus:outline-hidden focus:border-[#c5a47e]"
+                >
+                  {warehouses.map((w) => (
+                    <option key={w.id} value={w.id}>
+                      {w.name} ({w.code})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-neutral-300 mb-1">
+                  Artigo / Produto (Opcional)
+                </label>
+                <select
+                  value={dateLimitProdId}
+                  onChange={(e) => setDateLimitProdId(e.target.value)}
+                  className="w-full bg-[#141414] border border-[#333] rounded-lg px-3 py-2 text-xs text-neutral-200 focus:outline-hidden focus:border-[#c5a47e]"
+                >
+                  <option value="all">TODOS OS ARTIGOS</option>
+                  {products.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name} ({p.sku})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-neutral-300 mb-1">
+                  Data Limite de Consulta *
+                </label>
+                <input
+                  type="datetime-local"
+                  value={dateLimitValue}
+                  onChange={(e) => setDateLimitValue(e.target.value)}
+                  className="w-full bg-[#141414] border border-[#333] rounded-lg px-3 py-2 text-xs text-neutral-200 focus:outline-hidden focus:border-[#c5a47e]"
+                />
+              </div>
+            </div>
+
+            {/* Quick date presets */}
+            <div className="flex items-center gap-2 flex-wrap text-xs text-neutral-400">
+              <span className="text-[11px] font-semibold text-neutral-500">Atalhos rápidos:</span>
+              <button
+                type="button"
+                onClick={() => setDateLimitValue(`${todayStr}T23:59:59`)}
+                className="px-2 py-1 bg-[#1a1a1a] hover:bg-[#252525] rounded border border-[#333] text-[11px] cursor-pointer"
+              >
+                Fim de Hoje
+              </button>
+              <button
+                type="button"
+                onClick={() => setDateLimitValue(`${getYesterdayDateStr()}T23:59:59`)}
+                className="px-2 py-1 bg-[#1a1a1a] hover:bg-[#252525] rounded border border-[#333] text-[11px] cursor-pointer"
+              >
+                Fim de Ontem
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const bounds = getMonthBounds(getPrevMonthStr());
+                  setDateLimitValue(`${bounds.end}T23:59:59`);
+                }}
+                className="px-2 py-1 bg-[#1a1a1a] hover:bg-[#252525] rounded border border-[#333] text-[11px] cursor-pointer"
+              >
+                Fim do Mês Anterior
+              </button>
+              <button
+                type="button"
+                onClick={() => setDateLimitValue('2026-09-01T23:59:59')}
+                className="px-2 py-1 bg-[#1a1a1a] hover:bg-[#252525] rounded border border-[#333] text-[11px] text-[#c5a47e] cursor-pointer"
+              >
+                01/09/2026 23:59 (Exemplo)
+              </button>
+            </div>
+
+            {/* Consult Button */}
+            <div className="flex justify-end">
+              <button
+                type="button"
+                disabled={dateLimitLoading}
+                onClick={handleQueryDateLimitExtract}
+                className="px-5 py-2.5 bg-[#c5a47e] hover:bg-[#b5946e] text-neutral-950 font-bold text-xs rounded-lg transition-all flex items-center space-x-2 shadow-md cursor-pointer disabled:opacity-50"
+              >
+                {dateLimitLoading ? (
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Search className="w-4 h-4" />
+                )}
+                <span>{dateLimitLoading ? 'Calculando Extrato...' : 'Calcular Extrato do Armazém'}</span>
+              </button>
+            </div>
+
+            {/* Result Display */}
+            {dateLimitResult && (
+              <div className="space-y-4 pt-3 border-t border-[#262626]">
+                {/* Metric Summary Cards */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div className="bg-[#0d0d0d] p-3 rounded-lg border border-[#262626]">
+                    <span className="text-[10px] text-neutral-400 uppercase font-bold block">
+                      Saldo Atual (Hoje)
+                    </span>
+                    <span className="font-mono font-bold text-neutral-200 text-lg">
+                      {dateLimitResult.saldo_atual} un
+                    </span>
+                  </div>
+
+                  <div className="bg-[#0d0d0d] p-3 rounded-lg border border-[#262626]">
+                    <span className="text-[10px] text-neutral-400 uppercase font-bold block">
+                      Movimentações Pós-Data
+                    </span>
+                    <span className={`font-mono font-bold text-lg ${dateLimitResult.movimentacoes_apos_data > 0 ? 'text-amber-400' : 'text-neutral-300'}`}>
+                      {dateLimitResult.movimentacoes_apos_data > 0 ? `+${dateLimitResult.movimentacoes_apos_data}` : dateLimitResult.movimentacoes_apos_data} un
+                    </span>
+                  </div>
+
+                  <div className="bg-[#1a1714] p-3 rounded-lg border border-[#c5a47e]/40 shadow-xs">
+                    <span className="text-[10px] text-[#c5a47e] uppercase font-bold block">
+                      Stock na Data Limite
+                    </span>
+                    <span className="font-mono font-bold text-[#c5a47e] text-xl">
+                      {dateLimitResult.stock_na_data} un
+                    </span>
+                  </div>
+                </div>
+
+                {/* Movements Table */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-xs font-bold text-neutral-200 uppercase tracking-wider">
+                      Movimentações até {formatDate(dateLimitResult.data_consulta)} ({dateLimitResult.extrato_movimentos?.length || 0})
+                    </h4>
+                    <span className="text-[11px] text-neutral-400 font-mono">
+                      Armazém: {warehouseMap.get(dateLimitResult.armazem_id) || dateLimitResult.armazem_id}
+                    </span>
+                  </div>
+
+                  <div className="bg-[#0d0d0d] border border-[#262626] rounded-lg overflow-x-auto max-h-60">
+                    <table className="w-full text-left text-xs">
+                      <thead className="bg-[#141414] text-neutral-400 border-b border-[#262626]">
+                        <tr>
+                          <th className="px-3 py-2">Data</th>
+                          <th className="px-3 py-2">Tipo</th>
+                          <th className="px-3 py-2 text-right">Qtd</th>
+                          <th className="px-3 py-2">Utilizador</th>
+                          <th className="px-3 py-2">Referência</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-[#1f1f1f]">
+                        {dateLimitResult.extrato_movimentos && dateLimitResult.extrato_movimentos.length > 0 ? (
+                          dateLimitResult.extrato_movimentos.map((m: any, idx: number) => (
+                            <tr key={m.id || idx} className="hover:bg-[#181818]">
+                              <td className="px-3 py-2 text-neutral-300 font-mono">
+                                {m.data_movimento ? formatDate(m.data_movimento) : '—'}
+                              </td>
+                              <td className="px-3 py-2">
+                                <span className="capitalize px-1.5 py-0.5 rounded text-[10px] font-semibold bg-[#222] text-neutral-300">
+                                  {m.tipo_movimento || 'Movimento'}
+                                </span>
+                              </td>
+                              <td className="px-3 py-2 text-right font-mono font-bold text-white">
+                                {m.quantidade}
+                              </td>
+                              <td className="px-3 py-2 text-neutral-400">
+                                {m.usuario_id || 'Sistema'}
+                              </td>
+                              <td className="px-3 py-2 text-neutral-400 font-mono">
+                                {m.referencia_id || '—'}
+                              </td>
+                            </tr>
+                          ))
+                        ) : (
+                          <tr>
+                            <td colSpan={5} className="px-3 py-6 text-center text-neutral-500">
+                              Nenhuma movimentação registada para este armazém até a data limite especificada.
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
