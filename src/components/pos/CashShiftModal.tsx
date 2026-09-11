@@ -37,7 +37,7 @@ import { isEffectiveSale, calculateNetSalesRevenue } from '../../utils/documentU
 
 interface CashShiftModalProps {
   onClose: () => void;
-  initialMode?: 'info' | 'open' | 'close' | 'sangria' | 'suprimento' | 'history';
+  initialMode?: 'info' | 'open' | 'close' | 'sangria' | 'history';
 }
 
 export const CashShiftModal: React.FC<CashShiftModalProps> = ({ onClose, initialMode = 'info' }) => {
@@ -69,7 +69,7 @@ export const CashShiftModal: React.FC<CashShiftModalProps> = ({ onClose, initial
       ? [500, 1000, 2000, 5000]
       : [50, 100, 150, 200];
 
-  const [mode, setMode] = useState<'info' | 'open' | 'close' | 'sangria' | 'suprimento' | 'history'>(initialMode);
+  const [mode, setMode] = useState<'info' | 'open' | 'close' | 'sangria' | 'history'>(initialMode);
   const [initialCashInput, setInitialCashInput] = useState<number>(
     currencyDefinition.code === 'MZN' ? 2000 : 150
   );
@@ -167,7 +167,7 @@ export const CashShiftModal: React.FC<CashShiftModalProps> = ({ onClose, initial
   }, [activeShift]);
 
   const expectedCashInDrawer = activeShift
-    ? activeShift.initialCash + activeShift.totalCash + activeShift.suprimentoTotal - activeShift.sangriaTotal
+    ? activeShift.initialCash + activeShift.totalCash - activeShift.sangriaTotal
     : 0;
 
   const handleOpen = () => {
@@ -175,9 +175,9 @@ export const CashShiftModal: React.FC<CashShiftModalProps> = ({ onClose, initial
     onClose();
   };
 
-  const handleMovement = (type: 'sangria' | 'suprimento') => {
+  const handleMovement = (type: 'sangria') => {
     if (movementAmount <= 0) return;
-    registerCashMovement(type, movementAmount, movementReason || (type === 'sangria' ? 'Sangria de segurança' : 'Suprimento de trocos'));
+    registerCashMovement(type, movementAmount, movementReason || 'Sangria de segurança');
     setMode('info');
     setMovementAmount(50);
     setMovementReason('');
@@ -222,7 +222,7 @@ export const CashShiftModal: React.FC<CashShiftModalProps> = ({ onClose, initial
         </div>
 
         {/* Modal Navigation Tabs (when not viewing a closed summary or specific sub-screen) */}
-        {!closedZReport && !selectedHistoricalShift && mode !== 'close' && mode !== 'sangria' && mode !== 'suprimento' && (
+        {!closedZReport && !selectedHistoricalShift && mode !== 'close' && mode !== 'sangria' && (
           <div className="flex border-b border-[#262626] bg-[#111111] px-4 pt-2 gap-2 text-xs">
             <button
               type="button"
@@ -301,22 +301,27 @@ export const CashShiftModal: React.FC<CashShiftModalProps> = ({ onClose, initial
                     <span>- Total Sangrias:</span>
                     <span className="text-rose-400">-{formatCurrency(closedZReport.sangriaTotal)}</span>
                   </div>
-                  <div className="flex justify-between text-neutral-400">
-                    <span>+ Total Suprimentos:</span>
-                    <span className="text-emerald-400">+{formatCurrency(closedZReport.suprimentoTotal)}</span>
-                  </div>
-                  <div className="flex justify-between font-bold text-[#e5e5e5] pt-1 border-t border-[#262626]">
-                    <span>Saldo Esperado em Caixa:</span>
-                    <span className="text-[#c5a47e]">{formatCurrency(closedZReport.finalCashSystem || closedZReport.expectedCash)}</span>
-                  </div>
-                  <div className="flex justify-between font-bold text-[#e5e5e5]">
-                    <span>Saldo Contado / Declarado:</span>
-                    <span className="text-[#c5a47e]">{formatCurrency(closedZReport.finalCashReported || closedZReport.countedCash)}</span>
-                  </div>
-                  <div className={`flex justify-between font-bold pt-1 ${closedZReport.cashDifference === 0 || closedZReport.difference === 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                    <span>Diferença de Caixa:</span>
-                    <span>{formatCurrency(closedZReport.cashDifference !== undefined ? closedZReport.cashDifference : closedZReport.difference)}</span>
-                  </div>
+                  {(() => {
+                    const expected = (closedZReport.initialCash || 0) + (closedZReport.totalCash || 0) - (closedZReport.sangriaTotal || 0);
+                    const counted = closedZReport.finalCashReported !== undefined ? closedZReport.finalCashReported : (closedZReport.countedCash !== undefined ? closedZReport.countedCash : expected);
+                    const diff = counted - expected;
+                    return (
+                      <>
+                        <div className="flex justify-between font-bold text-[#e5e5e5] pt-1 border-t border-[#262626]">
+                          <span>Saldo Esperado em Caixa:</span>
+                          <span className="text-[#c5a47e]">{formatCurrency(expected)}</span>
+                        </div>
+                        <div className="flex justify-between font-bold text-[#e5e5e5]">
+                          <span>Saldo Contado / Declarado:</span>
+                          <span className="text-[#c5a47e]">{formatCurrency(counted)}</span>
+                        </div>
+                        <div className={`flex justify-between font-bold pt-1 ${diff === 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                          <span>Diferença de Caixa:</span>
+                          <span>{formatCurrency(diff)}</span>
+                        </div>
+                      </>
+                    );
+                  })()}
                 </div>
 
                 <p className="text-[10px] text-neutral-400">
@@ -445,43 +450,37 @@ export const CashShiftModal: React.FC<CashShiftModalProps> = ({ onClose, initial
                   </div>
                 )}
                 <div className="flex justify-between text-neutral-400">
-                  <span>+ Total Suprimentos:</span>
-                  <span className="text-emerald-400 font-bold">+{formatCurrency(selectedHistoricalShift.suprimentoTotal || 0)}</span>
-                </div>
-                <div className="flex justify-between text-neutral-400">
                   <span>- Total Sangrias:</span>
                   <span className="text-rose-400 font-bold">-{formatCurrency(selectedHistoricalShift.sangriaTotal || 0)}</span>
                 </div>
                 
-                <div className="flex justify-between font-bold text-[#e5e5e5] pt-2 border-t border-[#262626]">
-                  <span>Saldo Teórico do Sistema:</span>
-                  <span className="text-[#c5a47e]">
-                    {formatCurrency(
-                      selectedHistoricalShift.finalCashSystem !== undefined
-                        ? selectedHistoricalShift.finalCashSystem
-                        : (selectedHistoricalShift.initialCash || 0) +
-                          (selectedHistoricalShift.totalCash || 0) +
-                          (selectedHistoricalShift.suprimentoTotal || 0) -
-                          (selectedHistoricalShift.sangriaTotal || 0)
-                    )}
-                  </span>
-                </div>
-                {selectedHistoricalShift.finalCashReported !== undefined && (
-                  <div className="flex justify-between font-bold text-[#e5e5e5]">
-                    <span>Saldo Contado / Declarado pelo Operador:</span>
-                    <span className="text-[#c5a47e]">{formatCurrency(selectedHistoricalShift.finalCashReported)}</span>
-                  </div>
-                )}
-                {selectedHistoricalShift.cashDifference !== undefined && (
-                  <div className={`flex justify-between font-bold p-1.5 rounded-md ${
-                    selectedHistoricalShift.cashDifference === 0
-                      ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
-                      : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
-                  }`}>
-                    <span>Diferença de Caixa:</span>
-                    <span>{formatCurrency(selectedHistoricalShift.cashDifference)}</span>
-                  </div>
-                )}
+                {(() => {
+                  const expected = (selectedHistoricalShift.initialCash || 0) + (selectedHistoricalShift.totalCash || 0) - (selectedHistoricalShift.sangriaTotal || 0);
+                  const counted = selectedHistoricalShift.finalCashReported !== undefined ? selectedHistoricalShift.finalCashReported : expected;
+                  const diff = counted - expected;
+                  return (
+                    <>
+                      <div className="flex justify-between font-bold text-[#e5e5e5] pt-2 border-t border-[#262626]">
+                        <span>Saldo Teórico do Sistema:</span>
+                        <span className="text-[#c5a47e]">{formatCurrency(expected)}</span>
+                      </div>
+                      {selectedHistoricalShift.finalCashReported !== undefined && (
+                        <div className="flex justify-between font-bold text-[#e5e5e5]">
+                          <span>Saldo Contado / Declarado pelo Operador:</span>
+                          <span className="text-[#c5a47e]">{formatCurrency(counted)}</span>
+                        </div>
+                      )}
+                      <div className={`flex justify-between font-bold p-1.5 rounded-md ${
+                        diff === 0
+                          ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                          : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
+                      }`}>
+                        <span>Diferença de Caixa:</span>
+                        <span>{formatCurrency(diff)}</span>
+                      </div>
+                    </>
+                  );
+                })()}
                 {selectedHistoricalShift.notes && (
                   <div className="pt-2 border-t border-[#262626] text-[11px] text-neutral-400">
                     <span className="font-bold text-neutral-300 block mb-0.5">Observações:</span>
@@ -589,10 +588,8 @@ export const CashShiftModal: React.FC<CashShiftModalProps> = ({ onClose, initial
                 {filteredHistoricalShifts.length > 0 ? (
                   filteredHistoricalShifts.map((sh) => {
                     const expected =
-                      sh.finalCashSystem !== undefined
-                        ? sh.finalCashSystem
-                        : (sh.initialCash || 0) + (sh.totalCash || 0) + (sh.suprimentoTotal || 0) - (sh.sangriaTotal || 0);
-                    const diff = sh.cashDifference !== undefined ? sh.cashDifference : (sh.finalCashReported !== undefined ? sh.finalCashReported - expected : 0);
+                      (sh.initialCash || 0) + (sh.totalCash || 0) - (sh.sangriaTotal || 0);
+                    const diff = sh.finalCashReported !== undefined ? sh.finalCashReported - expected : 0;
 
                     return (
                       <div
@@ -715,17 +712,13 @@ export const CashShiftModal: React.FC<CashShiftModalProps> = ({ onClose, initial
                 )}
               </div>
             </div>
-          ) : mode === 'sangria' || mode === 'suprimento' ? (
-            /* Sangria or Suprimento screen */
+          ) : mode === 'sangria' ? (
+            /* Sangria screen */
             <div className="space-y-4">
               <div className="flex items-center space-x-2 pb-2 border-b border-[#262626]">
-                {mode === 'sangria' ? (
-                  <ArrowDownRight className="w-5 h-5 text-rose-400" />
-                ) : (
-                  <ArrowUpRight className="w-5 h-5 text-emerald-400" />
-                )}
+                <ArrowDownRight className="w-5 h-5 text-rose-400" />
                 <h4 className="font-serif font-bold text-sm text-[#c5a47e]">
-                  {mode === 'sangria' ? 'Registar Sangria (Retirada de Dinheiro)' : 'Registar Suprimento (Entrada de Dinheiro)'}
+                  Registar Sangria (Retirada de Dinheiro)
                 </h4>
               </div>
 
@@ -748,7 +741,7 @@ export const CashShiftModal: React.FC<CashShiftModalProps> = ({ onClose, initial
                     type="text"
                     value={movementReason}
                     onChange={(e) => setMovementReason(e.target.value)}
-                    placeholder={mode === 'sangria' ? 'ex: Depósito no cofre central' : 'ex: Reforço de moedas de troco'}
+                    placeholder="ex: Depósito no cofre central"
                     className="w-full px-3 py-2 bg-[#0d0d0d] border border-[#262626] rounded-lg text-xs text-[#e5e5e5] focus:outline-hidden focus:border-[#c5a47e]"
                   />
                 </div>
@@ -762,12 +755,10 @@ export const CashShiftModal: React.FC<CashShiftModalProps> = ({ onClose, initial
                   Voltar
                 </button>
                 <button
-                  onClick={() => handleMovement(mode)}
-                  className={`flex-1 py-2.5 text-black rounded-lg text-xs font-bold uppercase tracking-wider transition-colors cursor-pointer ${
-                    mode === 'sangria' ? 'bg-rose-500 hover:bg-rose-600 text-white' : 'bg-[#c5a47e] hover:bg-[#d4b896]'
-                  }`}
+                  onClick={() => handleMovement('sangria')}
+                  className="flex-1 py-2.5 text-white rounded-lg text-xs font-bold uppercase tracking-wider transition-colors cursor-pointer bg-rose-500 hover:bg-rose-600"
                 >
-                  Confirmar {mode === 'sangria' ? 'Sangria' : 'Suprimento'}
+                  Confirmar Sangria
                 </button>
               </div>
             </div>
@@ -787,10 +778,6 @@ export const CashShiftModal: React.FC<CashShiftModalProps> = ({ onClose, initial
                 <div className="flex justify-between text-neutral-400">
                   <span>Vendas em Numerário:</span>
                   <span className="font-mono text-emerald-400">+{formatCurrency(activeShift.totalCash)}</span>
-                </div>
-                <div className="flex justify-between text-neutral-400">
-                  <span>Suprimentos (+):</span>
-                  <span className="font-mono text-emerald-400">+{formatCurrency(activeShift.suprimentoTotal)}</span>
                 </div>
                 <div className="flex justify-between text-neutral-400">
                   <span>Sangrias (-):</span>
@@ -1087,22 +1074,14 @@ export const CashShiftModal: React.FC<CashShiftModalProps> = ({ onClose, initial
               )}
 
               {/* Actions Grid */}
-              <div className="grid grid-cols-2 gap-2 pt-1">
-                <button
-                  type="button"
-                  onClick={() => setMode('suprimento')}
-                  className="flex items-center justify-center space-x-1.5 py-2 px-3 bg-[#0d0d0d] hover:bg-[#1a1a1a] text-neutral-300 rounded-lg text-xs font-semibold border border-[#262626] transition-colors cursor-pointer"
-                >
-                  <ArrowUpRight className="w-4 h-4 text-emerald-400" />
-                  <span>Suprimento</span>
-                </button>
+              <div className="pt-1">
                 <button
                   type="button"
                   onClick={() => setMode('sangria')}
-                  className="flex items-center justify-center space-x-1.5 py-2 px-3 bg-[#0d0d0d] hover:bg-[#1a1a1a] text-neutral-300 rounded-lg text-xs font-semibold border border-[#262626] transition-colors cursor-pointer"
+                  className="w-full flex items-center justify-center space-x-1.5 py-2.5 px-3 bg-[#0d0d0d] hover:bg-[#1a1a1a] text-neutral-200 rounded-lg text-xs font-semibold border border-[#262626] transition-colors cursor-pointer"
                 >
                   <ArrowDownRight className="w-4 h-4 text-rose-400" />
-                  <span>Sangria</span>
+                  <span>Registar Sangria de Caixa (Retirada)</span>
                 </button>
               </div>
 

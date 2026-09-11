@@ -88,7 +88,7 @@ export const POSModule: React.FC = () => {
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [showReceiptModal, setShowReceiptModal] = useState(false);
   const [showShiftModal, setShowShiftModal] = useState(false);
-  const [shiftModalInitialMode, setShiftModalInitialMode] = useState<'info' | 'open' | 'close' | 'sangria' | 'suprimento' | 'history'>('info');
+  const [shiftModalInitialMode, setShiftModalInitialMode] = useState<'info' | 'open' | 'close' | 'sangria' | 'history'>('info');
   const [showCustomerPicker, setShowCustomerPicker] = useState(false);
   const [showDiscountModal, setShowDiscountModal] = useState(false);
   const [discountInput, setDiscountInput] = useState<number>(0);
@@ -378,7 +378,7 @@ export const POSModule: React.FC = () => {
                   setShowShiftModal(true);
                 }}
                 className="px-2.5 py-1 bg-[#1a1a1a] hover:bg-[#252525] text-neutral-300 hover:text-white border border-[#333333] rounded-lg text-[11px] font-medium flex items-center space-x-1.5 transition-all cursor-pointer"
-                title="Gerir Turno, Sangria, Suprimento e Fecho Z"
+                title="Gerir Turno, Sangria e Fecho Z"
               >
                 <span>Gerir Turno / Fecho Z</span>
               </button>

@@ -50,6 +50,8 @@ export interface User {
   roleId?: string;
   storeId?: string;
   storeIds?: string[];
+  warehouseId?: string;
+  warehouseIds?: string[];
   companyId?: string;
   pin: string;
   avatarUrl?: string;
@@ -300,6 +302,53 @@ export interface StockMovement {
   referenceDoc?: string; // ex: "FT 2026/0142" or "RC 2026/001"
   reason?: string;
   operatorId: string;
+}
+
+export type StockTransferStatus =
+  | 'PENDENTE'
+  | 'APROVADO'
+  | 'CONCLUIDO'
+  | 'CANCELADO'
+  | 'REJEITADO'
+  | 'EXPIRADO';
+
+export interface StockTransferItem {
+  id: string;
+  productId: string;
+  productName?: string;
+  productSku?: string;
+  quantityRequested: number;
+  quantityApproved?: number;
+  unitCost?: number;
+}
+
+export interface StockTransfer {
+  id: string;
+  companyId: string;
+  transferNumber: string; // Ex: TRF-2026-0001
+  originWarehouseId: string;
+  destinationWarehouseId: string;
+  status: StockTransferStatus;
+  items: StockTransferItem[];
+  verificationCode?: string; // 6-digit OTP (e.g. 849203)
+  verificationExpiresAt?: string; // ISO string
+  failedAttempts: number;
+  maxAttempts: number;
+  notes?: string;
+  rejectionReason?: string;
+  requestedBy: string;
+  requestedByName?: string;
+  approvedBy?: string;
+  approvedByName?: string;
+  approvedByIp?: string;
+  receivedBy?: string;
+  receivedByName?: string;
+  receivedByIp?: string;
+  createdAt: string;
+  approvedAt?: string;
+  completedAt?: string;
+  rejectedAt?: string;
+  cancelledAt?: string;
 }
 
 export interface InventoryExtractFilterState {

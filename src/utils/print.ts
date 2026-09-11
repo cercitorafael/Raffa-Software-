@@ -1630,9 +1630,9 @@ export function printZReportA4(
   terminal?: Terminal
 ): void {
   const currency = company.currencySymbol || company.currency || 'Mt';
-  const expectedCash = (shift.initialCash || 0) + (shift.totalCash || 0) + (shift.suprimentoTotal || 0) - (shift.sangriaTotal || 0);
+  const expectedCash = (shift.initialCash || 0) + (shift.totalCash || 0) - (shift.sangriaTotal || 0);
   const countedCash = typeof shift.finalCashReported === 'number' ? shift.finalCashReported : expectedCash;
-  const difference = typeof shift.cashDifference === 'number' ? shift.cashDifference : (countedCash - expectedCash);
+  const difference = countedCash - expectedCash;
 
   const zNumber = shift.zReportNumber || `Z-${new Date(shift.closedAt || shift.openedAt).getFullYear()}/${shift.id.slice(-4).toUpperCase()}`;
   const storeName = store?.name || 'Loja Principal';
@@ -1643,16 +1643,17 @@ export function printZReportA4(
   const openedDateFormatted = formatDate(shift.openedAt);
   const closedDateFormatted = shift.closedAt ? formatDate(shift.closedAt) : formatDate(new Date().toISOString());
 
-  const movementsHtml = (shift.movements && shift.movements.length > 0)
-    ? shift.movements.map((m, idx) => `
+  const sangriaMovements = (shift.movements || []).filter((m) => m.type !== 'suprimento');
+  const movementsHtml = (sangriaMovements.length > 0)
+    ? sangriaMovements.map((m, idx) => `
         <tr style="border-bottom: 1px solid #e5e7eb; font-size: 11px;">
           <td style="padding: 6px 8px; font-family: monospace;">${idx + 1}</td>
           <td style="padding: 6px 8px; font-family: monospace;">${formatDate(m.timestamp)}</td>
-          <td style="padding: 6px 8px; font-weight: bold; text-transform: uppercase; color: ${m.type === 'sangria' ? '#dc2626' : '#16a34a'};">
-            ${m.type === 'sangria' ? 'Sangria (Retirada)' : 'Suprimento (Entrada)'}
+          <td style="padding: 6px 8px; font-weight: bold; text-transform: uppercase; color: #dc2626;">
+            Sangria (Retirada)
           </td>
-          <td style="padding: 6px 8px; text-align: right; font-family: monospace; font-weight: bold; color: ${m.type === 'sangria' ? '#dc2626' : '#16a34a'};">
-            ${m.type === 'sangria' ? '-' : '+'}${formatCurrency(m.amount, company.currency)}
+          <td style="padding: 6px 8px; text-align: right; font-family: monospace; font-weight: bold; color: #dc2626;">
+            -${formatCurrency(m.amount, company.currency)}
           </td>
           <td style="padding: 6px 8px; color: #4b5563;">${m.reason || 'Sem justificação'}</td>
           <td style="padding: 6px 8px; color: #4b5563;">${m.authorizedBy || shift.operatorName}</td>
@@ -1661,7 +1662,7 @@ export function printZReportA4(
     : `
       <tr>
         <td colspan="6" style="padding: 12px; text-align: center; color: #9ca3af; font-style: italic;">
-          Nenhum movimento de caixa (sangria/suprimento) registado durante este turno.
+          Nenhum movimento de sangria registado durante este turno.
         </td>
       </tr>
     `;
@@ -2003,10 +2004,6 @@ export function printZReportA4(
                   <span style="font-family: monospace; font-weight: 700; color: #047857;">+${formatCurrency(shift.totalCash, company.currency)}</span>
                 </div>
                 <div class="recon-row">
-                  <span>(+) Suprimentos de Caixa:</span>
-                  <span style="font-family: monospace; font-weight: 700; color: #047857;">+${formatCurrency(shift.suprimentoTotal || 0, company.currency)}</span>
-                </div>
-                <div class="recon-row">
                   <span>(-) Sangrias / Retiradas de Caixa:</span>
                   <span style="font-family: monospace; font-weight: 700; color: #b91c1c;">-${formatCurrency(shift.sangriaTotal || 0, company.currency)}</span>
                 </div>
@@ -2036,11 +2033,11 @@ export function printZReportA4(
           </div>
         </div>
 
-        <!-- Sangrias & Suprimentos Itemized Table -->
+        <!-- Sangrias Itemized Table -->
         <div class="section">
           <div class="section-title">
-            <span>Discriminação de Movimentos de Tesouraria no Turno (Sangrias & Suprimentos)</span>
-            <span style="font-weight: normal; font-size: 10px; color: #6b7280;">Total: ${(shift.movements || []).length} operações</span>
+            <span>Discriminação de Movimentos de Tesouraria no Turno (Sangrias)</span>
+            <span style="font-weight: normal; font-size: 10px; color: #6b7280;">Total: ${sangriaMovements.length} operações</span>
           </div>
           <table class="data-table">
             <thead>
@@ -2141,14 +2138,14 @@ export function printZReportThermal(
   store?: Store,
   terminal?: Terminal
 ): void {
-  const expectedCash = (shift.initialCash || 0) + (shift.totalCash || 0) + (shift.suprimentoTotal || 0) - (shift.sangriaTotal || 0);
+  const expectedCash = (shift.initialCash || 0) + (shift.totalCash || 0) - (shift.sangriaTotal || 0);
   const countedCash = typeof shift.finalCashReported === 'number' ? shift.finalCashReported : expectedCash;
-  const difference = typeof shift.cashDifference === 'number' ? shift.cashDifference : (countedCash - expectedCash);
+  const difference = countedCash - expectedCash;
   const zNumber = shift.zReportNumber || `Z-${shift.id.slice(-4).toUpperCase()}`;
 
-  const movementsThermal = (shift.movements || []).map((m) => `
+  const movementsThermal = (shift.movements || []).filter((m) => m.type !== 'suprimento').map((m) => `
     <div style="display: flex; justify-content: space-between; font-size: 11px;">
-      <span>${m.type === 'sangria' ? '[-] SANGRIA' : '[+] SUPRIM.'} (${m.reason ? m.reason.slice(0, 14) : 'Geral'}):</span>
+      <span>[-] SANGRIA (${m.reason ? m.reason.slice(0, 14) : 'Geral'}):</span>
       <span>${formatCurrency(m.amount, company.currency)}</span>
     </div>
   `).join('');
@@ -2203,7 +2200,6 @@ export function printZReportThermal(
         <div class="bold text-center">GAVETA DE DINHEIRO</div>
         <div class="row"><span>(+) Fundo Inicial:</span><span>${formatCurrency(shift.initialCash, company.currency)}</span></div>
         <div class="row"><span>(+) Vendas Dinheiro:</span><span>${formatCurrency(shift.totalCash, company.currency)}</span></div>
-        <div class="row"><span>(+) Suprimentos:</span><span>+${formatCurrency(shift.suprimentoTotal || 0, company.currency)}</span></div>
         <div class="row"><span>(-) Sangrias:</span><span>-${formatCurrency(shift.sangriaTotal || 0, company.currency)}</span></div>
         <div class="divider"></div>
         <div class="row bold"><span>(=) Saldo Teórico:</span><span>${formatCurrency(expectedCash, company.currency)}</span></div>
@@ -2252,9 +2248,9 @@ export async function downloadZReportPdf(
 ): Promise<void> {
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
   const currency = company.currencySymbol || company.currency || 'Mt';
-  const expectedCash = (shift.initialCash || 0) + (shift.totalCash || 0) + (shift.suprimentoTotal || 0) - (shift.sangriaTotal || 0);
+  const expectedCash = (shift.initialCash || 0) + (shift.totalCash || 0) - (shift.sangriaTotal || 0);
   const countedCash = typeof shift.finalCashReported === 'number' ? shift.finalCashReported : expectedCash;
-  const difference = typeof shift.cashDifference === 'number' ? shift.cashDifference : (countedCash - expectedCash);
+  const difference = countedCash - expectedCash;
   const zNumber = shift.zReportNumber || `Z-${new Date(shift.closedAt || shift.openedAt).getFullYear()}/${shift.id.slice(-4).toUpperCase()}`;
 
   const logo = await getCompanyLogoForPdf(company.logoUrl, company.tradeName || company.name);
@@ -2345,7 +2341,6 @@ export async function downloadZReportPdf(
     body: [
       ['(+) Fundo de Maneio Inicial', formatCurrency(shift.initialCash, company.currency)],
       ['(+) Vendas em Dinheiro', `+${formatCurrency(shift.totalCash, company.currency)}`],
-      ['(+) Suprimentos (Reforço)', `+${formatCurrency(shift.suprimentoTotal || 0, company.currency)}`],
       ['(-) Sangrias (Retiradas)', `-${formatCurrency(shift.sangriaTotal || 0, company.currency)}`],
       ['(=) Saldo Teórico em Caixa', formatCurrency(expectedCash, company.currency)],
       ['Saldo Físico Contado / Declarado', formatCurrency(countedCash, company.currency)],
@@ -2360,16 +2355,17 @@ export async function downloadZReportPdf(
 
   const reconFinalY = (doc as any).lastAutoTable.finalY + 6;
 
-  // Movements Table if any
-  if (shift.movements && shift.movements.length > 0) {
+  // Movements Table if any (Sangrias)
+  const sangriaMovements = (shift.movements || []).filter((m) => m.type !== 'suprimento');
+  if (sangriaMovements.length > 0) {
     autoTable(doc, {
       startY: reconFinalY,
       theme: 'grid',
       head: [['Data/Hora', 'Tipo', 'Montante', 'Justificação', 'Autorização']],
-      body: shift.movements.map((m) => [
+      body: sangriaMovements.map((m) => [
         formatDate(m.timestamp),
         m.type.toUpperCase(),
-        `${m.type === 'sangria' ? '-' : '+'}${formatCurrency(m.amount, company.currency)}`,
+        `-${formatCurrency(m.amount, company.currency)}`,
         m.reason || '—',
         m.authorizedBy || shift.operatorName
       ]),

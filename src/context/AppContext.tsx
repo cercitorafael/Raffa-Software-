@@ -48,6 +48,9 @@ import {
   ShiftType,
   VatMode,
   VatRate,
+  StockTransfer,
+  StockTransferItem,
+  StockTransferStatus,
 } from '../types';
 import { useI18n } from '../i18n';
 import { standardizeCategoryName } from '../utils/categoryUtils';
@@ -350,6 +353,24 @@ export interface AppContextType {
   deleteStockMovement: (id: string) => void;
   createStockAdjustment: (productId: string, warehouseId: string, newQty: number, reason: string) => void;
   transferStock: (productId: string, fromWarehouseId: string, toWarehouseId: string, quantity: number) => void;
+  stockTransfers: StockTransfer[];
+  requestStockTransfer: (
+    originWarehouseId: string,
+    destinationWarehouseId: string,
+    items: Array<{ productId: string; quantity: number }>,
+    notes?: string
+  ) => Promise<StockTransfer>;
+  approveStockTransfer: (
+    transferId: string,
+    approvedItems?: Array<{ productId: string; quantity: number }>,
+    notes?: string
+  ) => Promise<{ success: boolean; verificationCode?: string; error?: string }>;
+  confirmStockTransfer: (
+    transferId: string,
+    code: string
+  ) => Promise<{ success: boolean; error?: string; remainingAttempts?: number }>;
+  rejectStockTransfer: (transferId: string, reason?: string) => Promise<void>;
+  cancelStockTransfer: (transferId: string, reason?: string) => Promise<{ success: boolean; error?: string }>;
   deductStockForItems: (
     items: Array<{ productId: string; quantity: number; unitPrice?: number }>,
     warehouseId?: string,
@@ -834,6 +855,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   useEffect(() => {
     stockMovementsRef.current = stockMovements;
   }, [stockMovements]);
+
+  // Transferências entre Lojas com Código de Aceitação
+  const [stockTransfers, setStockTransfers] = useState<StockTransfer[]>(() => {
+    const loaded = loadFromStorage<StockTransfer[]>('stockTransfers', []);
+    return Array.isArray(loaded) ? loaded : [];
+  });
+  const stockTransfersRef = useRef<StockTransfer[]>(stockTransfers);
+  useEffect(() => {
+    stockTransfersRef.current = stockTransfers;
+  }, [stockTransfers]);
 
   // POS & Turnos
   const [shiftTypes, setShiftTypes] = useState<ShiftType[]>(() => {
@@ -4137,6 +4168,443 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     sound.playSuccessChime();
   };
 
+  // 1. SOLICITAÇÃO: Destino pede à Origem (Status: PENDENTE)
+  const requestStockTransfer = async (
+    originWarehouseId: string,
+    destinationWarehouseId: string,
+    items: Array<{ productId: string; quantity: number }>,
+    notes?: string
+  ): Promise<StockTransfer> => {
+    const compId = currentCompanyRef.current?.id || currentCompany?.id || 'comp-1';
+    const year = new Date().getFullYear();
+    const count = stockTransfersRef.current.length + 1;
+    const transferNumber = `TRF-${year}-${String(count).padStart(4, '0')}`;
+
+    const transferItems: StockTransferItem[] = items.map((it) => {
+      const prod = products.find((p) => p.id === it.productId);
+      return {
+        id: `item-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+        productId: it.productId,
+        productName: prod?.name || 'Artigo',
+        productSku: prod?.sku || '',
+        quantityRequested: it.quantity,
+        quantityApproved: it.quantity,
+        unitCost: prod?.costPrice || 0,
+      };
+    });
+
+    const newTransfer: StockTransfer = {
+      id: `trf-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+      companyId: compId,
+      transferNumber,
+      originWarehouseId,
+      destinationWarehouseId,
+      status: 'PENDENTE',
+      items: transferItems,
+      failedAttempts: 0,
+      maxAttempts: 5,
+      notes: notes || '',
+      requestedBy: currentUser?.id || 'user-1',
+      requestedByName: currentUser?.name || 'Operador',
+      createdAt: new Date().toISOString(),
+    };
+
+    const updated = [newTransfer, ...stockTransfersRef.current];
+    stockTransfersRef.current = updated;
+    setStockTransfers(updated);
+    saveToStorage('stockTransfers', updated);
+
+    emitEvent('Stock', 'stock.transfer.requested', {
+      transferNumber,
+      originWarehouseId,
+      destinationWarehouseId,
+      itemCount: items.length,
+    });
+    sound.playSuccessChime();
+    notify(`Solicitação de transferência ${transferNumber} criada com sucesso! Aguarda aprovação da Origem.`, 'success');
+    return newTransfer;
+  };
+
+  // 2. APROVAÇÃO: Origem analisa, abate o stock e gera Código de 6 dígitos (Status: APROVADO)
+  const approveStockTransfer = async (
+    transferId: string,
+    approvedItems?: Array<{ productId: string; quantity: number }>,
+    notes?: string
+  ): Promise<{ success: boolean; verificationCode?: string; error?: string }> => {
+    const transfer = stockTransfersRef.current.find((t) => t.id === transferId);
+    if (!transfer) return { success: false, error: 'Transferência não encontrada.' };
+    if (transfer.status !== 'PENDENTE') return { success: false, error: `Estado inválido para aprovação: ${transfer.status}` };
+
+    // Controlo de Acessos Rigoroso (Estilo Alidata ERP) - Validação na Origem:
+    const originWh = warehouses.find((w) => w.id === transfer.originWarehouseId);
+    const userRole = currentUser?.role;
+    const isGlobalAdmin = userRole === 'admin' || userRole === 'superadmin';
+
+    if (!isGlobalAdmin && currentUser) {
+      const allowedWarehouseIds = [currentUser.warehouseId, ...(currentUser.warehouseIds || [])].filter(Boolean);
+      const allowedStoreIds = [currentUser.storeId, ...(currentUser.storeIds || [])].filter(Boolean);
+
+      const hasOriginWhAccess = allowedWarehouseIds.includes(transfer.originWarehouseId);
+      const hasOriginStoreAccess = originWh?.storeId && allowedStoreIds.includes(originWh.storeId);
+
+      if ((allowedWarehouseIds.length > 0 || allowedStoreIds.length > 0) && !hasOriginWhAccess && !hasOriginStoreAccess) {
+        const errMsg = 'Acesso Negado: O utilizador não tem autorização para expedir stock do armazém de origem deste pedido.';
+        notify(errMsg, 'error');
+        sound.playError();
+        return { success: false, error: errMsg };
+      }
+    }
+
+    const compId = currentCompanyRef.current?.id || currentCompany?.id || 'comp-1';
+
+    // Validar disponibilidade de stock no armazém de origem
+    const currentStockList = (stockRef.current && stockRef.current.length > 0 ? stockRef.current : stock).map(
+      (s) => ({
+        ...s,
+        quantity: Number(s.quantity) || 0,
+        reserved: Number(s.reserved) || 0,
+        avgCost: Number(s.avgCost) || 0,
+      })
+    );
+
+    const itemsToApprove = approvedItems || transfer.items.map((i) => ({ productId: i.productId, quantity: i.quantityRequested }));
+
+    for (const item of itemsToApprove) {
+      const originStock = currentStockList.find(
+        (s) => s.productId === item.productId && s.warehouseId === transfer.originWarehouseId
+      );
+      const available = originStock ? Math.max(0, originStock.quantity - originStock.reserved) : 0;
+      if (available < item.quantity) {
+        const prod = products.find((p) => p.id === item.productId);
+        const errMsg = `Stock insuficiente no armazém de origem para "${prod?.name || item.productId}". Solicitado: ${item.quantity}, Disponível: ${available}`;
+        notify(errMsg, 'error');
+        return { success: false, error: errMsg };
+      }
+    }
+
+    // Abater stock físico no armazém de origem
+    const updatedStockItems: StockItem[] = [];
+    for (const item of itemsToApprove) {
+      const fromItem = currentStockList.find(
+        (s) => s.productId === item.productId && s.warehouseId === transfer.originWarehouseId
+      );
+      if (fromItem) {
+        fromItem.quantity = Math.max(0, fromItem.quantity - item.quantity);
+        updatedStockItems.push({ ...fromItem });
+      }
+
+      const prod = products.find((p) => p.id === item.productId);
+      recordStockMovement({
+        companyId: compId,
+        type: 'transferencia',
+        productId: item.productId,
+        originWarehouseId: transfer.originWarehouseId,
+        targetWarehouseId: transfer.destinationWarehouseId,
+        quantity: item.quantity,
+        unitCost: prod?.costPrice || 0,
+        referenceDoc: transfer.transferNumber,
+        reason: `Saída p/ Transferência ${transfer.transferNumber} (Aprovado e Expedido)`,
+        operatorId: currentUser?.id || 'user-1',
+      });
+    }
+
+    stockRef.current = currentStockList;
+    setStock(currentStockList);
+    saveToStorage('stock', currentStockList);
+    offlineDB.cacheStock(currentStockList).catch(() => {});
+    if (updatedStockItems.length > 0) {
+      pushBatchRecordsToSupabase('stock', 'upsert', updatedStockItems);
+    }
+
+    // Gerar Código de 6 Dígitos Único e expiração em 7 dias (168h)
+    const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
+    const verificationExpiresAt = new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString();
+
+    const updatedTransfers = stockTransfersRef.current.map((t) => {
+      if (t.id !== transferId) return t;
+      return {
+        ...t,
+        status: 'APROVADO' as StockTransferStatus,
+        verificationCode,
+        verificationExpiresAt,
+        approvedBy: currentUser?.id || 'user-1',
+        approvedByName: currentUser?.name || 'Operador',
+        approvedByIp: '192.168.1.45 (Terminal Origem)',
+        approvedAt: new Date().toISOString(),
+        notes: notes ? `${t.notes ? t.notes + ' | ' : ''}${notes}` : t.notes,
+        items: t.items.map((it) => {
+          const match = itemsToApprove.find((a) => a.productId === it.productId);
+          return match ? { ...it, quantityApproved: match.quantity } : it;
+        }),
+      };
+    });
+
+    stockTransfersRef.current = updatedTransfers;
+    setStockTransfers(updatedTransfers);
+    saveToStorage('stockTransfers', updatedTransfers);
+
+    emitEvent('Stock', 'stock.transfer.approved', {
+      transferNumber: transfer.transferNumber,
+      verificationCode,
+    });
+    sound.playSuccessChime();
+    notify(`Transferência ${transfer.transferNumber} aprovada! Código de Aceitação: ${verificationCode}`, 'success');
+
+    return { success: true, verificationCode };
+  };
+
+  // 3 & 4. CONFIRMAÇÃO E DESCARGA: Destino insere Código de Aceitação (Status: CONCLUIDO)
+  const confirmStockTransfer = async (
+    transferId: string,
+    code: string
+  ): Promise<{ success: boolean; error?: string; remainingAttempts?: number }> => {
+    const transfer = stockTransfersRef.current.find((t) => t.id === transferId);
+    if (!transfer) return { success: false, error: 'Transferência não encontrada.' };
+    if (transfer.status !== 'APROVADO') return { success: false, error: `Transferência não está pronta para descarga (${transfer.status}).` };
+
+    // Controlo de Acessos Rigoroso (Estilo Alidata ERP) - Validação no Destino:
+    const destWh = warehouses.find((w) => w.id === transfer.destinationWarehouseId);
+    const userRole = currentUser?.role;
+    const isGlobalAdmin = userRole === 'admin' || userRole === 'superadmin';
+
+    if (!isGlobalAdmin && currentUser) {
+      const allowedWarehouseIds = [currentUser.warehouseId, ...(currentUser.warehouseIds || [])].filter(Boolean);
+      const allowedStoreIds = [currentUser.storeId, ...(currentUser.storeIds || [])].filter(Boolean);
+
+      const hasDestWhAccess = allowedWarehouseIds.includes(transfer.destinationWarehouseId);
+      const hasDestStoreAccess = destWh?.storeId && allowedStoreIds.includes(destWh.storeId);
+
+      if ((allowedWarehouseIds.length > 0 || allowedStoreIds.length > 0) && !hasDestWhAccess && !hasDestStoreAccess) {
+        const errMsg = 'Acesso Negado: O utilizador não pertence à loja de destino deste pedido.';
+        notify(errMsg, 'error');
+        sound.playError();
+        return { success: false, error: errMsg };
+      }
+    }
+
+    const compId = currentCompanyRef.current?.id || currentCompany?.id || 'comp-1';
+
+    // 1. Validar Expiração
+    if (transfer.verificationExpiresAt && new Date() > new Date(transfer.verificationExpiresAt)) {
+      const updated = stockTransfersRef.current.map((t) =>
+        t.id === transferId ? { ...t, status: 'EXPIRADO' as StockTransferStatus } : t
+      );
+      stockTransfersRef.current = updated;
+      setStockTransfers(updated);
+      saveToStorage('stockTransfers', updated);
+      return { success: false, error: 'O código de aceitação expirou (limite de 7 dias excedido).' };
+    }
+
+    // 2. Validar Limite de Tentativas
+    if (transfer.failedAttempts >= transfer.maxAttempts) {
+      return { success: false, error: 'Número máximo de tentativas excedido. Transferência bloqueada.' };
+    }
+
+    // 3. Validar Código
+    const cleanInput = (code || '').trim().replace(/\s+/g, '');
+    const cleanStored = (transfer.verificationCode || '').trim().replace(/\s+/g, '');
+
+    if (cleanInput !== cleanStored) {
+      const newFailed = transfer.failedAttempts + 1;
+      const remaining = Math.max(0, transfer.maxAttempts - newFailed);
+      const isNowBlocked = remaining === 0;
+
+      const updated = stockTransfersRef.current.map((t) =>
+        t.id === transferId
+          ? {
+              ...t,
+              failedAttempts: newFailed,
+              status: isNowBlocked ? ('EXPIRADO' as StockTransferStatus) : t.status,
+            }
+          : t
+      );
+      stockTransfersRef.current = updated;
+      setStockTransfers(updated);
+      saveToStorage('stockTransfers', updated);
+
+      const errorMsg = isNowBlocked
+        ? 'Código incorreto! Limite máximo de tentativas esgotado. Pedido bloqueado.'
+        : `Código incorreto. Restam ${remaining} tentativa(s).`;
+      notify(errorMsg, 'error');
+      sound.playError();
+      return { success: false, error: errorMsg, remainingAttempts: remaining };
+    }
+
+    // 4. Se o Código for Válido -> Adicionar Stock ao Armazém de Destino!
+    const currentStockList = (stockRef.current && stockRef.current.length > 0 ? stockRef.current : stock).map(
+      (s) => ({
+        ...s,
+        quantity: Number(s.quantity) || 0,
+        reserved: Number(s.reserved) || 0,
+        avgCost: Number(s.avgCost) || 0,
+      })
+    );
+
+    const updatedStockItems: StockItem[] = [];
+
+    for (const item of transfer.items) {
+      const qty = item.quantityApproved !== undefined ? item.quantityApproved : item.quantityRequested;
+      const toItem = currentStockList.find(
+        (s) => s.productId === item.productId && s.warehouseId === transfer.destinationWarehouseId
+      );
+
+      const prod = products.find((p) => p.id === item.productId);
+
+      if (toItem) {
+        toItem.quantity += qty;
+        toItem.companyId = toItem.companyId || compId;
+        updatedStockItems.push({ ...toItem });
+      } else {
+        const newTo: StockItem = {
+          id: `stk-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+          companyId: compId,
+          productId: item.productId,
+          warehouseId: transfer.destinationWarehouseId,
+          quantity: qty,
+          reserved: 0,
+          avgCost: prod?.costPrice || 0,
+        };
+        currentStockList.push(newTo);
+        updatedStockItems.push(newTo);
+      }
+
+      recordStockMovement({
+        companyId: compId,
+        type: 'entrada',
+        productId: item.productId,
+        originWarehouseId: transfer.originWarehouseId,
+        targetWarehouseId: transfer.destinationWarehouseId,
+        quantity: qty,
+        unitCost: prod?.costPrice || 0,
+        referenceDoc: transfer.transferNumber,
+        reason: `Entrada por Transferência ${transfer.transferNumber} (Código Validado)`,
+        operatorId: currentUser?.id || 'user-1',
+      });
+    }
+
+    stockRef.current = currentStockList;
+    setStock(currentStockList);
+    saveToStorage('stock', currentStockList);
+    offlineDB.cacheStock(currentStockList).catch(() => {});
+    if (updatedStockItems.length > 0) {
+      pushBatchRecordsToSupabase('stock', 'upsert', updatedStockItems);
+    }
+
+    // 5. Concluir a Transferência
+    const updatedTransfers = stockTransfersRef.current.map((t) => {
+      if (t.id !== transferId) return t;
+      return {
+        ...t,
+        status: 'CONCLUIDO' as StockTransferStatus,
+        receivedBy: currentUser?.id || 'user-1',
+        receivedByName: currentUser?.name || 'Operador',
+        receivedByIp: '192.168.2.112 (Terminal Destino)',
+        completedAt: new Date().toISOString(),
+      };
+    });
+
+    stockTransfersRef.current = updatedTransfers;
+    setStockTransfers(updatedTransfers);
+    saveToStorage('stockTransfers', updatedTransfers);
+
+    emitEvent('Stock', 'stock.transfer.completed', {
+      transferNumber: transfer.transferNumber,
+      destinationWarehouseId: transfer.destinationWarehouseId,
+    });
+    sound.playSuccessChime();
+    notify(`Transferência ${transfer.transferNumber} concluída! Stock creditado na loja destino com sucesso.`, 'success');
+
+    return { success: true };
+  };
+
+  // 5. REJEIÇÃO: Origem rejeita a solicitação pendente
+  const rejectStockTransfer = async (transferId: string, reason?: string) => {
+    const updated = stockTransfersRef.current.map((t) => {
+      if (t.id !== transferId) return t;
+      return {
+        ...t,
+        status: 'REJEITADO' as StockTransferStatus,
+        rejectionReason: reason || 'Rejeitado pelo operador de origem',
+        rejectedAt: new Date().toISOString(),
+      };
+    });
+    stockTransfersRef.current = updated;
+    setStockTransfers(updated);
+    saveToStorage('stockTransfers', updated);
+    notify(`Transferência rejeitada com sucesso.`, 'info');
+  };
+
+  // 6. CANCELAMENTO COM ESTORNO DE STOCK (Se já estava APROVADO)
+  const cancelStockTransfer = async (transferId: string, reason?: string): Promise<{ success: boolean; error?: string }> => {
+    const transfer = stockTransfersRef.current.find((t) => t.id === transferId);
+    if (!transfer) return { success: false, error: 'Transferência não encontrada.' };
+
+    const compId = currentCompanyRef.current?.id || currentCompany?.id || 'comp-1';
+
+    // Se estava APROVADO, o stock foi retirado da origem -> ESTORNAR!
+    if (transfer.status === 'APROVADO') {
+      const currentStockList = (stockRef.current && stockRef.current.length > 0 ? stockRef.current : stock).map(
+        (s) => ({
+          ...s,
+          quantity: Number(s.quantity) || 0,
+          reserved: Number(s.reserved) || 0,
+          avgCost: Number(s.avgCost) || 0,
+        })
+      );
+
+      const updatedStockItems: StockItem[] = [];
+
+      for (const item of transfer.items) {
+        const qty = item.quantityApproved !== undefined ? item.quantityApproved : item.quantityRequested;
+        const fromItem = currentStockList.find(
+          (s) => s.productId === item.productId && s.warehouseId === transfer.originWarehouseId
+        );
+        if (fromItem) {
+          fromItem.quantity += qty;
+          updatedStockItems.push({ ...fromItem });
+        }
+
+        const prod = products.find((p) => p.id === item.productId);
+        recordStockMovement({
+          companyId: compId,
+          type: 'entrada',
+          productId: item.productId,
+          originWarehouseId: transfer.destinationWarehouseId,
+          targetWarehouseId: transfer.originWarehouseId,
+          quantity: qty,
+          unitCost: prod?.costPrice || 0,
+          referenceDoc: transfer.transferNumber,
+          reason: `Estorno de Transferência ${transfer.transferNumber} (Cancelada)`,
+          operatorId: currentUser?.id || 'user-1',
+        });
+      }
+
+      stockRef.current = currentStockList;
+      setStock(currentStockList);
+      saveToStorage('stock', currentStockList);
+      offlineDB.cacheStock(currentStockList).catch(() => {});
+      if (updatedStockItems.length > 0) {
+        pushBatchRecordsToSupabase('stock', 'upsert', updatedStockItems);
+      }
+    }
+
+    const updated = stockTransfersRef.current.map((t) => {
+      if (t.id !== transferId) return t;
+      return {
+        ...t,
+        status: 'CANCELADO' as StockTransferStatus,
+        rejectionReason: reason || 'Cancelado',
+        cancelledAt: new Date().toISOString(),
+      };
+    });
+
+    stockTransfersRef.current = updated;
+    setStockTransfers(updated);
+    saveToStorage('stockTransfers', updated);
+    notify(`Transferência ${transfer.transferNumber} cancelada${transfer.status === 'APROVADO' ? ' e stock devolvido à origem' : ''}.`, 'info');
+    return { success: true };
+  };
+
   const deductStockForItems = (
     items: Array<{ productId: string; quantity: number; unitPrice?: number }>,
     warehouseId?: string,
@@ -4621,8 +5089,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const noteText = typeof notesOrCounted === 'string' ? notesOrCounted : (notes || '');
     const expectedCash =
       activeShift.initialCash +
-      activeShift.totalCash +
-      activeShift.suprimentoTotal -
+      activeShift.totalCash -
       activeShift.sangriaTotal;
     const diff = counted !== undefined ? counted - expectedCash : 0;
 
@@ -6806,6 +7273,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
   }, [stockMovements, scopedProducts, currentCompany?.id]);
 
+  const scopedStockTransfers = useMemo(() => {
+    const compId = currentCompany?.id || 'comp-1';
+    return stockTransfers.filter((t) => !t.companyId || t.companyId === compId);
+  }, [stockTransfers, currentCompany?.id]);
+
   const scopedCustomers = useMemo(() => {
     const compId = currentCompany?.id || 'comp-1';
     return customers.filter((c) => c.companyId === compId);
@@ -7046,6 +7518,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         deleteStockMovement,
         createStockAdjustment,
         transferStock,
+        stockTransfers: scopedStockTransfers,
+        requestStockTransfer,
+        approveStockTransfer,
+        confirmStockTransfer,
+        rejectStockTransfer,
+        cancelStockTransfer,
         deductStockForItems,
         replenishStockForItems,
         shiftTypes,
