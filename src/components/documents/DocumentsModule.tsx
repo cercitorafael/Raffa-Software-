@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
-import { Sale, SaleItem, OmnichannelOrder, OmnichannelOrderStatus, PaymentMethod, InvoiceType } from '../../types';
+import { Sale, SaleItem, OmnichannelOrder, OmnichannelOrderStatus, PaymentMethod, InvoiceType, InvoiceBankAccount, InvoiceTemplateConfig } from '../../types';
 import {
   FileText,
   FileSpreadsheet,
@@ -53,6 +53,7 @@ import {
   Ban,
   ArrowLeft,
   Percent,
+  Landmark,
 } from 'lucide-react';
 import { sound } from '../../utils/audio';
 import {
@@ -69,6 +70,8 @@ import {
   canDeleteDocument,
   isQuoteOrEstimate,
   isTransportDocument,
+  POPULAR_BANKS_PRESETS,
+  getTemplateBankAccounts,
 } from '../../utils/documentUtils';
 import { defaultInvoiceTemplates } from '../../mockData';
 import { generateFiscalHash } from '../../utils/crypto';
@@ -146,6 +149,113 @@ export const DocumentsModule: React.FC = () => {
       setPreviewTemplateId(currentCompany.activeInvoiceTemplateId);
     }
   }, [selectedDocForPreview, currentCompany.activeInvoiceTemplateId]);
+
+  // Quick Bank Management in Invoice Confirmation Modal
+  const [showModalBankManager, setShowModalBankManager] = useState(false);
+  const [newBankName, setNewBankName] = useState('');
+  const [newBankIban, setNewBankIban] = useState('');
+  const [newBankAccountNum, setNewBankAccountNum] = useState('');
+
+  const handleAddBankToPreviewTemplate = (
+    templateToUpdate: InvoiceTemplateConfig,
+    preset?: { name: string; defaultAccount?: string; defaultIban?: string }
+  ) => {
+    const bankName = preset?.name || newBankName.trim();
+    const iban = preset?.defaultIban || newBankIban.trim();
+    const accountNum = preset?.defaultAccount || newBankAccountNum.trim();
+
+    if (!bankName) {
+      notify('Por favor informe o nome do banco.', 'warning');
+      return;
+    }
+
+    const currentBanks = getTemplateBankAccounts(templateToUpdate, currentCompany);
+    const newBank: InvoiceBankAccount = {
+      id: `bank-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      bankName,
+      iban: iban || '000000000000000000000',
+      accountNumber: accountNum || '',
+      isPrimary: currentBanks.length === 0,
+    };
+
+    const updatedBanks = [...currentBanks, newBank];
+    const primary = updatedBanks.find((b) => b.isPrimary) || updatedBanks[0];
+
+    const updatedTemplate: InvoiceTemplateConfig = {
+      ...templateToUpdate,
+      bankAccounts: updatedBanks,
+      bankName: primary?.bankName || '',
+      bankIban: primary?.iban || '',
+      accountNumber: primary?.accountNumber || '',
+      secondaryBankName: updatedBanks[1]?.bankName || '',
+      secondaryBankIban: updatedBanks[1]?.iban || '',
+      secondaryAccountNumber: updatedBanks[1]?.accountNumber || '',
+      tertiaryBankName: updatedBanks[2]?.bankName || '',
+      tertiaryBankIban: updatedBanks[2]?.iban || '',
+      tertiaryAccountNumber: updatedBanks[2]?.accountNumber || '',
+    };
+
+    const companyTemplates =
+      currentCompany.invoiceTemplates && currentCompany.invoiceTemplates.length > 0
+        ? currentCompany.invoiceTemplates
+        : defaultInvoiceTemplates;
+
+    const newTemplatesList = companyTemplates.map((t) =>
+      t.id === updatedTemplate.id ? updatedTemplate : t
+    );
+
+    if (!newTemplatesList.some((t) => t.id === updatedTemplate.id)) {
+      newTemplatesList.push(updatedTemplate);
+    }
+
+    updateCompany({ invoiceTemplates: newTemplatesList });
+    setNewBankName('');
+    setNewBankIban('');
+    setNewBankAccountNum('');
+    notify(`Banco "${bankName}" adicionado à confirmação do modelo de fatura!`, 'success');
+  };
+
+  const handleRemoveBankFromPreviewTemplate = (
+    templateToUpdate: InvoiceTemplateConfig,
+    bankId: string
+  ) => {
+    const currentBanks = getTemplateBankAccounts(templateToUpdate, currentCompany);
+    if (currentBanks.length <= 1) {
+      notify('O modelo deve manter pelo menos uma conta bancária.', 'warning');
+      return;
+    }
+    const updatedBanks = currentBanks.filter((b) => b.id !== bankId);
+    if (!updatedBanks.some((b) => b.isPrimary) && updatedBanks.length > 0) {
+      updatedBanks[0].isPrimary = true;
+    }
+    const primary = updatedBanks.find((b) => b.isPrimary) || updatedBanks[0];
+
+    const updatedTemplate: InvoiceTemplateConfig = {
+      ...templateToUpdate,
+      bankAccounts: updatedBanks,
+      bankName: primary?.bankName || '',
+      bankIban: primary?.iban || '',
+      accountNumber: primary?.accountNumber || '',
+      secondaryBankName: updatedBanks[1]?.bankName || '',
+      secondaryBankIban: updatedBanks[1]?.iban || '',
+      secondaryAccountNumber: updatedBanks[1]?.accountNumber || '',
+      tertiaryBankName: updatedBanks[2]?.bankName || '',
+      tertiaryBankIban: updatedBanks[2]?.iban || '',
+      tertiaryAccountNumber: updatedBanks[2]?.accountNumber || '',
+    };
+
+    const companyTemplates =
+      currentCompany.invoiceTemplates && currentCompany.invoiceTemplates.length > 0
+        ? currentCompany.invoiceTemplates
+        : defaultInvoiceTemplates;
+
+    const newTemplatesList = companyTemplates.map((t) =>
+      t.id === updatedTemplate.id ? updatedTemplate : t
+    );
+
+    updateCompany({ invoiceTemplates: newTemplatesList });
+    notify('Banco removido do modelo.', 'info');
+  };
 
   if (!canReadDocs) {
     return (
@@ -2529,11 +2639,12 @@ export const DocumentsModule: React.FC = () => {
           });
         }
         const taxRows = Array.from(taxSummaryMap.entries());
+        const previewBankAccounts = getTemplateBankAccounts(previewTmpl, currentCompany);
 
         return (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-xs animate-in fade-in duration-200">
             <div className="bg-[#141414] border border-[#262626] rounded-2xl w-full max-w-3xl shadow-2xl p-6 text-[#e5e5e5] space-y-4 max-h-[92vh] overflow-y-auto">
-              {/* Modal Header with Template Switcher */}
+              {/* Modal Header with Template Switcher & Bank Manager Trigger */}
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-[#262626] pb-3">
                 <div className="flex items-center space-x-2.5">
                   <FileCheck className="w-5 h-5 text-[#c5a47e]" />
@@ -2547,7 +2658,7 @@ export const DocumentsModule: React.FC = () => {
                   </div>
                 </div>
 
-                <div className="flex items-center space-x-2">
+                <div className="flex items-center flex-wrap gap-2">
                   <div className="flex items-center space-x-1.5 bg-[#1a1a1a] px-2.5 py-1 rounded-lg border border-[#333]">
                     <span className="text-[11px] text-neutral-400">Modelo:</span>
                     <select
@@ -2562,6 +2673,24 @@ export const DocumentsModule: React.FC = () => {
                       ))}
                     </select>
                   </div>
+
+                  {/* Button to add/manage banks right in this invoice confirmation modal */}
+                  <button
+                    type="button"
+                    onClick={() => setShowModalBankManager(!showModalBankManager)}
+                    className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold border transition-all cursor-pointer ${
+                      showModalBankManager
+                        ? 'bg-[#c5a47e] text-neutral-950 border-[#c5a47e]'
+                        : 'bg-[#1a1a1a] hover:bg-[#252525] text-neutral-200 border-[#333] hover:border-[#c5a47e]/60'
+                    }`}
+                    title="Adicionar mais bancos a este modelo de fatura"
+                  >
+                    <Landmark className="w-3.5 h-3.5 text-[#c5a47e]" />
+                    <span>+ Banco</span>
+                    <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-black/40 text-neutral-300 ml-0.5">
+                      {previewBankAccounts.length}
+                    </span>
+                  </button>
 
                   {currentCompany.activeInvoiceTemplateId !== previewTmpl.id && (
                     <button
@@ -2591,6 +2720,150 @@ export const DocumentsModule: React.FC = () => {
                   </button>
                 </div>
               </div>
+
+              {/* Quick Multi-Bank Configuration Drawer inside confirmation modal */}
+              {showModalBankManager && (
+                <div className="p-3.5 bg-[#0f0f0f] border border-[#c5a47e]/50 rounded-xl shadow-lg space-y-3 animate-in fade-in slide-in-from-top-2 duration-150">
+                  <div className="flex items-center justify-between pb-2 border-b border-[#262626]">
+                    <div className="flex items-center gap-2">
+                      <div className="p-1 rounded bg-[#1a1a1a] text-[#c5a47e]">
+                        <Landmark className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <span className="text-xs font-bold text-white block">
+                          Adicionar Mais Bancos no Modelo de Fatura
+                        </span>
+                        <span className="text-[10px] text-neutral-400">
+                          Modelo ativo: <strong className="text-neutral-200">{previewTmpl.name}</strong> &bull; Os bancos adicionados aparecem de imediato no rodapé da fatura
+                        </span>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowModalBankManager(false)}
+                      className="text-neutral-400 hover:text-white text-xs px-2 py-0.5 rounded hover:bg-neutral-800"
+                    >
+                      Fechar
+                    </button>
+                  </div>
+
+                  {/* 1-Click Popular Bank Presets */}
+                  <div>
+                    <span className="text-[10px] text-neutral-400 block mb-1">
+                      Adicionar banco em 1 clique:
+                    </span>
+                    <div className="flex flex-wrap gap-1.5">
+                      {POPULAR_BANKS_PRESETS.map((preset) => {
+                        const isAdded = previewBankAccounts.some(
+                          (b) => b.bankName.toLowerCase() === preset.name.toLowerCase()
+                        );
+                        return (
+                          <button
+                            key={preset.name}
+                            type="button"
+                            onClick={() => handleAddBankToPreviewTemplate(previewTmpl, preset)}
+                            disabled={isAdded}
+                            className={`text-[10px] px-2 py-0.5 rounded border transition-colors flex items-center gap-1 ${
+                              isAdded
+                                ? 'bg-neutral-900 border-neutral-800 text-neutral-600 cursor-not-allowed'
+                                : 'bg-[#1a1a1a] hover:bg-[#252525] border-[#333] hover:border-[#c5a47e] text-neutral-200 cursor-pointer'
+                            }`}
+                          >
+                            <Plus className="w-2.5 h-2.5" />
+                            <span>{preset.name.split('(')[0].trim()}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Custom Bank Input Row */}
+                  <div className="grid grid-cols-1 sm:grid-cols-4 gap-2 bg-[#141414] p-2.5 rounded-lg border border-[#262626]">
+                    <div className="sm:col-span-1">
+                      <label className="text-[10px] text-neutral-400 block mb-0.5">Nome do Banco</label>
+                      <input
+                        type="text"
+                        placeholder="Ex: Standard Bank, Moza..."
+                        value={newBankName}
+                        onChange={(e) => setNewBankName(e.target.value)}
+                        className="w-full px-2 py-1 bg-[#1a1a1a] border border-[#333] rounded text-xs text-white placeholder-neutral-500 focus:border-[#c5a47e]"
+                      />
+                    </div>
+                    <div className="sm:col-span-1">
+                      <label className="text-[10px] text-neutral-400 block mb-0.5">NIB / IBAN</label>
+                      <input
+                        type="text"
+                        placeholder="Ex: 000300000928374110298"
+                        value={newBankIban}
+                        onChange={(e) => setNewBankIban(e.target.value)}
+                        className="w-full px-2 py-1 bg-[#1a1a1a] border border-[#333] rounded text-xs font-mono text-white placeholder-neutral-500 focus:border-[#c5a47e]"
+                      />
+                    </div>
+                    <div className="sm:col-span-1">
+                      <label className="text-[10px] text-neutral-400 block mb-0.5">Nº Conta (Opcional)</label>
+                      <input
+                        type="text"
+                        placeholder="Ex: 9283741102"
+                        value={newBankAccountNum}
+                        onChange={(e) => setNewBankAccountNum(e.target.value)}
+                        className="w-full px-2 py-1 bg-[#1a1a1a] border border-[#333] rounded text-xs font-mono text-white placeholder-neutral-500 focus:border-[#c5a47e]"
+                      />
+                    </div>
+                    <div className="sm:col-span-1 flex items-end">
+                      <button
+                        type="button"
+                        onClick={() => handleAddBankToPreviewTemplate(previewTmpl)}
+                        className="w-full py-1.5 px-3 bg-[#c5a47e] hover:bg-[#b5946e] text-neutral-950 font-bold text-xs rounded transition-colors flex items-center justify-center gap-1 cursor-pointer"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>Adicionar</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* List of currently active banks on template */}
+                  <div>
+                    <span className="text-[10px] text-neutral-400 block mb-1">
+                      Bancos activos neste modelo ({previewBankAccounts.length}):
+                    </span>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                      {previewBankAccounts.map((b, idx) => (
+                        <div
+                          key={b.id || idx}
+                          className="flex items-center justify-between p-2 rounded bg-[#161616] border border-[#2b2b2b] text-xs"
+                        >
+                          <div className="truncate mr-2">
+                            <div className="font-bold text-white flex items-center gap-1 truncate">
+                              <span>{b.bankName}</span>
+                              {b.isPrimary && (
+                                <span className="text-[9px] text-[#c5a47e] bg-[#c5a47e]/10 px-1 rounded font-normal">
+                                  Principal
+                                </span>
+                              )}
+                            </div>
+                            <div className="font-mono text-[10px] text-neutral-400 truncate">
+                              NIB: {b.iban}
+                            </div>
+                            {b.accountNumber && (
+                              <div className="font-mono text-[9px] text-neutral-500 truncate">
+                                Conta: {b.accountNumber}
+                              </div>
+                            )}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveBankFromPreviewTemplate(previewTmpl, b.id)}
+                            className="p-1 rounded text-neutral-500 hover:text-rose-400 hover:bg-neutral-800 transition-colors cursor-pointer"
+                            title="Remover banco do modelo"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Document Paper Simulation Container (White Paper Authentic Print Layout) */}
               <div className="bg-neutral-200 p-4 rounded-xl flex items-center justify-center overflow-x-auto">
@@ -2749,11 +3022,26 @@ export const DocumentsModule: React.FC = () => {
                           </div>
                         )}
 
-                        {/* Bank info */}
-                        {(previewTmpl.bankIban || previewTmpl.bankName) && (
-                          <div className="bg-neutral-50 p-1 border border-neutral-200 rounded text-[7.5px] font-mono leading-tight">
-                            <span className="font-bold text-neutral-900">Coordenadas Bancárias: </span>
-                            {previewTmpl.bankName || 'Millennium BIM (Moçambique)'} | IBAN: {previewTmpl.bankIban || 'MZ59 0001 0000 1234 5678 9012 3'}
+                        {/* Bank info - Multiple Banks */}
+                        {previewBankAccounts.length > 0 && (
+                          <div className="bg-neutral-50 p-1.5 border border-neutral-200 rounded text-[7.5px] font-mono leading-tight space-y-1">
+                            <span className="font-bold text-neutral-900 block border-b border-neutral-200 pb-0.5">
+                              Coordenadas Bancárias para Pagamento:
+                            </span>
+                            {previewBankAccounts.map((b, idx) => (
+                              <div key={b.id || idx} className="flex justify-between items-center text-[7px]">
+                                <div>
+                                  <span className="font-bold text-neutral-950">{b.bankName}</span>
+                                  {b.accountNumber && (
+                                    <span className="text-neutral-600 ml-1">(Conta: {b.accountNumber})</span>
+                                  )}
+                                </div>
+                                <div className="text-right">
+                                  <span className="text-neutral-500">NIB: </span>
+                                  <span className="font-bold text-neutral-900">{b.iban}</span>
+                                </div>
+                              </div>
+                            ))}
                           </div>
                         )}
                       </div>
@@ -2856,9 +3144,20 @@ export const DocumentsModule: React.FC = () => {
                     {/* Totals */}
                     <div className="pt-2 border-t border-neutral-200 flex justify-between items-start text-[9px]">
                       <div className="space-y-0.5">
-                        {previewTmpl.bankIban && (
-                          <div className="font-mono text-[8px] text-neutral-600">
-                            <strong>IBAN:</strong> {previewTmpl.bankIban} ({previewTmpl.bankName || 'Banco'})
+                        {previewBankAccounts.length > 0 && (
+                          <div className="font-mono text-[8px] text-neutral-600 space-y-0.5">
+                            <strong className="text-neutral-900 block border-b border-neutral-200 pb-0.5">
+                              Coordenadas Bancárias:
+                            </strong>
+                            {previewBankAccounts.map((b, idx) => (
+                              <div key={b.id || idx} className="flex justify-between items-center text-[7.5px]">
+                                <span>
+                                  <strong>{b.bankName}</strong>{' '}
+                                  {b.accountNumber ? `(C/C: ${b.accountNumber})` : ''}:
+                                </span>
+                                <span className="font-bold text-neutral-900">{b.iban}</span>
+                              </div>
+                            ))}
                           </div>
                         )}
                         <div className="font-mono text-[8px] text-neutral-500">

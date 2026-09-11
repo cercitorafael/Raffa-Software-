@@ -83,6 +83,16 @@ export interface FiscalSeries {
   closingDate?: string;
 }
 
+export interface InvoiceBankAccount {
+  id: string;
+  bankName: string;
+  iban: string;
+  accountNumber?: string;
+  swiftBic?: string;
+  holderName?: string;
+  isPrimary?: boolean;
+}
+
 export interface InvoiceTemplateConfig {
   id: string;
   name: string; // e.g. "Clássico Executivo", "Moderno Minimalista", "Modelo Agro / Vendus MZ", "Talão Térmico POS 80mm"
@@ -102,6 +112,13 @@ export interface InvoiceTemplateConfig {
   bankName?: string;
   accountNumber?: string;
   swiftBic?: string;
+  bankAccounts?: InvoiceBankAccount[];
+  secondaryBankName?: string;
+  secondaryBankIban?: string;
+  secondaryAccountNumber?: string;
+  tertiaryBankName?: string;
+  tertiaryBankIban?: string;
+  tertiaryAccountNumber?: string;
   headerNotes?: string;
   footerNotes?: string;
   legalNotice?: string;

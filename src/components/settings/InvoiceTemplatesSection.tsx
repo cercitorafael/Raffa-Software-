@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
-import { InvoiceTemplateConfig, Sale } from '../../types';
+import { InvoiceTemplateConfig, Sale, InvoiceBankAccount } from '../../types';
 import { defaultInvoiceTemplates } from '../../mockData';
 import { formatCurrency } from '../../utils/crypto';
 import { printInvoiceDocument, downloadInvoicePdf } from '../../utils/print';
+import { POPULAR_BANKS_PRESETS, getTemplateBankAccounts } from '../../utils/documentUtils';
 import {
   FileSpreadsheet,
   Check,
@@ -24,7 +25,9 @@ import {
   Layers,
   HelpCircle,
   FileCheck,
-  Download
+  Download,
+  Landmark,
+  Star,
 } from 'lucide-react';
 
 export const InvoiceTemplatesSection: React.FC = () => {
@@ -76,6 +79,96 @@ export const InvoiceTemplatesSection: React.FC = () => {
   // Handle setting as active emission template
   const handleSetActiveTemplate = (id: string) => {
     handleSelectAndActivateTemplate(id);
+  };
+
+  // Multi-bank accounts resolution for current template
+  const currentBankAccounts: InvoiceBankAccount[] = getTemplateBankAccounts(templateForm, currentCompany);
+
+  const handleUpdateBankAccount = (index: number, field: keyof InvoiceBankAccount, value: any) => {
+    const updated = [...currentBankAccounts];
+    updated[index] = { ...updated[index], [field]: value };
+    const primary = updated.find((b) => b.isPrimary) || updated[0];
+    setTemplateForm({
+      ...templateForm,
+      bankAccounts: updated,
+      bankName: primary?.bankName || '',
+      bankIban: primary?.iban || '',
+      accountNumber: primary?.accountNumber || '',
+      secondaryBankName: updated[1]?.bankName || '',
+      secondaryBankIban: updated[1]?.iban || '',
+      secondaryAccountNumber: updated[1]?.accountNumber || '',
+      tertiaryBankName: updated[2]?.bankName || '',
+      tertiaryBankIban: updated[2]?.iban || '',
+      tertiaryAccountNumber: updated[2]?.accountNumber || '',
+    });
+  };
+
+  const handleAddBankAccount = (preset?: { name: string; defaultAccount?: string; defaultIban?: string }) => {
+    const newBank: InvoiceBankAccount = {
+      id: `bank-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      bankName: preset?.name || 'Novo Banco',
+      iban: preset?.defaultIban || '',
+      accountNumber: preset?.defaultAccount || '',
+      isPrimary: currentBankAccounts.length === 0,
+    };
+    const updated = [...currentBankAccounts, newBank];
+    const primary = updated.find((b) => b.isPrimary) || updated[0];
+    setTemplateForm({
+      ...templateForm,
+      bankAccounts: updated,
+      bankName: primary?.bankName || '',
+      bankIban: primary?.iban || '',
+      accountNumber: primary?.accountNumber || '',
+      secondaryBankName: updated[1]?.bankName || '',
+      secondaryBankIban: updated[1]?.iban || '',
+      secondaryAccountNumber: updated[1]?.accountNumber || '',
+      tertiaryBankName: updated[2]?.bankName || '',
+      tertiaryBankIban: updated[2]?.iban || '',
+      tertiaryAccountNumber: updated[2]?.accountNumber || '',
+    });
+    notify(`Banco "${newBank.bankName}" adicionado ao modelo!`, 'success');
+  };
+
+  const handleRemoveBankAccount = (index: number) => {
+    if (currentBankAccounts.length <= 1) {
+      notify('O modelo deve manter pelo menos uma conta bancária.', 'warning');
+      return;
+    }
+    const updated = currentBankAccounts.filter((_, i) => i !== index);
+    if (!updated.some((b) => b.isPrimary) && updated.length > 0) {
+      updated[0].isPrimary = true;
+    }
+    const primary = updated.find((b) => b.isPrimary) || updated[0];
+    setTemplateForm({
+      ...templateForm,
+      bankAccounts: updated,
+      bankName: primary?.bankName || '',
+      bankIban: primary?.iban || '',
+      accountNumber: primary?.accountNumber || '',
+      secondaryBankName: updated[1]?.bankName || '',
+      secondaryBankIban: updated[1]?.iban || '',
+      secondaryAccountNumber: updated[1]?.accountNumber || '',
+      tertiaryBankName: updated[2]?.bankName || '',
+      tertiaryBankIban: updated[2]?.iban || '',
+      tertiaryAccountNumber: updated[2]?.accountNumber || '',
+    });
+    notify('Banco removido do modelo.', 'info');
+  };
+
+  const handleSetPrimaryBank = (index: number) => {
+    const updated = currentBankAccounts.map((b, i) => ({
+      ...b,
+      isPrimary: i === index,
+    }));
+    const primary = updated[index];
+    setTemplateForm({
+      ...templateForm,
+      bankAccounts: updated,
+      bankName: primary?.bankName || '',
+      bankIban: primary?.iban || '',
+      accountNumber: primary?.accountNumber || '',
+    });
+    notify(`"${primary.bankName}" definido como conta bancária principal!`, 'success');
   };
 
   // Sample sale for live test printing & test downloading
@@ -437,32 +530,184 @@ export const InvoiceTemplatesSection: React.FC = () => {
               </div>
             </div>
 
-            {/* Bank Info */}
-            <div className="bg-[#0d0d0d] p-3.5 rounded-xl border border-[#242424] space-y-2">
-              <span className="font-semibold text-neutral-200 block">
-                Dados Bancários para Liquidação (Faturas a Crédito)
-              </span>
-              <div className="grid grid-cols-3 gap-2">
-                <div className="col-span-2">
-                  <label className="text-[10px] text-neutral-400 block mb-0.5">IBAN da Empresa</label>
-                  <input
-                    type="text"
-                    value={templateForm.bankIban || ''}
-                    onChange={(e) => setTemplateForm({ ...templateForm, bankIban: e.target.value })}
-                    placeholder="PT50 0000 0000 0000 0000 0000 0"
-                    className="w-full px-2.5 py-1.5 bg-[#141414] border border-[#262626] rounded-lg text-white font-mono text-[11px]"
-                  />
+            {/* Multi-Bank Info Manager */}
+            <div className="bg-[#0d0d0d] p-4 rounded-xl border border-[#242424] space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="p-1.5 rounded-lg bg-[#1a1a1a] border border-[#2a2a2a] text-[#c5a47e]">
+                    <Landmark className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <span className="font-semibold text-neutral-200 text-sm block">
+                      Coordenadas Bancárias na Fatura
+                    </span>
+                    <span className="text-[10px] text-neutral-400">
+                      Suporte a múltiplos bancos e carteiras móveis (M-Pesa, E-Mola)
+                    </span>
+                  </div>
                 </div>
-                <div>
-                  <label className="text-[10px] text-neutral-400 block mb-0.5">Nome do Banco</label>
-                  <input
-                    type="text"
-                    value={templateForm.bankName || ''}
-                    onChange={(e) => setTemplateForm({ ...templateForm, bankName: e.target.value })}
-                    placeholder="Ex: Millennium BCP"
-                    className="w-full px-2.5 py-1.5 bg-[#141414] border border-[#262626] rounded-lg text-white text-[11px]"
-                  />
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] bg-neutral-800 text-neutral-300 px-2 py-0.5 rounded-full border border-neutral-700">
+                    {currentBankAccounts.length} banco{currentBankAccounts.length > 1 ? 's' : ''}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => handleAddBankAccount()}
+                    className="flex items-center gap-1.5 px-2.5 py-1 bg-[#c5a47e] hover:bg-[#b3936d] text-black font-semibold text-xs rounded-lg transition-colors shadow-xs"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Adicionar Banco</span>
+                  </button>
                 </div>
+              </div>
+
+              {/* Quick Preset Buttons */}
+              <div>
+                <span className="text-[10px] text-neutral-500 block mb-1">Adicionar banco comum rapidamente:</span>
+                <div className="flex flex-wrap gap-1.5">
+                  {POPULAR_BANKS_PRESETS.map((preset) => {
+                    const alreadyAdded = currentBankAccounts.some(
+                      (b) => b.bankName.toLowerCase() === preset.name.toLowerCase()
+                    );
+                    return (
+                      <button
+                        key={preset.name}
+                        type="button"
+                        onClick={() => handleAddBankAccount(preset)}
+                        disabled={alreadyAdded}
+                        className={`text-[10px] px-2 py-0.5 rounded border transition-colors flex items-center gap-1 ${
+                          alreadyAdded
+                            ? 'bg-neutral-900 border-neutral-800 text-neutral-600 cursor-not-allowed'
+                            : 'bg-[#141414] hover:bg-[#1f1f1f] border-[#292929] hover:border-[#c5a47e]/50 text-neutral-300'
+                        }`}
+                      >
+                        <Plus className="w-2.5 h-2.5" />
+                        <span>{preset.name.split('(')[0].trim()}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Bank Accounts Cards */}
+              <div className="space-y-2.5 mt-2">
+                {currentBankAccounts.map((bank, index) => (
+                  <div
+                    key={bank.id || index}
+                    className={`p-3 rounded-lg border transition-all ${
+                      bank.isPrimary
+                        ? 'bg-[#15130e] border-[#c5a47e]/40 shadow-xs'
+                        : 'bg-[#121212] border-[#242424]'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between pb-2 mb-2 border-b border-[#242424]">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-bold text-neutral-300">
+                          Banco #{index + 1}
+                        </span>
+                        {bank.isPrimary ? (
+                          <span className="bg-[#c5a47e]/20 text-[#c5a47e] text-[10px] px-2 py-0.5 rounded font-bold flex items-center gap-1 border border-[#c5a47e]/30">
+                            <Star className="w-2.5 h-2.5 fill-current" />
+                            Principal no Documento
+                          </span>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => handleSetPrimaryBank(index)}
+                            className="text-[10px] text-neutral-400 hover:text-[#c5a47e] transition-colors flex items-center gap-1 underline"
+                          >
+                            Definir como Principal
+                          </button>
+                        )}
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveBankAccount(index)}
+                        className="text-neutral-500 hover:text-red-400 p-1 rounded hover:bg-neutral-800 transition-colors"
+                        title="Remover este banco"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <div>
+                        <label className="text-[10px] text-neutral-400 block mb-0.5">
+                          Nome do Banco / Entidade
+                        </label>
+                        <input
+                          type="text"
+                          value={bank.bankName}
+                          onChange={(e) => handleUpdateBankAccount(index, 'bankName', e.target.value)}
+                          placeholder="Ex: Millennium BIM, BCI, Standard Bank"
+                          className="w-full px-2.5 py-1.5 bg-[#171717] border border-[#2a2a2a] focus:border-[#c5a47e] rounded-md text-white text-xs"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="text-[10px] text-neutral-400 block mb-0.5">
+                          NIB / IBAN
+                        </label>
+                        <input
+                          type="text"
+                          value={bank.iban}
+                          onChange={(e) => handleUpdateBankAccount(index, 'iban', e.target.value)}
+                          placeholder="Ex: 000100000119090246657"
+                          className="w-full px-2.5 py-1.5 bg-[#171717] border border-[#2a2a2a] focus:border-[#c5a47e] rounded-md text-white font-mono text-xs"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="text-[10px] text-neutral-400 block mb-0.5">
+                          Nº de Conta Bancária (Opcional)
+                        </label>
+                        <input
+                          type="text"
+                          value={bank.accountNumber || ''}
+                          onChange={(e) => handleUpdateBankAccount(index, 'accountNumber', e.target.value)}
+                          placeholder="Ex: 1190902466"
+                          className="w-full px-2.5 py-1.5 bg-[#171717] border border-[#2a2a2a] focus:border-[#c5a47e] rounded-md text-neutral-300 font-mono text-xs"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="text-[10px] text-neutral-400 block mb-0.5">
+                          SWIFT / Titular (Opcional)
+                        </label>
+                        <input
+                          type="text"
+                          value={bank.swiftBic || bank.holderName || ''}
+                          onChange={(e) => handleUpdateBankAccount(index, 'swiftBic', e.target.value)}
+                          placeholder="Ex: BIMMZMZX ou Nome do Titular"
+                          className="w-full px-2.5 py-1.5 bg-[#171717] border border-[#2a2a2a] focus:border-[#c5a47e] rounded-md text-neutral-300 text-xs"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="pt-2 border-t border-[#242424] flex items-center justify-between">
+                <label className="flex items-center space-x-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={templateForm.showPaymentInfo}
+                    onChange={(e) => setTemplateForm({ ...templateForm, showPaymentInfo: e.target.checked })}
+                    className="w-4 h-4 rounded accent-[#c5a47e]"
+                  />
+                  <span className="text-neutral-300 font-medium text-xs">
+                    Imprimir e exibir coordenadas bancárias no rodapé das faturas
+                  </span>
+                </label>
+                <button
+                  type="button"
+                  onClick={() => handleAddBankAccount()}
+                  className="text-xs text-[#c5a47e] hover:underline flex items-center gap-1"
+                >
+                  <Plus className="w-3 h-3" />
+                  <span>+ Adicionar outro banco</span>
+                </button>
               </div>
             </div>
 
@@ -659,13 +904,32 @@ export const InvoiceTemplatesSection: React.FC = () => {
                       </div>
 
                       {/* Bank Details */}
-                      <div className="pt-0.5">
-                        <span className="font-bold text-neutral-800 block text-[7.5px]">Dados Bancários (Bank Transfer)</span>
-                        <div className="text-[7.5px] font-mono text-neutral-700">
-                          <div>NIB {templateForm.bankName || 'BIM: Numero de Conta: 1190902466'}</div>
-                          <div>NIB: <span className="font-bold">{templateForm.bankIban || '000100000119090246657'}</span></div>
+                      {templateForm.showPaymentInfo && currentBankAccounts.length > 0 && (
+                        <div className="pt-0.5">
+                          <span className="font-bold text-neutral-800 block text-[7.5px] border-b border-neutral-200 pb-0.5 mb-1">
+                            Dados Bancários (Bank Transfer)
+                          </span>
+                          <div className="space-y-1 text-[7px] font-mono text-neutral-700">
+                            {currentBankAccounts.map((b, idx) => (
+                              <div
+                                key={b.id || idx}
+                                className="flex justify-between items-center bg-neutral-50 px-1 py-0.5 rounded border border-neutral-200"
+                              >
+                                <div>
+                                  <span className="font-bold">{b.bankName}</span>
+                                  {b.accountNumber && (
+                                    <span className="text-neutral-500 ml-1">C/C: {b.accountNumber}</span>
+                                  )}
+                                </div>
+                                <div className="text-right">
+                                  <span className="text-neutral-500 text-[6.5px]">NIB: </span>
+                                  <span className="font-bold">{b.iban || '---'}</span>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
                         </div>
-                      </div>
+                      )}
                     </div>
 
                     {/* Right: Summary & Grand Total */}
@@ -848,9 +1112,20 @@ export const InvoiceTemplatesSection: React.FC = () => {
                   </div>
 
                   {/* Bank Info */}
-                  {templateForm.bankIban && (
-                    <div className="text-[9px] bg-neutral-100 p-1.5 rounded border border-neutral-200 font-mono text-neutral-700 mb-2">
-                      <span className="font-bold">Pagamento por Transf. Bancária:</span> {templateForm.bankIban} ({templateForm.bankName || 'Banco'})
+                  {templateForm.showPaymentInfo && currentBankAccounts.length > 0 && (
+                    <div className="text-[8.5px] bg-neutral-100 p-2 rounded border border-neutral-200 font-mono text-neutral-700 mb-2 space-y-1">
+                      <div className="font-bold text-neutral-900 border-b border-neutral-200 pb-0.5">
+                        Coordenadas Bancárias para Liquidação / Pagamento:
+                      </div>
+                      {currentBankAccounts.map((b, idx) => (
+                        <div key={b.id || idx} className="flex justify-between items-center">
+                          <span>
+                            <strong>{b.bankName}</strong>{' '}
+                            {b.accountNumber ? `(Conta: ${b.accountNumber})` : ''}:
+                          </span>
+                          <span className="font-bold text-neutral-900">{b.iban || '---'}</span>
+                        </div>
+                      ))}
                     </div>
                   )}
 

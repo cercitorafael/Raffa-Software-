@@ -3,7 +3,7 @@ import autoTable from 'jspdf-autotable';
 import { Sale, Company, Store, InvoiceTemplateConfig, CashShift, Terminal, InventoryExtractRow } from '../types';
 import { formatCurrency, formatDate } from './crypto';
 import { defaultInvoiceTemplates } from '../mockData';
-import { isQuoteOrEstimate, isTransportDocument } from './documentUtils';
+import { isQuoteOrEstimate, isTransportDocument, getTemplateBankAccounts } from './documentUtils';
 
 /**
  * Resolves the strictly active template for a company with fallback support
@@ -758,6 +758,7 @@ export function printInvoiceDocument(
 
   const primaryColor = activeTemplate?.primaryColor || activeTemplate?.accentColor || '#166534';
   const secondaryColor = activeTemplate?.accentColor || '#c5a47e';
+  const templateBankAccounts = getTemplateBankAccounts(activeTemplate, company);
   const bankName = activeTemplate?.bankName || company.defaultBank || 'Millennium BIM (Moçambique)';
   const bankIban = activeTemplate?.bankIban || activeTemplate?.iban || company.defaultIban || '000100000119090246657';
   const headerSlogan = activeTemplate?.headerNotes || 'FOCO NO AGRO, GANHO NO CAMPO';
@@ -1212,13 +1213,21 @@ export function printInvoiceDocument(
                 }
 
                 ${
-                  activeTemplate.showPaymentInfo && (bankIban || bankName)
+                  activeTemplate.showPaymentInfo && templateBankAccounts.length > 0
                     ? `
                 <div style="margin-top: 8px; font-size: 9px;">
-                  <div style="font-weight: 700; color: #111827; margin-bottom: 2px;">Dados Bancários <span style="font-weight: normal; color: #6b7280;">(Bank Details)</span></div>
-                  <div style="font-family: monospace; color: #374151; line-height: 1.35;">
-                    <div>Banco: <strong>${bankName}</strong></div>
-                    <div>IBAN / NIB: <strong>${bankIban}</strong></div>
+                  <div style="font-weight: 700; color: #111827; margin-bottom: 3px; border-bottom: 1px solid #e5e7eb; padding-bottom: 2px;">Dados Bancários <span style="font-weight: normal; color: #6b7280;">(Bank Details)</span></div>
+                  <div style="font-family: monospace; color: #374151; line-height: 1.4;">
+                    ${templateBankAccounts
+                      .map(
+                        (b) => `
+                      <div style="display: flex; justify-content: space-between; margin-bottom: 2px; border-bottom: 1px dashed #f3f4f6; padding-bottom: 1px;">
+                        <span>Banco: <strong>${b.bankName}</strong>${b.accountNumber ? ` <span style="color: #6b7280;">(Conta: ${b.accountNumber})</span>` : ''}</span>
+                        <span>NIB / IBAN: <strong>${b.iban}</strong></span>
+                      </div>
+                    `
+                      )
+                      .join('')}
                   </div>
                 </div>
                 `
@@ -1556,17 +1565,23 @@ export async function downloadInvoicePdf(
 
   // Bank Details
   if (activeTemplate.showPaymentInfo) {
-    const bName = activeTemplate.bankName || company.defaultBank || 'Millennium BIM';
-    const bIban = activeTemplate.bankIban || activeTemplate.iban || company.defaultIban || '000100000119090246657';
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(7.5);
-    doc.setTextColor(17, 24, 39);
-    doc.text('Dados Bancários (Bank Details)', 14, currentLeftY);
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(7.5);
-    doc.setTextColor(55, 65, 81);
-    doc.text(`Banco: ${bName}`, 14, currentLeftY + 4);
-    doc.text(`IBAN: ${bIban}`, 14, currentLeftY + 8);
+    const pdfBankAccounts = getTemplateBankAccounts(activeTemplate, company);
+    if (pdfBankAccounts.length > 0) {
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(7.5);
+      doc.setTextColor(17, 24, 39);
+      doc.text('Dados Bancários (Bank Details)', 14, currentLeftY);
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(7);
+      doc.setTextColor(55, 65, 81);
+      let bankOffsetY = currentLeftY + 4;
+      pdfBankAccounts.forEach((b) => {
+        const accPart = b.accountNumber ? ` (Conta: ${b.accountNumber})` : '';
+        doc.text(`${b.bankName}${accPart} - NIB/IBAN: ${b.iban}`, 14, bankOffsetY);
+        bankOffsetY += 3.5;
+      });
+      currentLeftY = bankOffsetY;
+    }
   }
 
   // Right: Summary & Total

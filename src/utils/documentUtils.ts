@@ -1,4 +1,4 @@
-import { Sale, InvoiceType, CashShift } from '../types';
+import { Sale, InvoiceType, CashShift, InvoiceTemplateConfig, Company, InvoiceBankAccount } from '../types';
 
 /**
  * Checks whether a document or document type is an effective completed sale / invoice.
@@ -251,4 +251,88 @@ export function calculateShiftSalesTotals(
     totalVouchers: Math.max(0, Number(totalVouchers.toFixed(2))),
   };
 }
+
+export const POPULAR_BANKS_PRESETS = [
+  { name: 'Millennium BIM', ibanPrefix: '000100000', defaultAccount: '1190902466', defaultIban: '000100000119090246657' },
+  { name: 'BCI (Banco Comercial e de Investimentos)', ibanPrefix: '000800000', defaultAccount: '0023489112', defaultIban: '000800000023489112341' },
+  { name: 'Standard Bank Moçambique', ibanPrefix: '000300000', defaultAccount: '9283741102', defaultIban: '000300000928374110298' },
+  { name: 'Moza Banco', ibanPrefix: '003400000', defaultAccount: '3819204812', defaultIban: '003400000381920481234' },
+  { name: 'Absa Bank Moçambique', ibanPrefix: '000200000', defaultAccount: '5819382109', defaultIban: '000200000581938210982' },
+  { name: 'Nedbank Moçambique', ibanPrefix: '003600000', defaultAccount: '2948102948', defaultIban: '003600000294810294810' },
+  { name: 'FNB Moçambique', ibanPrefix: '000500000', defaultAccount: '4820194820', defaultIban: '000500000482019482019' },
+  { name: 'M-Pesa (Vodacom)', ibanPrefix: '', defaultAccount: '+258 84 123 4567', defaultIban: 'Carteira Móvel / M-Pesa: 841234567' },
+  { name: 'E-Mola (Movitel)', ibanPrefix: '', defaultAccount: '+258 86 123 4567', defaultIban: 'Carteira Móvel / E-Mola: 861234567' },
+  { name: 'Millennium BCP (Portugal)', ibanPrefix: 'PT50 0033', defaultAccount: '0000 1234 5678 9', defaultIban: 'PT50 0033 0000 1234 5678 9015 4' },
+  { name: 'Caixa Geral de Depósitos (CGD)', ibanPrefix: 'PT50 0035', defaultAccount: '0000 9876 5432 1', defaultIban: 'PT50 0035 0000 9876 5432 1018 7' },
+  { name: 'Santander Totta', ibanPrefix: 'PT50 0018', defaultAccount: '0000 5544 3322 1', defaultIban: 'PT50 0018 0000 5544 3322 1012 3' },
+];
+
+export function getTemplateBankAccounts(
+  tmpl?: InvoiceTemplateConfig | null,
+  company?: Company | null
+): InvoiceBankAccount[] {
+  if (tmpl?.bankAccounts && tmpl.bankAccounts.length > 0) {
+    return tmpl.bankAccounts;
+  }
+
+  const list: InvoiceBankAccount[] = [];
+
+  // Primary bank
+  const pName = tmpl?.bankName || company?.defaultBank || 'Millennium BIM (Moçambique)';
+  const pIban = tmpl?.bankIban || tmpl?.iban || company?.defaultIban || '000100000119090246657';
+  const pAcc = tmpl?.accountNumber || '1190902466';
+
+  if (pName || pIban) {
+    list.push({
+      id: 'bank-1',
+      bankName: pName,
+      iban: pIban,
+      accountNumber: pAcc,
+      isPrimary: true,
+    });
+  }
+
+  // Secondary bank
+  if (tmpl?.secondaryBankName || tmpl?.secondaryBankIban) {
+    list.push({
+      id: 'bank-2',
+      bankName: tmpl.secondaryBankName || 'BCI (Banco Comercial e de Investimentos)',
+      iban: tmpl.secondaryBankIban || '000800000023489112341',
+      accountNumber: tmpl.secondaryAccountNumber || '0023489112',
+      isPrimary: false,
+    });
+  }
+
+  // Tertiary bank
+  if (tmpl?.tertiaryBankName || tmpl?.tertiaryBankIban) {
+    list.push({
+      id: 'bank-3',
+      bankName: tmpl.tertiaryBankName || 'Standard Bank Moçambique',
+      iban: tmpl.tertiaryBankIban || '000300000928374110298',
+      accountNumber: tmpl.tertiaryAccountNumber || '9283741102',
+      isPrimary: false,
+    });
+  }
+
+  // If no banks were configured at all, add default primary and secondary
+  if (list.length === 0) {
+    list.push({
+      id: 'bank-default-1',
+      bankName: 'Millennium BIM',
+      iban: '000100000119090246657',
+      accountNumber: '1190902466',
+      isPrimary: true,
+    });
+    list.push({
+      id: 'bank-default-2',
+      bankName: 'BCI (Banco Comercial e de Investimentos)',
+      iban: '000800000023489112341',
+      accountNumber: '0023489112',
+      isPrimary: false,
+    });
+  }
+
+  return list;
+}
+
 
