@@ -116,7 +116,16 @@ import {
   SalesGoalRecord,
   closeAllOpenShiftsInSupabase,
   fetchLatestShiftFromSupabase,
+  flushPendingSyncQueue,
+  syncOfflineVaultToSupabase,
 } from '../lib/supabaseSync';
+import {
+  recordOfflineProduct,
+  updateOfflineProductInVault,
+  removeOfflineProductFromVault,
+  recoverLostOfflineProducts,
+  getPendingOfflineProducts,
+} from '../utils/offlineProductsVault';
 import {
   getUserProfile,
   getUserFullProfile,
@@ -335,6 +344,7 @@ export interface AppContextType {
     }>,
     mode?: 'merge' | 'replace'
   ) => { added: number; updated: number };
+  recoverOfflineProductsAction: () => number;
 
   warehouses: Warehouse[];
   addWarehouse: (wh: Omit<Warehouse, 'id'>) => void;
@@ -818,12 +828,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   });
   const [products, setProducts] = useState<Product[]>(() => {
     const loaded = loadFromStorage<Product[]>('products', initialProducts);
-    return sortProductsAlphabetically(
-      (Array.isArray(loaded) ? loaded : initialProducts).map((p: Product) => ({
-        ...p,
-        companyId: p.companyId || 'comp-1',
-      }))
-    );
+    const baseList = (Array.isArray(loaded) ? loaded : initialProducts).map((p: Product) => ({
+      ...p,
+      companyId: p.companyId || 'comp-1',
+    }));
+    try {
+      const { recoveredProducts } = recoverLostOfflineProducts(baseList);
+      if (recoveredProducts.length > 0) {
+        return sortProductsAlphabetically([...recoveredProducts, ...baseList]);
+      }
+    } catch {}
+    return sortProductsAlphabetically(baseList);
   });
   const [warehouses, setWarehouses] = useState<Warehouse[]>(() => {
     const loaded = loadFromStorage<Warehouse[]>('warehouses', initialWarehouses);
@@ -1134,9 +1149,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setIsOnline(true);
       emitEvent('POS', 'network.status.online', {
         timestamp: new Date().toISOString(),
-        message: 'Ligação à internet restaurada. A sincronizar com o servidor...',
+        message: 'Ligação à internet restaurada. A sincronizar dados offline com o servidor...',
       });
       sound.playSuccessChime();
+      // Immediately push offline-created records and flush pending queue
+      flushPendingSyncQueue().catch(() => {});
+      syncOfflineVaultToSupabase().catch(() => {});
       setTimeout(() => {
         triggerManualSync();
       }, 500);
@@ -2080,28 +2098,111 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
     if (res.data.products && res.data.products.length > 0) {
       const compProds = res.data.products.filter((p) => targetCompId === 'ALL' || p.companyId === targetCompId);
-      setProducts((prev) => [...compProds, ...prev.filter((p) => targetCompId !== 'ALL' && p.companyId !== targetCompId)]);
+      setProducts((prev) => {
+        const mergedMap = new Map<string, Product>();
+        // 1. Keep all existing local products (including those created offline)
+        prev.forEach((p) => mergedMap.set(String(p.id), p));
+        // 2. Merge remote products (updates existing, adds new)
+        compProds.forEach((remoteProd) => {
+          const existing = mergedMap.get(String(remoteProd.id));
+          mergedMap.set(String(remoteProd.id), {
+            ...(existing || {}),
+            ...remoteProd,
+          });
+        });
+        // 3. Ensure any offline vault products are kept
+        const { recoveredProducts } = recoverLostOfflineProducts(Array.from(mergedMap.values()));
+        recoveredProducts.forEach((p) => mergedMap.set(String(p.id), p));
+        const merged = Array.from(mergedMap.values());
+        saveToStorage('products', merged);
+        return sortProductsAlphabetically(merged);
+      });
     }
     if (res.data.customers && res.data.customers.length > 0) {
       const compCust = res.data.customers.filter((c) => targetCompId === 'ALL' || c.companyId === targetCompId);
-      setCustomers((prev) => [...compCust, ...prev.filter((c) => targetCompId !== 'ALL' && c.companyId !== targetCompId)]);
+      setCustomers((prev) => {
+        const mergedMap = new Map<string, Customer>();
+        prev.forEach((c) => mergedMap.set(String(c.id), c));
+        compCust.forEach((remoteCust) => {
+          const existing = mergedMap.get(String(remoteCust.id));
+          mergedMap.set(String(remoteCust.id), {
+            ...(existing || {}),
+            ...remoteCust,
+          });
+        });
+        const merged = Array.from(mergedMap.values());
+        saveToStorage('customers', merged);
+        return merged;
+      });
     }
     if (res.data.suppliers && res.data.suppliers.length > 0) {
       const compSupp = res.data.suppliers.filter((s) => targetCompId === 'ALL' || s.companyId === targetCompId);
-      setSuppliers((prev) => [...compSupp, ...prev.filter((s) => targetCompId !== 'ALL' && s.companyId !== targetCompId)]);
+      setSuppliers((prev) => {
+        const mergedMap = new Map<string, Supplier>();
+        prev.forEach((s) => mergedMap.set(String(s.id), s));
+        compSupp.forEach((remoteSupp) => {
+          const existing = mergedMap.get(String(remoteSupp.id));
+          mergedMap.set(String(remoteSupp.id), {
+            ...(existing || {}),
+            ...remoteSupp,
+          });
+        });
+        const merged = Array.from(mergedMap.values());
+        saveToStorage('suppliers', merged);
+        return merged;
+      });
     }
     if (res.data.categories && res.data.categories.length > 0) setCategories(res.data.categories);
     if (res.data.sales && res.data.sales.length > 0) {
       const compSales = res.data.sales.filter((s) => targetCompId === 'ALL' || s.companyId === targetCompId);
-      setSalesHistory((prev) => [...compSales, ...prev.filter((s) => targetCompId !== 'ALL' && s.companyId !== targetCompId)]);
+      setSalesHistory((prev) => {
+        const mergedMap = new Map<string, Sale>();
+        prev.forEach((s) => mergedMap.set(String(s.id), s));
+        compSales.forEach((remoteSale) => {
+          const existing = mergedMap.get(String(remoteSale.id));
+          mergedMap.set(String(remoteSale.id), {
+            ...(existing || {}),
+            ...remoteSale,
+          });
+        });
+        const merged = Array.from(mergedMap.values());
+        saveToStorage('salesHistory', merged);
+        return merged;
+      });
     }
     if (res.data.users && res.data.users.length > 0) {
       const compUsers = res.data.users.filter((u) => targetCompId === 'ALL' || u.companyId === targetCompId);
-      setUsers((prev) => [...compUsers, ...prev.filter((u) => targetCompId !== 'ALL' && u.companyId !== targetCompId)]);
+      setUsers((prev) => {
+        const mergedMap = new Map<string, User>();
+        prev.forEach((u) => mergedMap.set(String(u.id), u));
+        compUsers.forEach((remoteUser) => {
+          const existing = mergedMap.get(String(remoteUser.id));
+          mergedMap.set(String(remoteUser.id), {
+            ...(existing || {}),
+            ...remoteUser,
+          });
+        });
+        const merged = Array.from(mergedMap.values());
+        saveToStorage('users', merged);
+        return merged;
+      });
     }
     if (res.data.warehouses && res.data.warehouses.length > 0) {
       const compWh = res.data.warehouses.filter((w) => targetCompId === 'ALL' || w.companyId === targetCompId);
-      setWarehouses((prev) => [...compWh, ...prev.filter((w) => targetCompId !== 'ALL' && w.companyId !== targetCompId)]);
+      setWarehouses((prev) => {
+        const mergedMap = new Map<string, Warehouse>();
+        prev.forEach((w) => mergedMap.set(String(w.id), w));
+        compWh.forEach((remoteWh) => {
+          const existing = mergedMap.get(String(remoteWh.id));
+          mergedMap.set(String(remoteWh.id), {
+            ...(existing || {}),
+            ...remoteWh,
+          });
+        });
+        const merged = Array.from(mergedMap.values());
+        saveToStorage('warehouses', merged);
+        return merged;
+      });
     }
     if (res.data.stock && res.data.stock.length > 0) {
       setStock((localPrev) => {
@@ -2122,11 +2223,37 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
     if (res.data.accountsPayable && res.data.accountsPayable.length > 0) {
       const compAP = res.data.accountsPayable.filter((a) => targetCompId === 'ALL' || a.companyId === targetCompId);
-      setAccountsPayable((prev) => [...compAP, ...prev.filter((a) => targetCompId !== 'ALL' && a.companyId !== targetCompId)]);
+      setAccountsPayable((prev) => {
+        const mergedMap = new Map<string, AccountPayable>();
+        prev.forEach((a) => mergedMap.set(String(a.id), a));
+        compAP.forEach((remoteAP) => {
+          const existing = mergedMap.get(String(remoteAP.id));
+          mergedMap.set(String(remoteAP.id), {
+            ...(existing || {}),
+            ...remoteAP,
+          });
+        });
+        const merged = Array.from(mergedMap.values());
+        saveToStorage('accountsPayable', merged);
+        return merged;
+      });
     }
     if (res.data.accountsReceivable && res.data.accountsReceivable.length > 0) {
       const compAR = res.data.accountsReceivable.filter((a) => targetCompId === 'ALL' || a.companyId === targetCompId);
-      setAccountsReceivable((prev) => [...compAR, ...prev.filter((a) => targetCompId !== 'ALL' && a.companyId !== targetCompId)]);
+      setAccountsReceivable((prev) => {
+        const mergedMap = new Map<string, AccountReceivable>();
+        prev.forEach((a) => mergedMap.set(String(a.id), a));
+        compAR.forEach((remoteAR) => {
+          const existing = mergedMap.get(String(remoteAR.id));
+          mergedMap.set(String(remoteAR.id), {
+            ...(existing || {}),
+            ...remoteAR,
+          });
+        });
+        const merged = Array.from(mergedMap.values());
+        saveToStorage('accountsReceivable', merged);
+        return merged;
+      });
     }
     if (res.data.shifts) {
       const compShifts = res.data.shifts.filter((s: CashShift) => targetCompId === 'ALL' || s.companyId === targetCompId);
@@ -3706,7 +3833,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       id: newId,
       companyId: compId,
     };
-    setProducts((prev) => sortProductsAlphabetically([newProduct, ...prev]));
 
     // Initialize stock record in current store's default warehouse
     const targetWhId = currentStore?.defaultWarehouseId || warehouses.find((w) => w.companyId === compId)?.id || warehouses[0]?.id || 'wh-default';
@@ -3719,14 +3845,30 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       reserved: 0,
       avgCost: newProduct.costPrice,
     };
+
+    // 1. Instantly record in protected offline vault so it is NEVER lost on reconnection
+    recordOfflineProduct(newProduct, newStockRecord);
+
+    // 2. Update React state and write to storage immediately
+    setProducts((prev) => {
+      const updated = sortProductsAlphabetically([newProduct, ...prev]);
+      saveToStorage('products', updated);
+      return updated;
+    });
+
+    // 3. Cache directly in IndexedDB for offline resilience
+    offlineDB.saveOfflineProduct(newProduct).catch(() => {});
+
+    // 4. Update stock
     setStock((prev) => {
       const updated = [...prev, newStockRecord];
       stockRef.current = updated;
       saveToStorage('stock', updated);
       return updated;
     });
-    pushRecordToSupabase('stock', 'upsert', newStockRecord);
 
+    // 5. Push to Supabase queue (safe offline or online)
+    pushRecordToSupabase('stock', 'upsert', newStockRecord);
     pushRecordToSupabase('produtos', 'insert', newProduct);
 
     emitEvent('Stock', 'stock.product.created', {
@@ -3741,8 +3883,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const updateProduct = (id: string, updates: Partial<Product>) => {
     const compId = currentCompany?.id || 'comp-1';
-    setProducts((prev) =>
-      sortProductsAlphabetically(
+    setProducts((prev) => {
+      const updatedList = sortProductsAlphabetically(
         prev.map((p) => {
           if (p.id === id) {
             const updated = {
@@ -3750,20 +3892,29 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               ...updates,
               companyId: p.companyId || compId,
             };
+            updateOfflineProductInVault(updated);
+            offlineDB.saveOfflineProduct(updated).catch(() => {});
             pushRecordToSupabase('produtos', 'update', updated);
             return updated;
           }
           return p;
         })
-      )
-    );
+      );
+      saveToStorage('products', updatedList);
+      return updatedList;
+    });
     emitEvent('Stock', 'stock.product.updated', { productId: id, updates, companyId: compId });
     sound.playSuccessChime();
   };
 
   const deleteProduct = (id: string) => {
     const target = products.find((p) => p.id === id);
-    setProducts((prev) => prev.filter((p) => p.id !== id));
+    removeOfflineProductFromVault(id);
+    setProducts((prev) => {
+      const updated = prev.filter((p) => p.id !== id);
+      saveToStorage('products', updated);
+      return updated;
+    });
     setStock((prev) => {
       const updated = prev.filter((s) => s.productId !== id);
       stockRef.current = updated;
@@ -4966,6 +5117,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const triggerManualSync = async () => {
     setIsSyncing(true);
     try {
+      // 1. Flush the general pending Supabase queue (includes produtos, stock, etc.)
+      const flushedCount = await flushPendingSyncQueue();
+
+      // 2. Also push any un-synced products from the protected offline vault
+      const vaultPushed = await syncOfflineVaultToSupabase();
+
+      // 3. Process IndexedDB sync queue
       const idbQueue = await offlineDB.getPendingSyncQueue();
       const combinedQueue = [...syncQueue];
       idbQueue.forEach((idbItem) => {
@@ -4973,13 +5131,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           combinedQueue.push(idbItem);
         }
       });
-
-      if (combinedQueue.length === 0) {
-        setIsSyncing(false);
-        return;
-      }
-
-      await new Promise((res) => setTimeout(res, 800));
 
       for (const item of combinedQueue) {
         if (item.action === 'create_sale') {
@@ -4996,22 +5147,64 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             total: item.data.total,
             syncedAt: new Date().toISOString(),
           });
+        } else if (item.action === 'create_product') {
+          await offlineDB.removeSyncQueueItem(item.id);
         }
       }
 
       setSyncQueue([]);
       await refreshDBStats();
       sound.playSuccessChime();
+
+      const totalSynced = flushedCount + vaultPushed + combinedQueue.length;
+      if (totalSynced > 0) {
+        notify(`Sincronização concluída: ${totalSynced} operações sincronizadas com o servidor.`, 'success');
+      }
     } catch (e) {
       console.error('Sync failed:', e);
       emitEvent('POS', 'sync.failed', {
         error: String(e),
         timestamp: new Date().toISOString(),
       });
+      notify('Sincronização offline pendente: os dados estão salvos e serão reenviados assim que a ligação estabilizar.', 'warning');
     } finally {
       setIsSyncing(false);
     }
   };
+
+  const recoverOfflineProductsAction = useCallback((): number => {
+    const { recoveredProducts, recoveredStock, reportMessage } = recoverLostOfflineProducts(products);
+    if (recoveredProducts.length > 0) {
+      setProducts((prev) => {
+        const mergedMap = new Map<string, Product>();
+        prev.forEach((p) => mergedMap.set(String(p.id), p));
+        recoveredProducts.forEach((p) => mergedMap.set(String(p.id), p));
+        const updated = sortProductsAlphabetically(Array.from(mergedMap.values()));
+        saveToStorage('products', updated);
+        return updated;
+      });
+
+      if (recoveredStock.length > 0) {
+        setStock((prev) => {
+          const stockMap = new Map<string, StockItem>();
+          prev.forEach((s) => stockMap.set(s.id, s));
+          recoveredStock.forEach((s) => stockMap.set(s.id, s));
+          const updated = Array.from(stockMap.values());
+          stockRef.current = updated;
+          saveToStorage('stock', updated);
+          return updated;
+        });
+      }
+
+      offlineDB.cacheProducts(recoveredProducts).catch(() => {});
+      if (reportMessage) {
+        notify(reportMessage, 'success');
+      }
+      sound.playSuccessChime();
+      return recoveredProducts.length;
+    }
+    return 0;
+  }, [products, notify]);
 
   // ==================== POS & GESTÃO DE TURNOS ====================
   const addShiftType = useCallback((typeData: Omit<ShiftType, 'id'>) => {
@@ -7567,6 +7760,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         updateProduct,
         deleteProduct,
         importProducts,
+        recoverOfflineProductsAction,
         warehouses: scopedWarehouses,
         addWarehouse,
         updateWarehouse,

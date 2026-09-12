@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useApp } from '../../context/AppContext';
 import { formatCurrency, formatDate } from '../../utils/crypto';
 import {
@@ -45,7 +45,11 @@ import { InventoryExtractTab } from './InventoryExtractTab';
 import { InterStoreTransfersTab } from './InterStoreTransfersTab';
 import { PhysicalInventoryCountTab } from './PhysicalInventoryCountTab';
 
-export const StockModule: React.FC = () => {
+export interface StockModuleProps {
+  initialTab?: 'overview' | 'categories' | 'warehouses' | 'lots' | 'movements' | 'inventory_extract' | 'transfer' | 'inventory_count' | 'reorder';
+}
+
+export const StockModule: React.FC<StockModuleProps> = ({ initialTab }) => {
   const {
     products,
     warehouses,
@@ -76,6 +80,7 @@ export const StockModule: React.FC = () => {
     hasPermission,
     requestConfirm,
     setActiveNavTab,
+    recoverOfflineProductsAction,
     notify,
   } = useApp();
 
@@ -89,10 +94,27 @@ export const StockModule: React.FC = () => {
 
   const currencySymbol = currentCompany?.currencySymbol || currencyDefinition?.symbol || 'Mt';
 
-  const [activeTab, setActiveTab] = useState<'overview' | 'categories' | 'warehouses' | 'lots' | 'movements' | 'inventory_extract' | 'transfer' | 'inventory_count' | 'reorder'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'categories' | 'warehouses' | 'lots' | 'movements' | 'inventory_extract' | 'transfer' | 'inventory_count' | 'reorder'>(
+    initialTab || 'overview'
+  );
+
+  useEffect(() => {
+    if (initialTab) {
+      setActiveTab(initialTab);
+    }
+  }, [initialTab]);
+
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategoryFilter, setSelectedCategoryFilter] = useState<string>('all');
   const [selectedWarehouseFilter, setSelectedWarehouseFilter] = useState<string>('all');
+
+  // Stock Filter Enhancements: Current vs Past Days, and Location-Specific Available Stock Only
+  const [stockDateMode, setStockDateMode] = useState<'current' | 'historical'>('current');
+  const [historicalDate, setHistoricalDate] = useState<string>(() => {
+    const yesterday = new Date(Date.now() - 86400000);
+    return yesterday.toISOString().slice(0, 10);
+  });
+  const [onlyWithStockInSelectedWarehouse, setOnlyWithStockInSelectedWarehouse] = useState<boolean>(false);
 
   // Product Modals
   const [showNewProductModal, setShowNewProductModal] = useState(false);
@@ -189,6 +211,68 @@ export const StockModule: React.FC = () => {
     );
   }
 
+  // Helper to calculate stock either currently (real-time) or at a past cutoff date
+  const calculateProductStock = (
+    productId: string,
+    warehouseId: string,
+    mode: 'current' | 'historical',
+    dateStr: string
+  ): number => {
+    // 1. Current stock in selected warehouse (or all warehouses if 'all')
+    const matchingStock = stock.filter(
+      (s) => s.productId === productId && (warehouseId === 'all' || s.warehouseId === warehouseId)
+    );
+    const currentQty = matchingStock.reduce((sum, s) => sum + Number(s.quantity || 0), 0);
+
+    if (mode === 'current') {
+      return currentQty;
+    }
+
+    // 2. Historical calculation: end of selected date 23:59:59
+    const cutoffTime = new Date(`${dateStr}T23:59:59.999`).getTime();
+    if (isNaN(cutoffTime)) return currentQty;
+
+    // Movements after cutoffTime must be reversed to reconstruct past stock
+    let deltaAfter = 0;
+    stockMovements.forEach((mov) => {
+      if (mov.productId !== productId) return;
+      if (warehouseId !== 'all' && mov.warehouseId !== warehouseId) return;
+      const movDateStr = mov.timestamp || (mov as any).date;
+      if (!movDateStr) return;
+      const movTime = new Date(movDateStr).getTime();
+      if (movTime > cutoffTime) {
+        const qty = Number(mov.quantity || 0);
+        const typeLower = String(mov.type || '').toLowerCase();
+        if (typeLower.includes('entrada') || typeLower === 'devolucao') {
+          deltaAfter += qty;
+        } else if (
+          typeLower.includes('saida') ||
+          typeLower === 'venda' ||
+          typeLower === 'quebra' ||
+          typeLower === 'perda'
+        ) {
+          deltaAfter -= qty;
+        } else if (typeLower === 'ajuste') {
+          const prevQ = (mov as any).previousQuantity;
+          const newQ = (mov as any).newQuantity;
+          if (typeof prevQ === 'number' && typeof newQ === 'number') {
+            deltaAfter += (newQ - prevQ);
+          }
+        }
+      }
+    });
+
+    const historicalQty = currentQty - deltaAfter;
+    return Math.max(0, historicalQty);
+  };
+
+  // Selected warehouse object for dynamic location labels
+  const selectedWarehouseObj = useMemo(
+    () => warehouses.find((w) => w.id === selectedWarehouseFilter),
+    [warehouses, selectedWarehouseFilter]
+  );
+  const selectedWarehouseName = selectedWarehouseObj ? selectedWarehouseObj.name : 'Todos os Armazéns';
+
   // Filtered Stock Table (Strictly alphabetical across all sectors)
   const filteredProducts = products
     .filter((p) => {
@@ -198,15 +282,43 @@ export const StockModule: React.FC = () => {
         p.sku.toLowerCase().includes(q) ||
         p.barcode.includes(q);
       const matchesCat = selectedCategoryFilter === 'all' || p.category === selectedCategoryFilter;
+
+      // Option: show ONLY products with available stock in the selected location
+      if (onlyWithStockInSelectedWarehouse && selectedWarehouseFilter !== 'all') {
+        const whQty = calculateProductStock(p.id, selectedWarehouseFilter, stockDateMode, historicalDate);
+        if (whQty <= 0) return false;
+      }
+
       return matchesSearch && matchesCat;
     })
     .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'pt', { sensitivity: 'base', numeric: true }));
 
-  // Calculate Total Valuation (CMP)
-  const totalStockValue = stock.reduce((sum, item) => sum + item.quantity * item.avgCost, 0);
-  const totalStockUnits = stock.reduce((sum, item) => sum + item.quantity, 0);
+  // Calculate Valuation & Stock Units according to active location and date mode
+  const relevantStockItems = useMemo(() => {
+    return stock.filter((item) => selectedWarehouseFilter === 'all' || item.warehouseId === selectedWarehouseFilter);
+  }, [stock, selectedWarehouseFilter]);
+
+  const totalStockValue = useMemo(() => {
+    if (stockDateMode === 'current') {
+      return relevantStockItems.reduce((sum, item) => sum + item.quantity * item.avgCost, 0);
+    }
+    return products.reduce((sum, prod) => {
+      const pastQty = calculateProductStock(prod.id, selectedWarehouseFilter, 'historical', historicalDate);
+      return sum + pastQty * (prod.costPrice || 0);
+    }, 0);
+  }, [relevantStockItems, stockDateMode, products, selectedWarehouseFilter, historicalDate, stockMovements]);
+
+  const totalStockUnits = useMemo(() => {
+    if (stockDateMode === 'current') {
+      return relevantStockItems.reduce((sum, item) => sum + item.quantity, 0);
+    }
+    return products.reduce((sum, prod) => {
+      return sum + calculateProductStock(prod.id, selectedWarehouseFilter, 'historical', historicalDate);
+    }, 0);
+  }, [relevantStockItems, stockDateMode, products, selectedWarehouseFilter, historicalDate, stockMovements]);
+
   const lowStockProducts = products.filter((p) => {
-    const totalQty = stock.filter((s) => s.productId === p.id).reduce((sum, s) => sum + s.quantity, 0);
+    const totalQty = calculateProductStock(p.id, selectedWarehouseFilter, stockDateMode, historicalDate);
     return totalQty <= p.minStock;
   });
 
@@ -437,6 +549,21 @@ export const StockModule: React.FC = () => {
               <span>Gestão de Categorias</span>
             </button>
 
+            <button
+              id="stock-offline-vault-btn"
+              onClick={() => {
+                const recovered = recoverOfflineProductsAction();
+                if (recovered === 0) {
+                  notify('Todos os artigos offline estão devidamente protegidos no cofre e sincronizados.', 'info');
+                }
+              }}
+              className="px-3.5 py-2 bg-[#1a1a1a] hover:bg-[#252525] text-sky-400 hover:text-sky-300 border border-sky-500/30 hover:border-sky-500/60 font-medium text-xs rounded-lg transition-colors flex items-center space-x-1.5 cursor-pointer shadow-xs"
+              title="Verificar integridade do cofre offline e restaurar artigos"
+            >
+              <ShieldCheck className="w-4 h-4 text-sky-400" />
+              <span>Cofre Offline</span>
+            </button>
+
             {canCreate && (
               <button
                 onClick={() => {
@@ -550,51 +677,147 @@ export const StockModule: React.FC = () => {
         {activeTab === 'overview' && (
           <div className="space-y-4">
             {/* Filter controls */}
-            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-[#141414] p-3 rounded-lg border border-[#262626]">
-              <div className="relative flex-1 w-full">
-                <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-neutral-500" />
-                <input
-                  type="text"
-                  placeholder="Pesquisar por nome, SKU, código de barras..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full bg-[#0d0d0d] border border-[#262626] rounded-md pl-9 pr-3 py-1.5 text-xs text-neutral-200 focus:outline-hidden focus:border-[#c5a47e]"
-                />
-              </div>
-
-              <div className="flex items-center space-x-2 w-full sm:w-auto">
-                <div className="flex items-center space-x-1">
-                  <select
-                    value={selectedCategoryFilter}
-                    onChange={(e) => setSelectedCategoryFilter(e.target.value)}
-                    className="bg-[#0d0d0d] border border-[#262626] rounded-md px-3 py-1.5 text-xs text-neutral-200 focus:outline-hidden"
-                  >
-                    <option value="all">Todas as Categorias</option>
-                    {categories.map((c) => (
-                      <option key={c.id} value={c.id}>{c.name}</option>
-                    ))}
-                  </select>
-                  <button
-                    type="button"
-                    onClick={() => setShowCategoryModal(true)}
-                    className="p-1.5 bg-[#1a1a1a] hover:bg-[#252525] text-amber-400 hover:text-amber-300 border border-[#2e2e2e] hover:border-amber-500/40 rounded-md transition-colors cursor-pointer"
-                    title="Gerir Categorias (+ Nova / Editar)"
-                  >
-                    <Layers className="w-3.5 h-3.5" />
-                  </button>
+            <div className="space-y-3 bg-[#141414] p-3.5 rounded-xl border border-[#262626]">
+              {/* Main Row: Search, Category, and Location */}
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
+                <div className="relative flex-1 w-full">
+                  <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-neutral-500" />
+                  <input
+                    type="text"
+                    placeholder="Pesquisar por nome, SKU, código de barras..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="w-full bg-[#0d0d0d] border border-[#262626] rounded-md pl-9 pr-3 py-1.5 text-xs text-neutral-200 focus:outline-hidden focus:border-[#c5a47e]"
+                  />
                 </div>
 
-                <select
-                  value={selectedWarehouseFilter}
-                  onChange={(e) => setSelectedWarehouseFilter(e.target.value)}
-                  className="bg-[#0d0d0d] border border-[#262626] rounded-md px-3 py-1.5 text-xs text-neutral-200 focus:outline-hidden"
-                >
-                  <option value="all">Todos os Armazéns</option>
-                  {warehouses.map((w) => (
-                    <option key={w.id} value={w.id}>{w.name}</option>
-                  ))}
-                </select>
+                <div className="flex items-center space-x-2 w-full sm:w-auto">
+                  <div className="flex items-center space-x-1">
+                    <select
+                      value={selectedCategoryFilter}
+                      onChange={(e) => setSelectedCategoryFilter(e.target.value)}
+                      className="bg-[#0d0d0d] border border-[#262626] rounded-md px-3 py-1.5 text-xs text-neutral-200 focus:outline-hidden"
+                    >
+                      <option value="all">Todas as Categorias</option>
+                      {categories.map((c) => (
+                        <option key={c.id} value={c.id}>{c.name}</option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() => setShowCategoryModal(true)}
+                      className="p-1.5 bg-[#1a1a1a] hover:bg-[#252525] text-amber-400 hover:text-amber-300 border border-[#2e2e2e] hover:border-amber-500/40 rounded-md transition-colors cursor-pointer"
+                      title="Gerir Categorias (+ Nova / Editar)"
+                    >
+                      <Layers className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+
+                  <select
+                    value={selectedWarehouseFilter}
+                    onChange={(e) => setSelectedWarehouseFilter(e.target.value)}
+                    className="bg-[#0d0d0d] border border-[#262626] rounded-md px-3 py-1.5 text-xs text-neutral-200 focus:outline-hidden"
+                  >
+                    <option value="all">Todos os Armazéns / Lojas</option>
+                    {warehouses.map((w) => (
+                      <option key={w.id} value={w.id}>{w.name}</option>
+                    ))}
+                  </select>
+                </div>
               </div>
+
+              {/* Secondary Row: Stock Date Toggle (Current vs Past Days) and Location Only Option */}
+              <div className="flex flex-wrap items-center justify-between gap-3 pt-2.5 border-t border-[#262626]/80 text-xs">
+                {/* 1. Toggle Button: Stock Atual vs Dias Passados */}
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-neutral-400 text-[11px] font-medium flex items-center gap-1.5">
+                    <Calendar className="w-3.5 h-3.5 text-[#c5a47e]" />
+                    <span>Visualização de Stock:</span>
+                  </span>
+
+                  <div className="inline-flex rounded-lg bg-[#0a0a0a] p-0.5 border border-[#262626]">
+                    <button
+                      type="button"
+                      onClick={() => setStockDateMode('current')}
+                      className={`px-3 py-1 rounded-md text-[11px] font-medium transition-colors flex items-center space-x-1 cursor-pointer ${
+                        stockDateMode === 'current'
+                          ? 'bg-[#c5a47e] text-neutral-950 font-bold shadow-xs'
+                          : 'text-neutral-400 hover:text-neutral-200'
+                      }`}
+                    >
+                      <span>Stock Atual (Tempo Real)</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setStockDateMode('historical')}
+                      className={`px-3 py-1 rounded-md text-[11px] font-medium transition-colors flex items-center space-x-1 cursor-pointer ${
+                        stockDateMode === 'historical'
+                          ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 font-bold shadow-xs'
+                          : 'text-neutral-400 hover:text-neutral-200'
+                      }`}
+                    >
+                      <Clock className="w-3 h-3 text-amber-400" />
+                      <span>Stock em Dias Passados</span>
+                    </button>
+                  </div>
+
+                  {stockDateMode === 'historical' && (
+                    <div className="flex items-center space-x-1.5 bg-[#191612] px-2.5 py-1 rounded-lg border border-amber-500/30">
+                      <span className="text-[11px] text-amber-300">Data:</span>
+                      <input
+                        type="date"
+                        value={historicalDate}
+                        max={new Date().toISOString().slice(0, 10)}
+                        onChange={(e) => setHistoricalDate(e.target.value)}
+                        className="bg-[#0d0d0d] border border-amber-500/40 text-amber-200 rounded px-2 py-0.5 text-xs focus:outline-hidden font-mono"
+                      />
+                      <span className="text-[10px] text-amber-400/80">
+                        (Posição às 23:59)
+                      </span>
+                    </div>
+                  )}
+                </div>
+
+                {/* 2. Option: Show available stock in the selected location ONLY */}
+                <div className="flex items-center space-x-2">
+                  {selectedWarehouseFilter !== 'all' ? (
+                    <label className="inline-flex items-center space-x-2 px-3 py-1 rounded-lg bg-[#1a1a1a] border border-emerald-500/30 hover:border-emerald-500/50 cursor-pointer transition-colors text-neutral-200">
+                      <input
+                        type="checkbox"
+                        checked={onlyWithStockInSelectedWarehouse}
+                        onChange={(e) => setOnlyWithStockInSelectedWarehouse(e.target.checked)}
+                        className="rounded border-[#444] text-emerald-500 focus:ring-0 focus:outline-hidden cursor-pointer"
+                      />
+                      <span className="text-[11px] text-neutral-300">
+                        Mostrar apenas stock disponível em <strong className="text-emerald-400">{selectedWarehouseName}</strong>
+                      </span>
+                    </label>
+                  ) : (
+                    <span className="text-[11px] text-neutral-500 italic">
+                      💡 Selecione um armazém específico para filtrar apenas artigos com stock disponível nesse lugar.
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* Informational banner when in historical mode */}
+              {stockDateMode === 'historical' && (
+                <div className="bg-amber-950/20 border border-amber-500/30 rounded-lg p-2 flex items-center justify-between text-xs text-amber-300">
+                  <div className="flex items-center space-x-2">
+                    <Clock className="w-4 h-4 text-amber-400 shrink-0" />
+                    <span>
+                      Modo Histórico Ativo: Visualizando stock acumulado na data de <strong>{new Date(`${historicalDate}T12:00:00`).toLocaleDateString('pt-PT')}</strong>.
+                      {selectedWarehouseFilter !== 'all' && ` Filtrado para o armazém "${selectedWarehouseName}".`}
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => setStockDateMode('current')}
+                    className="text-[11px] underline hover:text-amber-200 cursor-pointer ml-2"
+                  >
+                    Voltar ao Stock Atual
+                  </button>
+                </div>
+              )}
             </div>
 
             {/* Products Table */}
@@ -607,15 +830,32 @@ export const StockModule: React.FC = () => {
                     <th className="px-4 py-3 text-right">PVP (c/ IVA)</th>
                     <th className="px-4 py-3 text-right">Custo (CMP)</th>
                     <th className="px-4 py-3 text-center">IVA</th>
-                    <th className="px-4 py-3 text-right">Stock Global</th>
+                    <th className="px-4 py-3 text-right">
+                      <div className="flex flex-col items-end">
+                        <span>
+                          {selectedWarehouseFilter !== 'all'
+                            ? `Stock em ${selectedWarehouseName}`
+                            : 'Stock Global'}
+                        </span>
+                        <span className="text-[9px] font-normal normal-case text-neutral-400">
+                          {stockDateMode === 'historical'
+                            ? `em ${new Date(`${historicalDate}T12:00:00`).toLocaleDateString('pt-PT')}`
+                            : 'Disponível Atual'}
+                        </span>
+                      </div>
+                    </th>
                     <th className="px-4 py-3 text-center">Estado</th>
                     <th className="px-4 py-3 text-right">Ações CRUD</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#262626]">
                   {filteredProducts.map((prod) => {
-                    const prodStockItems = stock.filter((s) => s.productId === prod.id);
-                    const totalQty = prodStockItems.reduce((sum, s) => sum + s.quantity, 0);
+                    const totalQty = calculateProductStock(
+                      prod.id,
+                      selectedWarehouseFilter,
+                      stockDateMode,
+                      historicalDate
+                    );
                     const isLow = totalQty <= prod.minStock;
                     const cat = categories.find((c) => c.id === prod.category);
 
@@ -666,11 +906,19 @@ export const StockModule: React.FC = () => {
                           </span>
                         </td>
                         <td className="px-4 py-3 text-right font-mono font-semibold">
-                          <span className={isLow ? 'text-rose-400 font-bold' : 'text-neutral-200'}>
-                            {totalQty} {prod.unit}
-                          </span>
-                          <div className="text-[10px] text-neutral-500">
-                            Min: {prod.minStock} / Max: {prod.maxStock}
+                          <div className="flex flex-col items-end">
+                            <span className={isLow ? 'text-rose-400 font-bold' : 'text-neutral-200'}>
+                              {totalQty} {prod.unit}
+                            </span>
+                            {stockDateMode === 'historical' ? (
+                              <span className="text-[10px] text-amber-400/90 font-normal">
+                                Histórico
+                              </span>
+                            ) : (
+                              <span className="text-[10px] text-neutral-500 font-normal">
+                                Min: {prod.minStock} / Max: {prod.maxStock}
+                              </span>
+                            )}
                           </div>
                         </td>
                         <td className="px-4 py-3 text-center">

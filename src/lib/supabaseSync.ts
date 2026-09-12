@@ -1,5 +1,9 @@
 import { supabase, isValidHttpUrl, DEFAULT_SUPABASE_URL, DEFAULT_SUPABASE_ANON_KEY, UserProfile } from './supabase';
 import {
+  markOfflineProductSynced,
+  getPendingOfflineProducts,
+} from '../utils/offlineProductsVault';
+import {
   Product,
   Customer,
   Supplier,
@@ -167,43 +171,71 @@ export function enqueuePendingSync(table: TableSyncName, action: 'insert' | 'upd
 
 export async function flushPendingSyncQueue(): Promise<number> {
   const queue = getPendingQueue();
-  if (queue.length === 0) return 0;
-
   let successCount = 0;
   const remaining: PendingSyncQueueItem[] = [];
 
-  for (const item of queue) {
-    try {
-      const res = await pushRecordToSupabaseDirect(item.table, item.action, item.record, false);
-      if (res.success) {
-        successCount++;
-      } else if (
-        isTableMissingError(res.error) ||
-        (typeof res.error === 'string' &&
-          (res.error.includes('ainda não') || res.error.includes('não configurada') || res.error.includes('PGRST205')))
-      ) {
-        // Discard item if the remote table does not exist yet to prevent infinite retry loops & console warnings
-      } else {
-        remaining.push(item);
-      }
-    } catch (err: any) {
-      if (!isTableMissingError(err)) {
+  if (queue.length > 0) {
+    for (const item of queue) {
+      try {
+        const res = await pushRecordToSupabaseDirect(item.table, item.action, item.record, false);
+        if (res.success) {
+          successCount++;
+          if (item.table === 'produtos' && item.record?.id) {
+            markOfflineProductSynced(String(item.record.id));
+          }
+        } else {
+          // Keep all pending offline items safely queued, never drop user data
+          remaining.push(item);
+        }
+      } catch (err: any) {
+        // Keep pending item on failure
         remaining.push(item);
       }
     }
+
+    savePendingQueue(remaining);
   }
 
-  savePendingQueue(remaining);
+  // Also sync any un-synced products from the protected offline vault
+  try {
+    const vaultPushed = await syncOfflineVaultToSupabase();
+    successCount += vaultPushed;
+  } catch (vaultErr) {
+    console.warn('Syncing offline products vault:', vaultErr);
+  }
+
   if (successCount > 0) {
     addSyncLog({
       table: 'ALL',
       action: 'PUSH',
       origin: 'LOCAL_APP',
-      description: `🔄 Fila Offline/Pendente: ${successCount} registos sincronizados com sucesso no Supabase!`,
+      description: `🔄 Fila Offline & Cofre: ${successCount} registos sincronizados com sucesso no Supabase!`,
       status: 'success',
     });
   }
   return successCount;
+}
+
+/**
+ * Pushes any products created offline in the protected vault to Supabase
+ */
+export async function syncOfflineVaultToSupabase(): Promise<number> {
+  const pendingProducts = getPendingOfflineProducts();
+  if (pendingProducts.length === 0) return 0;
+
+  let pushed = 0;
+  for (const prod of pendingProducts) {
+    try {
+      const res = await pushRecordToSupabaseDirect('produtos', 'upsert', prod, false);
+      if (res.success) {
+        markOfflineProductSynced(String(prod.id));
+        pushed++;
+      }
+    } catch (err) {
+      console.warn(`Failed to push offline vault product ${prod.id}:`, err);
+    }
+  }
+  return pushed;
 }
 
 function addSyncLog(log: Omit<SupabaseSyncLog, 'id' | 'timestamp'>) {

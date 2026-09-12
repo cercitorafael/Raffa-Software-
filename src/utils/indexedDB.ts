@@ -127,7 +127,7 @@ class IndexedDBEngine {
   }
 
   /* ----------------------------------------------------
-   * PRODUCTS CACHE
+   * PRODUCTS CACHE & OFFLINE PRESERVATION
    * ---------------------------------------------------- */
   public async cacheProducts(products: Product[]): Promise<void> {
     const db = await this.init();
@@ -137,13 +137,24 @@ class IndexedDBEngine {
       try {
         const tx = db.transaction('products', 'readwrite');
         const store = tx.objectStore('products');
-        store.clear();
+        // Non-destructive upsert into IndexedDB: preserve existing items
         products.forEach((p) => store.put(p));
         tx.oncomplete = () => resolve();
         tx.onerror = () => resolve();
       } catch {
         resolve();
       }
+    });
+  }
+
+  public async saveOfflineProduct(product: Product): Promise<void> {
+    const store = await this.getStore('products', 'readwrite');
+    if (!store) return;
+
+    return new Promise((resolve) => {
+      const req = store.put(product);
+      req.onsuccess = () => resolve();
+      req.onerror = () => resolve();
     });
   }
 
