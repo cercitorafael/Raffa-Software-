@@ -117,15 +117,7 @@ import {
   closeAllOpenShiftsInSupabase,
   fetchLatestShiftFromSupabase,
   flushPendingSyncQueue,
-  syncOfflineVaultToSupabase,
 } from '../lib/supabaseSync';
-import {
-  recordOfflineProduct,
-  updateOfflineProductInVault,
-  removeOfflineProductFromVault,
-  recoverLostOfflineProducts,
-  getPendingOfflineProducts,
-} from '../utils/offlineProductsVault';
 import {
   getUserProfile,
   getUserFullProfile,
@@ -320,8 +312,8 @@ export interface AppContextType {
   standardizeAllCategories: () => void;
 
   products: Product[];
-  addProduct: (product: Omit<Product, 'id'>) => void;
-  updateProduct: (id: string, product: Partial<Product>) => void;
+  addProduct: (product: Omit<Product, 'id'>) => boolean;
+  updateProduct: (id: string, product: Partial<Product>) => boolean;
   deleteProduct: (id: string) => void;
   importProducts: (
     items: Array<{
@@ -342,9 +334,8 @@ export interface AppContextType {
       initialStock?: number;
       warehouseId?: string;
     }>,
-    mode?: 'merge' | 'replace'
+    mode?: 'merge' | 'replace' | 'skip_existing'
   ) => { added: number; updated: number };
-  recoverOfflineProductsAction: () => number;
 
   warehouses: Warehouse[];
   addWarehouse: (wh: Omit<Warehouse, 'id'>) => void;
@@ -393,13 +384,15 @@ export interface AppContextType {
     items: Array<{ productId: string; quantity: number; unitPrice?: number }>,
     warehouseId?: string,
     referenceDoc?: string,
-    reason?: string
+    reason?: string,
+    customTimestamp?: string
   ) => void;
   replenishStockForItems: (
     items: Array<{ productId: string; quantity: number; unitPrice?: number }>,
     warehouseId?: string,
     referenceDoc?: string,
-    reason?: string
+    reason?: string,
+    customTimestamp?: string
   ) => void;
 
   // POS & Turnos
@@ -832,12 +825,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       ...p,
       companyId: p.companyId || 'comp-1',
     }));
-    try {
-      const { recoveredProducts } = recoverLostOfflineProducts(baseList);
-      if (recoveredProducts.length > 0) {
-        return sortProductsAlphabetically([...recoveredProducts, ...baseList]);
-      }
-    } catch {}
     return sortProductsAlphabetically(baseList);
   });
   const [warehouses, setWarehouses] = useState<Warehouse[]>(() => {
@@ -1154,7 +1141,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       sound.playSuccessChime();
       // Immediately push offline-created records and flush pending queue
       flushPendingSyncQueue().catch(() => {});
-      syncOfflineVaultToSupabase().catch(() => {});
       setTimeout(() => {
         triggerManualSync();
       }, 500);
@@ -1360,6 +1346,43 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       });
     }
   }, [salesHistory, activeShift?.id, activeShift?.status, activeShift?.totalSales, activeShift?.totalCash]);
+
+  // Reconciliação automática da data e hora exata dos movimentos de stock associados a vendas/faturas
+  useEffect(() => {
+    if (!salesHistory || salesHistory.length === 0 || !stockMovements || stockMovements.length === 0) return;
+
+    const salesMap = new Map<string, Sale>();
+    salesHistory.forEach((s) => {
+      if (s.invoiceNumber) {
+        salesMap.set(s.invoiceNumber.trim().toUpperCase(), s);
+      }
+    });
+
+    let hasChanges = false;
+    const reconciledMovements = stockMovements.map((mov) => {
+      const ref = (mov.referenceDoc || '').trim().toUpperCase();
+      const sale = ref ? salesMap.get(ref) : undefined;
+      if (sale) {
+        const exactSaleDate = sale.date || (sale as any).createdAt || (sale as any).timestamp;
+        if (exactSaleDate && (mov.timestamp !== exactSaleDate || mov.date !== exactSaleDate)) {
+          hasChanges = true;
+          return {
+            ...mov,
+            timestamp: exactSaleDate,
+            date: exactSaleDate,
+            createdAt: mov.createdAt || exactSaleDate,
+          };
+        }
+      }
+      return mov;
+    });
+
+    if (hasChanges) {
+      setStockMovements(reconciledMovements);
+      stockMovementsRef.current = reconciledMovements;
+      saveToStorage('stockMovements', reconciledMovements);
+    }
+  }, [salesHistory]);
 
   // ==================== SUPABASE REAL-TIME SYNCHRONIZATION ENGINE ====================
   const reconnectSupabaseRealtime = useCallback(() => {
@@ -2110,9 +2133,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             ...remoteProd,
           });
         });
-        // 3. Ensure any offline vault products are kept
-        const { recoveredProducts } = recoverLostOfflineProducts(Array.from(mergedMap.values()));
-        recoveredProducts.forEach((p) => mergedMap.set(String(p.id), p));
         const merged = Array.from(mergedMap.values());
         saveToStorage('products', merged);
         return sortProductsAlphabetically(merged);
@@ -3462,7 +3482,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           permissions: { ...defaultPermissionsByRole.admin },
         };
 
-        // 6. Categorias e produtos iniciais baseados no ramo de negócio escolhido
+        // 6. Categorias baseadas no ramo de negócio (Catálogo de produtos inicia limpo sob controlo estrito do utilizador)
         const matchingPreset =
           INDUSTRY_PRESETS.find(
             (p) =>
@@ -3478,39 +3498,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           color: c.color,
         }));
 
-        const initialIndustryProducts: Product[] = matchingPreset.sampleProducts.map((sp, idx) => {
-          const matchedCat = newCategories.find(
-            (nc) => nc.name.toLowerCase() === sp.category.toLowerCase() ||
-                    nc.name.toLowerCase() === standardizeCategoryName(sp.category).toLowerCase()
-          );
-          const catId = matchedCat ? matchedCat.id : newCategories[0]?.id || `cat-${companyId}-1`;
-
-          return {
-            id: `prod-${companyId}-${idx + 1}`,
-            companyId,
-            name: sp.name,
-            sku: `SKU-${idx + 101}`,
-            barcode: `560${idx + 1000000000}`,
-            price: sp.price,
-            costPrice: sp.costPrice,
-            taxRate: sp.taxRate,
-            category: catId,
-            unit: sp.unit,
-            minStock: 5,
-            maxStock: 500,
-            hasBatchControl: false,
-            imageUrl: 'https://images.unsplash.com/photo-1556740758-90de374c12ad?w=300',
-          };
-        });
-
-        const initialStockItems: StockItem[] = initialIndustryProducts.map((p, idx) => ({
-          id: `stk-${companyId}-${idx + 1}`,
-          productId: p.id,
-          warehouseId,
-          quantity: 50,
-          reserved: 0,
-          avgCost: p.costPrice,
-        }));
+        // Rigor estrito: Não adicionar produtos automaticamente ao registar a empresa
+        const initialIndustryProducts: Product[] = [];
+        const initialStockItems: StockItem[] = [];
 
         // Reset active shift and transactional session to isolate the newly registered company
         setActiveShift(null);
@@ -3533,7 +3523,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setProducts((prev) => sortProductsAlphabetically([...initialIndustryProducts, ...prev]));
         setStock((prev) => [...initialStockItems, ...prev]);
 
-        // Sincronização automática completa para o Supabase (empresas, lojas, armazens, usuarios, profiles, categorias, produtos, stock)
+        // Sincronização automática completa para o Supabase (empresas, lojas, armazens, usuarios, profiles, categorias)
         try {
           await registrarEmpresaEUsuarioCliente({
             company: {
@@ -3569,8 +3559,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           pushRecordToSupabase('armazens', 'upsert', newWarehouse);
           pushRecordToSupabase('usuarios', 'upsert', newUser);
           newCategories.forEach((cat) => pushRecordToSupabase('categorias', 'upsert', cat));
-          initialIndustryProducts.forEach((prod) => pushRecordToSupabase('produtos', 'upsert', prod));
-          initialStockItems.forEach((stk) => pushRecordToSupabase('stock', 'upsert', stk));
         } catch (syncErr) {
           console.warn('Erro na sincronização de nova empresa para o Supabase:', syncErr);
         }
@@ -3793,44 +3781,97 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return cat;
     });
 
-    // Reconcilia produtos da empresa atual cujo category seja um nome textual ou slug antigo
-    const updatedProducts = products.map((prod) => {
-      if (prod.companyId !== compId) return prod;
-
-      const exists = updatedCategories.some((c) => c.id === prod.category);
-      if (exists) return prod;
-
-      const matched = updatedCategories.find(
-        (c) =>
-          c.name.toLowerCase() === prod.category.toLowerCase() ||
-          standardizeCategoryName(prod.category).toLowerCase() === c.name.toLowerCase()
-      );
-      if (matched) {
-        changed++;
-        const fixedProd = { ...prod, category: matched.id };
-        pushRecordToSupabase('produtos', 'update', fixedProd);
-        return fixedProd;
-      }
-      return prod;
-    });
-
+    // Padronização restrita exclusivamente às categorias (nunca altera produtos automaticamente)
     setCategories(updatedCategories);
-    setProducts(updatedProducts);
     sound.playSuccessChime();
     notify(
       changed > 0
-        ? `Foram padronizadas e corrigidas ${changed} entrada(s) de categorias e artigos no sistema!`
+        ? `Foram padronizadas e corrigidas ${changed} designações de categorias no sistema!`
         : 'Todas as categorias já se encontram devidamente escritas e padronizadas.',
       'success'
     );
   };
 
-  const addProduct = (prodData: Omit<Product, 'id'>) => {
+  const addProduct = (prodData: Omit<Product, 'id'>): boolean => {
+    // 1. Verificação rigorosa de permissões
+    if (!hasPermission('stock', 'create')) {
+      notify('Acesso Negado: Não possui permissão para registar artigos no catálogo.', 'error');
+      return false;
+    }
+
+    // 2. Validação rigorosa do Nome do Artigo
+    const name = (prodData.name || '').trim();
+    if (!name || name.length < 2) {
+      notify('Rigor de Validação: O nome do artigo é obrigatório e deve ter no mínimo 2 caracteres.', 'error');
+      return false;
+    }
+
+    // 3. Validação rigorosa de SKU
+    const sku = (prodData.sku || '').trim();
+    if (!sku) {
+      notify('Rigor de Validação: O código de referência / SKU é obrigatório.', 'error');
+      return false;
+    }
+
     const compId = prodData.companyId || currentCompany?.id || 'comp-1';
+
+    // 4. Prevenção estrita de duplicados de SKU na mesma empresa
+    const existingWithSku = products.find(
+      (p) => p.companyId === compId && p.sku.trim().toLowerCase() === sku.toLowerCase()
+    );
+    if (existingWithSku) {
+      notify(`Rigor de Catálogo: Já existe um artigo ("${existingWithSku.name}") com o mesmo SKU "${sku}".`, 'error');
+      return false;
+    }
+
+    // 5. Prevenção estrita de duplicados de Código de Barras (se fornecido)
+    const barcode = (prodData.barcode || '').trim();
+    if (barcode) {
+      const existingWithBarcode = products.find(
+        (p) => p.companyId === compId && p.barcode && p.barcode.trim() === barcode
+      );
+      if (existingWithBarcode) {
+        notify(`Rigor de Catálogo: O código de barras "${barcode}" já está atribuído a "${existingWithBarcode.name}".`, 'error');
+        return false;
+      }
+    }
+
+    // 6. Validação rigorosa de Preço de Venda e Custo
+    const price = Number(prodData.price);
+    if (isNaN(price) || price < 0) {
+      notify('Rigor Financeiro: O preço de venda deve ser um número válido maior ou igual a zero.', 'error');
+      return false;
+    }
+
+    const costPrice = Number(prodData.costPrice ?? 0);
+    if (isNaN(costPrice) || costPrice < 0) {
+      notify('Rigor Financeiro: O preço de custo (CMP) deve ser um número válido maior ou igual a zero.', 'error');
+      return false;
+    }
+
+    // 7. Validação de limites de stock
+    const minStock = Number(prodData.minStock ?? 0);
+    const maxStock = Number(prodData.maxStock ?? 0);
+    if (minStock < 0 || maxStock < 0) {
+      notify('Rigor Operacional: Os limites de stock mínimo e máximo não podem ser negativos.', 'error');
+      return false;
+    }
+    if (maxStock > 0 && minStock > maxStock) {
+      notify('Rigor Operacional: O stock mínimo não pode ser superior ao stock máximo configurado.', 'error');
+      return false;
+    }
+
     const newId = `prod-${Date.now()}`;
     const newProduct: Product = {
       ...prodData,
       id: newId,
+      name,
+      sku,
+      barcode,
+      price,
+      costPrice,
+      minStock,
+      maxStock,
       companyId: compId,
     };
 
@@ -3846,20 +3887,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       avgCost: newProduct.costPrice,
     };
 
-    // 1. Instantly record in protected offline vault so it is NEVER lost on reconnection
-    recordOfflineProduct(newProduct, newStockRecord);
-
-    // 2. Update React state and write to storage immediately
+    // 1. Update React state and write to storage immediately
     setProducts((prev) => {
       const updated = sortProductsAlphabetically([newProduct, ...prev]);
       saveToStorage('products', updated);
       return updated;
     });
 
-    // 3. Cache directly in IndexedDB for offline resilience
+    // 2. Cache directly in IndexedDB for offline resilience
     offlineDB.saveOfflineProduct(newProduct).catch(() => {});
 
-    // 4. Update stock
+    // 3. Update stock
     setStock((prev) => {
       const updated = [...prev, newStockRecord];
       stockRef.current = updated;
@@ -3867,7 +3905,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return updated;
     });
 
-    // 5. Push to Supabase queue (safe offline or online)
+    // 4. Push to Supabase queue (safe offline or online)
     pushRecordToSupabase('stock', 'upsert', newStockRecord);
     pushRecordToSupabase('produtos', 'insert', newProduct);
 
@@ -3879,10 +3917,85 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       price: newProduct.price,
     });
     sound.playSuccessChime();
+    notify(`Artigo "${newProduct.name}" (${newProduct.sku}) registado com sucesso com validação estrita.`, 'success');
+    return true;
   };
 
-  const updateProduct = (id: string, updates: Partial<Product>) => {
-    const compId = currentCompany?.id || 'comp-1';
+  const updateProduct = (id: string, updates: Partial<Product>): boolean => {
+    // 1. Verificação rigorosa de permissões
+    if (!hasPermission('stock', 'edit')) {
+      notify('Acesso Negado: Não tem permissão para alterar artigos do inventário.', 'error');
+      return false;
+    }
+
+    const target = products.find((p) => p.id === id);
+    if (!target) {
+      notify('Erro de Catálogo: Artigo não encontrado para alteração.', 'error');
+      return false;
+    }
+
+    const compId = target.companyId || currentCompany?.id || 'comp-1';
+
+    // 2. Validação rigorosa de Nome se alterado
+    if (updates.name !== undefined) {
+      const trimmedName = updates.name.trim();
+      if (!trimmedName || trimmedName.length < 2) {
+        notify('Rigor de Validação: O nome do artigo deve ter no mínimo 2 caracteres.', 'error');
+        return false;
+      }
+      updates.name = trimmedName;
+    }
+
+    // 3. Validação rigorosa de SKU se alterado
+    if (updates.sku !== undefined) {
+      const trimmedSku = updates.sku.trim();
+      if (!trimmedSku) {
+        notify('Rigor de Validação: O SKU não pode ficar em branco.', 'error');
+        return false;
+      }
+      const duplicateSku = products.find(
+        (p) => p.id !== id && p.companyId === compId && p.sku.trim().toLowerCase() === trimmedSku.toLowerCase()
+      );
+      if (duplicateSku) {
+        notify(`Rigor de Catálogo: Já existe outro artigo ("${duplicateSku.name}") com o SKU "${trimmedSku}".`, 'error');
+        return false;
+      }
+      updates.sku = trimmedSku;
+    }
+
+    // 4. Validação rigorosa de Código de Barras se alterado
+    if (updates.barcode !== undefined && updates.barcode.trim()) {
+      const trimmedBarcode = updates.barcode.trim();
+      const duplicateBarcode = products.find(
+        (p) => p.id !== id && p.companyId === compId && p.barcode && p.barcode.trim() === trimmedBarcode
+      );
+      if (duplicateBarcode) {
+        notify(`Rigor de Catálogo: O código de barras "${trimmedBarcode}" já está atribuído a "${duplicateBarcode.name}".`, 'error');
+        return false;
+      }
+      updates.barcode = trimmedBarcode;
+    }
+
+    // 5. Validação de Preço de Venda
+    if (updates.price !== undefined) {
+      const price = Number(updates.price);
+      if (isNaN(price) || price < 0) {
+        notify('Rigor Financeiro: O preço de venda deve ser um número válido maior ou igual a zero.', 'error');
+        return false;
+      }
+      updates.price = price;
+    }
+
+    // 6. Validação de Preço de Custo
+    if (updates.costPrice !== undefined) {
+      const costPrice = Number(updates.costPrice);
+      if (isNaN(costPrice) || costPrice < 0) {
+        notify('Rigor Financeiro: O preço de custo deve ser um número válido maior ou igual a zero.', 'error');
+        return false;
+      }
+      updates.costPrice = costPrice;
+    }
+
     setProducts((prev) => {
       const updatedList = sortProductsAlphabetically(
         prev.map((p) => {
@@ -3892,7 +4005,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               ...updates,
               companyId: p.companyId || compId,
             };
-            updateOfflineProductInVault(updated);
             offlineDB.saveOfflineProduct(updated).catch(() => {});
             pushRecordToSupabase('produtos', 'update', updated);
             return updated;
@@ -3905,11 +4017,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
     emitEvent('Stock', 'stock.product.updated', { productId: id, updates, companyId: compId });
     sound.playSuccessChime();
+    notify(`Artigo atualizado com sucesso e validação de rigor confirmada.`, 'success');
+    return true;
   };
 
   const deleteProduct = (id: string) => {
     const target = products.find((p) => p.id === id);
-    removeOfflineProductFromVault(id);
     setProducts((prev) => {
       const updated = prev.filter((p) => p.id !== id);
       saveToStorage('products', updated);
@@ -3947,7 +4060,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       initialStock?: number;
       warehouseId?: string;
     }>,
-    mode: 'merge' | 'replace' = 'merge'
+    mode: 'merge' | 'replace' | 'skip_existing' = 'merge'
   ) => {
     let added = 0;
     let updated = 0;
@@ -3961,14 +4074,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const otherCompanyProducts = prev.filter((p) => p.companyId !== compId);
 
       const productMap = new Map<string, Product>();
-      if (mode === 'merge') {
+      if (mode === 'merge' || mode === 'skip_existing') {
         currentCompanyProducts.forEach((p) => {
           if (p.sku) productMap.set(p.sku.toLowerCase().trim(), p);
           if (p.barcode) productMap.set(p.barcode.trim(), p);
         });
       }
 
-      const updatedCompanyList = mode === 'merge' ? [...currentCompanyProducts] : [];
+      const updatedCompanyList = mode === 'replace' ? [] : [...currentCompanyProducts];
       const newStockItems: StockItem[] = [];
 
       items.forEach((item, index) => {
@@ -3976,10 +4089,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           productMap.get(item.sku.toLowerCase().trim()) ||
           (item.barcode ? productMap.get(item.barcode.trim()) : undefined);
 
-        if (existing && mode === 'merge') {
-          // Update existing product within current company
-          const idx = updatedCompanyList.findIndex((p) => p.id === existing.id);
-          if (idx !== -1) {
+        if (existing) {
+          if (mode === 'skip_existing') {
+            // Rigor: Não altera produto existente quando em modo skip_existing
+            return;
+          }
+          if (mode === 'merge') {
+            // Update existing product within current company
+            const idx = updatedCompanyList.findIndex((p) => p.id === existing.id);
+            if (idx !== -1) {
             updatedCompanyList[idx] = {
               ...existing,
               name: item.name || existing.name,
@@ -4023,6 +4141,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                 }
               });
             }
+          }
           }
         } else {
           // Add new product strictly bound to this company
@@ -4159,7 +4278,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   ) => {
     const compId = mov.companyId || currentCompanyRef.current?.id || currentCompany?.id || 'comp-1';
     const nowIso = new Date().toISOString();
-    const exactTimestamp = mov.timestamp || (mov as any).date || nowIso;
+    let exactTimestamp = mov.timestamp || (mov as any).date || (mov as any).createdAt;
+    if (!exactTimestamp && mov.referenceDoc) {
+      const ref = (mov.referenceDoc || '').trim().toUpperCase();
+      const matchedSale = salesHistory.find((s) => (s.invoiceNumber || '').trim().toUpperCase() === ref);
+      if (matchedSale && (matchedSale.date || (matchedSale as any).createdAt)) {
+        exactTimestamp = matchedSale.date || (matchedSale as any).createdAt;
+      }
+    }
+    if (!exactTimestamp) {
+      exactTimestamp = nowIso;
+    }
     const d = new Date(exactTimestamp);
     const validD = isNaN(d.getTime()) ? new Date() : d;
     const y = validD.getFullYear();
@@ -4795,7 +4924,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     items: Array<{ productId: string; quantity: number; unitPrice?: number }>,
     warehouseId?: string,
     referenceDoc?: string,
-    reason?: string
+    reason?: string,
+    customTimestamp?: string
   ) => {
     if (!items || items.length === 0) return;
 
@@ -4821,7 +4951,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     const affectedStockMap = new Map<string, StockItem>();
     const newMovements: StockMovement[] = [];
-    const nowIso = new Date().toISOString();
+    const nowIso = customTimestamp || new Date().toISOString();
     const opId = currentUser?.id || 'user-1';
 
     items.forEach((item) => {
@@ -5001,7 +5131,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     items: Array<{ productId: string; quantity: number; unitPrice?: number }>,
     warehouseId?: string,
     referenceDoc?: string,
-    reason?: string
+    reason?: string,
+    customTimestamp?: string
   ) => {
     if (!items || items.length === 0) return;
 
@@ -5024,7 +5155,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     const affectedStockMap = new Map<string, StockItem>();
     const newMovements: StockMovement[] = [];
-    const nowIso = new Date().toISOString();
+    const nowIso = customTimestamp || new Date().toISOString();
     const opId = currentUser?.id || 'user-1';
 
     items.forEach((item) => {
@@ -5120,10 +5251,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       // 1. Flush the general pending Supabase queue (includes produtos, stock, etc.)
       const flushedCount = await flushPendingSyncQueue();
 
-      // 2. Also push any un-synced products from the protected offline vault
-      const vaultPushed = await syncOfflineVaultToSupabase();
-
-      // 3. Process IndexedDB sync queue
+      // 2. Process IndexedDB sync queue
       const idbQueue = await offlineDB.getPendingSyncQueue();
       const combinedQueue = [...syncQueue];
       idbQueue.forEach((idbItem) => {
@@ -5156,7 +5284,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       await refreshDBStats();
       sound.playSuccessChime();
 
-      const totalSynced = flushedCount + vaultPushed + combinedQueue.length;
+      const totalSynced = flushedCount + combinedQueue.length;
       if (totalSynced > 0) {
         notify(`Sincronização concluída: ${totalSynced} operações sincronizadas com o servidor.`, 'success');
       }
@@ -5171,40 +5299,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setIsSyncing(false);
     }
   };
-
-  const recoverOfflineProductsAction = useCallback((): number => {
-    const { recoveredProducts, recoveredStock, reportMessage } = recoverLostOfflineProducts(products);
-    if (recoveredProducts.length > 0) {
-      setProducts((prev) => {
-        const mergedMap = new Map<string, Product>();
-        prev.forEach((p) => mergedMap.set(String(p.id), p));
-        recoveredProducts.forEach((p) => mergedMap.set(String(p.id), p));
-        const updated = sortProductsAlphabetically(Array.from(mergedMap.values()));
-        saveToStorage('products', updated);
-        return updated;
-      });
-
-      if (recoveredStock.length > 0) {
-        setStock((prev) => {
-          const stockMap = new Map<string, StockItem>();
-          prev.forEach((s) => stockMap.set(s.id, s));
-          recoveredStock.forEach((s) => stockMap.set(s.id, s));
-          const updated = Array.from(stockMap.values());
-          stockRef.current = updated;
-          saveToStorage('stock', updated);
-          return updated;
-        });
-      }
-
-      offlineDB.cacheProducts(recoveredProducts).catch(() => {});
-      if (reportMessage) {
-        notify(reportMessage, 'success');
-      }
-      sound.playSuccessChime();
-      return recoveredProducts.length;
-    }
-    return 0;
-  }, [products, notify]);
 
   // ==================== POS & GESTÃO DE TURNOS ====================
   const addShiftType = useCallback((typeData: Omit<ShiftType, 'id'>) => {
@@ -5859,7 +5953,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       cart,
       currentStore?.defaultWarehouseId,
       invNumber,
-      `Venda a balcão POS (${invNumber})`
+      `Venda a balcão POS (${invNumber})`,
+      dateStr
     );
 
     // 2. Update Active Shift stats
@@ -6355,7 +6450,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       quote.items,
       currentStore.defaultWarehouseId,
       newInvNumber,
-      `Conversão de ${docLabel} ${quote.invoiceNumber} em ${targetType} ${newInvNumber}`
+      `Conversão de ${docLabel} ${quote.invoiceNumber} em ${targetType} ${newInvNumber}`,
+      dateStr
     );
 
     // 4. Update the quote to 'convertido' and add the new invoice
@@ -7405,7 +7501,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       items,
       order.pickupStoreId ? stores.find((s) => s.id === order.pickupStoreId)?.defaultWarehouseId : currentStore.defaultWarehouseId,
       invNumber,
-      `Venda de Encomenda ${order.orderNumber}`
+      `Venda de Encomenda ${order.orderNumber}`,
+      dateStr
     );
 
     setSalesHistory((prev) => [sale, ...prev]);
@@ -7760,7 +7857,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         updateProduct,
         deleteProduct,
         importProducts,
-        recoverOfflineProductsAction,
         warehouses: scopedWarehouses,
         addWarehouse,
         updateWarehouse,

@@ -131,13 +131,6 @@ export const Sidebar: React.FC = () => {
       permissionModule: 'stock',
     },
     {
-      id: 'physical_inventory',
-      label: 'Contagem Física',
-      icon: FileSpreadsheet,
-      roles: ['gerente', 'comprador', 'admin', 'financeiro'],
-      permissionModule: 'stock',
-    },
-    {
       id: 'finance',
       label: t('nav.finance'),
       icon: Receipt,

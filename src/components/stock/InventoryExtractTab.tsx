@@ -511,6 +511,7 @@ export const InventoryExtractTab: React.FC = () => {
           ? stores.find((st) => st.id === sale.storeId)?.defaultWarehouseId || currentStore.defaultWarehouseId || warehouses[0]?.id
           : currentStore.defaultWarehouseId || warehouses[0]?.id;
 
+        const exactSaleTimestamp = sale.date || (sale as any).createdAt || (sale as any).timestamp;
         (sale.items || []).forEach((item) => {
           if (!item.productId || item.productId.startsWith('custom-')) return;
           const prod = productMap.get(item.productId);
@@ -524,6 +525,9 @@ export const InventoryExtractTab: React.FC = () => {
             referenceDoc: sale.invoiceNumber,
             reason: `Venda ${sale.invoiceNumber} (${sale.customerName || 'Consumidor Final'})`,
             operatorId: sale.operatorId || opId,
+            timestamp: exactSaleTimestamp,
+            date: exactSaleTimestamp,
+            createdAt: exactSaleTimestamp,
           });
           syncedSales++;
         });

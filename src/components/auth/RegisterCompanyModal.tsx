@@ -335,7 +335,7 @@ export const RegisterCompanyModal: React.FC<RegisterCompanyModalProps> = ({
                   Qual é o ramo / setor de atividade do novo cliente?
                 </h3>
                 <p className="text-xs text-neutral-400">
-                  O sistema irá carregar automaticamente configurações fiscais, categorias e produtos pré-configurados para este setor.
+                  O sistema irá configurar automaticamente os impostos e a estrutura de categorias para este setor. O catálogo de artigos inicia limpo para registo sob controlo estrito.
                 </p>
               </div>
 

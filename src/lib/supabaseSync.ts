@@ -1,9 +1,5 @@
 import { supabase, isValidHttpUrl, DEFAULT_SUPABASE_URL, DEFAULT_SUPABASE_ANON_KEY, UserProfile } from './supabase';
 import {
-  markOfflineProductSynced,
-  getPendingOfflineProducts,
-} from '../utils/offlineProductsVault';
-import {
   Product,
   Customer,
   Supplier,
@@ -180,9 +176,6 @@ export async function flushPendingSyncQueue(): Promise<number> {
         const res = await pushRecordToSupabaseDirect(item.table, item.action, item.record, false);
         if (res.success) {
           successCount++;
-          if (item.table === 'produtos' && item.record?.id) {
-            markOfflineProductSynced(String(item.record.id));
-          }
         } else {
           // Keep all pending offline items safely queued, never drop user data
           remaining.push(item);
@@ -196,46 +189,16 @@ export async function flushPendingSyncQueue(): Promise<number> {
     savePendingQueue(remaining);
   }
 
-  // Also sync any un-synced products from the protected offline vault
-  try {
-    const vaultPushed = await syncOfflineVaultToSupabase();
-    successCount += vaultPushed;
-  } catch (vaultErr) {
-    console.warn('Syncing offline products vault:', vaultErr);
-  }
-
   if (successCount > 0) {
     addSyncLog({
       table: 'ALL',
       action: 'PUSH',
       origin: 'LOCAL_APP',
-      description: `🔄 Fila Offline & Cofre: ${successCount} registos sincronizados com sucesso no Supabase!`,
+      description: `🔄 Fila Offline: ${successCount} registos sincronizados com sucesso no Supabase!`,
       status: 'success',
     });
   }
   return successCount;
-}
-
-/**
- * Pushes any products created offline in the protected vault to Supabase
- */
-export async function syncOfflineVaultToSupabase(): Promise<number> {
-  const pendingProducts = getPendingOfflineProducts();
-  if (pendingProducts.length === 0) return 0;
-
-  let pushed = 0;
-  for (const prod of pendingProducts) {
-    try {
-      const res = await pushRecordToSupabaseDirect('produtos', 'upsert', prod, false);
-      if (res.success) {
-        markOfflineProductSynced(String(prod.id));
-        pushed++;
-      }
-    } catch (err) {
-      console.warn(`Failed to push offline vault product ${prod.id}:`, err);
-    }
-  }
-  return pushed;
 }
 
 function addSyncLog(log: Omit<SupabaseSyncLog, 'id' | 'timestamp'>) {

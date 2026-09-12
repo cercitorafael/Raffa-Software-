@@ -49,8 +49,6 @@ const MainLayout: React.FC = () => {
         return <StoresModule />;
       case 'stock':
         return <StockModule />;
-      case 'physical_inventory':
-        return <StockModule initialTab="inventory_count" />;
       case 'finance':
         return <FinanceModule />;
       case 'hr':

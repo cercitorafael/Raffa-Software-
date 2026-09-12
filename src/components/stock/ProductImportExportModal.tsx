@@ -156,9 +156,9 @@ export const ProductImportExportModal: React.FC<ProductImportExportModalProps> =
       warehouseId: targetWarehouseId,
     }));
 
-    const result = importProducts(payload, importStrategy === 'merge' ? 'merge' : 'merge');
+    const result = importProducts(payload, importStrategy);
     notify(
-      `Importação concluída! ${result.added} artigos novos adicionados e ${result.updated} atualizados.`,
+      `Importação concluída com rigor: ${result.added} artigos novos adicionados e ${result.updated} atualizados.`,
       'success'
     );
     onClose();

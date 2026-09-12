@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useApp } from '../../context/AppContext';
-import { formatCurrency, formatDate } from '../../utils/crypto';
+import { formatCurrency, formatDate, formatExactDate, formatExactTime, formatExactDateTime } from '../../utils/crypto';
 import {
   Boxes,
   ArrowUpDown,
@@ -17,11 +17,9 @@ import {
   Edit2,
   Trash2,
   Sliders,
-  Calendar,
   Eye,
   X,
   RefreshCw,
-  Clock,
   ShieldAlert,
   Upload,
   Download,
@@ -34,7 +32,11 @@ import {
   ListPlus,
   FileText,
   Check,
-  ShieldCheck,
+  Clock,
+  Calendar,
+  History,
+  Info,
+  Filter,
 } from 'lucide-react';
 import { Product, Warehouse, LotBatch, ProductCategory, VatRate } from '../../types';
 import { defaultVatRates } from '../../mockData';
@@ -57,6 +59,7 @@ export const StockModule: React.FC<StockModuleProps> = ({ initialTab }) => {
     lots,
     stockMovements,
     stockTransfers,
+    salesHistory,
     currentStore,
     currentCompany,
     currentUser,
@@ -80,7 +83,6 @@ export const StockModule: React.FC<StockModuleProps> = ({ initialTab }) => {
     hasPermission,
     requestConfirm,
     setActiveNavTab,
-    recoverOfflineProductsAction,
     notify,
   } = useApp();
 
@@ -108,13 +110,16 @@ export const StockModule: React.FC<StockModuleProps> = ({ initialTab }) => {
   const [selectedCategoryFilter, setSelectedCategoryFilter] = useState<string>('all');
   const [selectedWarehouseFilter, setSelectedWarehouseFilter] = useState<string>('all');
 
-  // Stock Filter Enhancements: Current vs Past Days, and Location-Specific Available Stock Only
+  // Consulta de Stock Atual vs. Dias Passados
   const [stockDateMode, setStockDateMode] = useState<'current' | 'historical'>('current');
   const [historicalDate, setHistoricalDate] = useState<string>(() => {
-    const yesterday = new Date(Date.now() - 86400000);
-    return yesterday.toISOString().slice(0, 10);
+    const d = new Date();
+    d.setDate(d.getDate() - 1);
+    return d.toISOString().slice(0, 10);
   });
-  const [onlyWithStockInSelectedWarehouse, setOnlyWithStockInSelectedWarehouse] = useState<boolean>(false);
+
+  // Filtro de Stock Disponível no Local Selecionado
+  const [onlyWithStockInSelectedWarehouse, setOnlyWithStockInSelectedWarehouse] = useState(false);
 
   // Product Modals
   const [showNewProductModal, setShowNewProductModal] = useState(false);
@@ -133,6 +138,10 @@ export const StockModule: React.FC<StockModuleProps> = ({ initialTab }) => {
   // Lot Modals
   const [showNewLotModal, setShowNewLotModal] = useState(false);
   const [editingLot, setEditingLot] = useState<LotBatch | null>(null);
+
+  // Movements Tab States (Search & Filter)
+  const [movementSearch, setMovementSearch] = useState('');
+  const [movementTypeFilter, setMovementTypeFilter] = useState<'all' | 'entrada' | 'saida' | 'transferencia' | 'ajuste' | 'devolucao'>('all');
 
   // Product Form State
   const [prodForm, setProdForm] = useState({
@@ -211,61 +220,6 @@ export const StockModule: React.FC<StockModuleProps> = ({ initialTab }) => {
     );
   }
 
-  // Helper to calculate stock either currently (real-time) or at a past cutoff date
-  const calculateProductStock = (
-    productId: string,
-    warehouseId: string,
-    mode: 'current' | 'historical',
-    dateStr: string
-  ): number => {
-    // 1. Current stock in selected warehouse (or all warehouses if 'all')
-    const matchingStock = stock.filter(
-      (s) => s.productId === productId && (warehouseId === 'all' || s.warehouseId === warehouseId)
-    );
-    const currentQty = matchingStock.reduce((sum, s) => sum + Number(s.quantity || 0), 0);
-
-    if (mode === 'current') {
-      return currentQty;
-    }
-
-    // 2. Historical calculation: end of selected date 23:59:59
-    const cutoffTime = new Date(`${dateStr}T23:59:59.999`).getTime();
-    if (isNaN(cutoffTime)) return currentQty;
-
-    // Movements after cutoffTime must be reversed to reconstruct past stock
-    let deltaAfter = 0;
-    stockMovements.forEach((mov) => {
-      if (mov.productId !== productId) return;
-      if (warehouseId !== 'all' && mov.warehouseId !== warehouseId) return;
-      const movDateStr = mov.timestamp || (mov as any).date;
-      if (!movDateStr) return;
-      const movTime = new Date(movDateStr).getTime();
-      if (movTime > cutoffTime) {
-        const qty = Number(mov.quantity || 0);
-        const typeLower = String(mov.type || '').toLowerCase();
-        if (typeLower.includes('entrada') || typeLower === 'devolucao') {
-          deltaAfter += qty;
-        } else if (
-          typeLower.includes('saida') ||
-          typeLower === 'venda' ||
-          typeLower === 'quebra' ||
-          typeLower === 'perda'
-        ) {
-          deltaAfter -= qty;
-        } else if (typeLower === 'ajuste') {
-          const prevQ = (mov as any).previousQuantity;
-          const newQ = (mov as any).newQuantity;
-          if (typeof prevQ === 'number' && typeof newQ === 'number') {
-            deltaAfter += (newQ - prevQ);
-          }
-        }
-      }
-    });
-
-    const historicalQty = currentQty - deltaAfter;
-    return Math.max(0, historicalQty);
-  };
-
   // Selected warehouse object for dynamic location labels
   const selectedWarehouseObj = useMemo(
     () => warehouses.find((w) => w.id === selectedWarehouseFilter),
@@ -273,67 +227,210 @@ export const StockModule: React.FC<StockModuleProps> = ({ initialTab }) => {
   );
   const selectedWarehouseName = selectedWarehouseObj ? selectedWarehouseObj.name : 'Todos os Armazéns';
 
-  // Filtered Stock Table (Strictly alphabetical across all sectors)
-  const filteredProducts = products
-    .filter((p) => {
-      const q = searchQuery.toLowerCase();
-      const matchesSearch =
-        p.name.toLowerCase().includes(q) ||
-        p.sku.toLowerCase().includes(q) ||
-        p.barcode.includes(q);
-      const matchesCat = selectedCategoryFilter === 'all' || p.category === selectedCategoryFilter;
+  // Cálculo de Stock Atual vs. Posição Reconstituída em Dias Passados
+  const calculateProductStock = useMemo(() => {
+    return (
+      productId: string,
+      warehouseId: string,
+      mode: 'current' | 'historical',
+      dateStr: string
+    ): number => {
+      // 1. Posição atual de stock no armazém selecionado ou global
+      const matchingStock = stock.filter(
+        (s) => s.productId === productId && (warehouseId === 'all' || s.warehouseId === warehouseId)
+      );
+      const currentQty = matchingStock.reduce((sum, s) => sum + Number(s.quantity || 0), 0);
 
-      // Option: show ONLY products with available stock in the selected location
-      if (onlyWithStockInSelectedWarehouse && selectedWarehouseFilter !== 'all') {
-        const whQty = calculateProductStock(p.id, selectedWarehouseFilter, stockDateMode, historicalDate);
-        if (whQty <= 0) return false;
+      if (mode === 'current') {
+        return currentQty;
       }
 
-      return matchesSearch && matchesCat;
-    })
-    .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'pt', { sensitivity: 'base', numeric: true }));
+      // 2. Data de corte histórica: final do dia selecionado às 23:59:59.999
+      const cutoffTime = new Date(`${dateStr}T23:59:59.999`).getTime();
+      if (isNaN(cutoffTime)) return currentQty;
 
-  // Calculate Valuation & Stock Units according to active location and date mode
-  const relevantStockItems = useMemo(() => {
-    return stock.filter((item) => selectedWarehouseFilter === 'all' || item.warehouseId === selectedWarehouseFilter);
-  }, [stock, selectedWarehouseFilter]);
+      // Reconstitui a posição matemática revertendo movimentos posteriores à data de corte
+      let deltaAfter = 0;
+      stockMovements.forEach((mov) => {
+        if (mov.productId !== productId) return;
+        if (warehouseId !== 'all' && mov.warehouseId !== warehouseId) return;
+        const movDateStr = mov.timestamp || (mov as any).date;
+        if (!movDateStr) return;
+        const movTime = new Date(movDateStr).getTime();
+        if (movTime > cutoffTime) {
+          const qty = Number(mov.quantity || 0);
+          const typeLower = String(mov.type || '').toLowerCase();
+          if (typeLower.includes('entrada') || typeLower === 'devolucao' || typeLower.includes('compra')) {
+            deltaAfter += qty;
+          } else if (
+            typeLower.includes('saida') ||
+            typeLower === 'venda' ||
+            typeLower === 'quebra' ||
+            typeLower === 'perda' ||
+            typeLower.includes('consumo')
+          ) {
+            deltaAfter -= qty;
+          } else if (typeLower === 'ajuste') {
+            const prevQ = (mov as any).previousQuantity;
+            const newQ = (mov as any).newQuantity;
+            if (typeof prevQ === 'number' && typeof newQ === 'number') {
+              deltaAfter += (newQ - prevQ);
+            }
+          }
+        }
+      });
+
+      const historicalQty = currentQty - deltaAfter;
+      return Math.max(0, historicalQty);
+    };
+  }, [stock, stockMovements]);
+
+  // Filtered Stock Table (Strictly alphabetical across all sectors with warehouse & stock filters)
+  const filteredProducts = useMemo(() => {
+    return products
+      .filter((p) => {
+        const q = searchQuery.toLowerCase();
+        const matchesSearch =
+          p.name.toLowerCase().includes(q) ||
+          p.sku.toLowerCase().includes(q) ||
+          (p.barcode && p.barcode.includes(q));
+        const matchesCat = selectedCategoryFilter === 'all' || p.category === selectedCategoryFilter;
+        if (!matchesSearch || !matchesCat) return false;
+
+        // Filtro de Stock Disponível no Local Selecionado
+        if (onlyWithStockInSelectedWarehouse) {
+          const availableQty = calculateProductStock(p.id, selectedWarehouseFilter, stockDateMode, historicalDate);
+          if (availableQty <= 0) return false;
+        }
+
+        return true;
+      })
+      .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'pt', { sensitivity: 'base', numeric: true }));
+  }, [
+    products,
+    searchQuery,
+    selectedCategoryFilter,
+    onlyWithStockInSelectedWarehouse,
+    selectedWarehouseFilter,
+    stockDateMode,
+    historicalDate,
+    calculateProductStock,
+  ]);
+
+  // Calculate Valuation & Stock Units according to active location and historical date
+  const totalStockUnits = useMemo(() => {
+    return products.reduce((sum, p) => {
+      return sum + calculateProductStock(p.id, selectedWarehouseFilter, stockDateMode, historicalDate);
+    }, 0);
+  }, [products, selectedWarehouseFilter, stockDateMode, historicalDate, calculateProductStock]);
 
   const totalStockValue = useMemo(() => {
-    if (stockDateMode === 'current') {
-      return relevantStockItems.reduce((sum, item) => sum + item.quantity * item.avgCost, 0);
-    }
-    return products.reduce((sum, prod) => {
-      const pastQty = calculateProductStock(prod.id, selectedWarehouseFilter, 'historical', historicalDate);
-      return sum + pastQty * (prod.costPrice || 0);
+    return products.reduce((sum, p) => {
+      const qty = calculateProductStock(p.id, selectedWarehouseFilter, stockDateMode, historicalDate);
+      return sum + qty * (Number(p.costPrice) || 0);
     }, 0);
-  }, [relevantStockItems, stockDateMode, products, selectedWarehouseFilter, historicalDate, stockMovements]);
+  }, [products, selectedWarehouseFilter, stockDateMode, historicalDate, calculateProductStock]);
 
-  const totalStockUnits = useMemo(() => {
-    if (stockDateMode === 'current') {
-      return relevantStockItems.reduce((sum, item) => sum + item.quantity, 0);
-    }
-    return products.reduce((sum, prod) => {
-      return sum + calculateProductStock(prod.id, selectedWarehouseFilter, 'historical', historicalDate);
-    }, 0);
-  }, [relevantStockItems, stockDateMode, products, selectedWarehouseFilter, historicalDate, stockMovements]);
+  const lowStockProducts = useMemo(() => {
+    return products.filter((p) => {
+      const totalQty = calculateProductStock(p.id, selectedWarehouseFilter, stockDateMode, historicalDate);
+      return totalQty <= p.minStock;
+    });
+  }, [products, selectedWarehouseFilter, stockDateMode, historicalDate, calculateProductStock]);
 
-  const lowStockProducts = products.filter((p) => {
-    const totalQty = calculateProductStock(p.id, selectedWarehouseFilter, stockDateMode, historicalDate);
-    return totalQty <= p.minStock;
-  });
+  // Map invoices to exact issuance date for precise movement timestamps
+  const salesMap = useMemo(() => {
+    const map = new Map<string, any>();
+    (salesHistory || []).forEach((s) => {
+      if (s.invoiceNumber) {
+        map.set(s.invoiceNumber.trim().toUpperCase(), s);
+      }
+    });
+    return map;
+  }, [salesHistory]);
 
-  // Handle Save Product (Create or Edit)
+  // Movements sorted chronologically (newest first) with exact timestamp resolution and filtering
+  const filteredAndSortedMovements = useMemo(() => {
+    const list = [...stockMovements].map((mov) => {
+      const ref = (mov.referenceDoc || '').trim().toUpperCase();
+      const sale = ref ? salesMap.get(ref) : undefined;
+      const exactTimestamp =
+        (sale?.date && (mov.timestamp?.includes('21:27:56') || !mov.timestamp) ? sale.date : mov.timestamp) ||
+        sale?.date ||
+        mov.timestamp ||
+        (mov as any).date ||
+        (mov as any).createdAt ||
+        '';
+      return {
+        ...mov,
+        resolvedExactTimestamp: exactTimestamp,
+      };
+    });
+
+    // Chronological sort: newest first
+    list.sort((a, b) => {
+      const timeA = new Date(a.resolvedExactTimestamp || 0).getTime();
+      const timeB = new Date(b.resolvedExactTimestamp || 0).getTime();
+      return timeB - timeA;
+    });
+
+    return list.filter((mov) => {
+      if (movementTypeFilter !== 'all' && mov.type !== movementTypeFilter) {
+        return false;
+      }
+      if (!movementSearch.trim()) return true;
+      const q = movementSearch.toLowerCase().trim();
+      const prod = products.find((p) => p.id === mov.productId);
+      const prodName = (prod?.name || '').toLowerCase();
+      const prodSku = (prod?.sku || '').toLowerCase();
+      const refDoc = (mov.referenceDoc || '').toLowerCase();
+      const reason = (mov.reason || '').toLowerCase();
+      const movNum = (mov.movementNumber || '').toLowerCase();
+      return (
+        prodName.includes(q) ||
+        prodSku.includes(q) ||
+        refDoc.includes(q) ||
+        reason.includes(q) ||
+        movNum.includes(q)
+      );
+    });
+  }, [stockMovements, salesMap, movementTypeFilter, movementSearch, products]);
+
+  // Handle Save Product (Create or Edit) with strict validation & rigor
   const handleSaveProduct = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!prodForm.name || !prodForm.sku) return;
+    const name = prodForm.name.trim();
+    const sku = prodForm.sku.trim();
+
+    if (!name || name.length < 2) {
+      notify('Rigor de Registo: O nome do artigo é obrigatório e deve ter no mínimo 2 caracteres.', 'error');
+      return;
+    }
+
+    if (!sku) {
+      notify('Rigor de Registo: O código de referência / SKU é obrigatório.', 'error');
+      return;
+    }
+
+    const price = Number(prodForm.price);
+    if (isNaN(price) || price < 0) {
+      notify('Rigor Financeiro: O preço de venda deve ser um número válido maior ou igual a zero.', 'error');
+      return;
+    }
+
+    const costPrice = Number(prodForm.costPrice);
+    if (isNaN(costPrice) || costPrice < 0) {
+      notify('Rigor Financeiro: O preço de custo (CMP) deve ser um número válido maior ou igual a zero.', 'error');
+      return;
+    }
 
     if (editingProduct) {
-      updateProduct(editingProduct.id, {
-        name: prodForm.name,
-        sku: prodForm.sku,
-        barcode: prodForm.barcode,
-        price: Number(prodForm.price),
-        costPrice: Number(prodForm.costPrice),
+      const success = updateProduct(editingProduct.id, {
+        name,
+        sku,
+        barcode: prodForm.barcode.trim(),
+        price,
+        costPrice,
         taxRate: Number(prodForm.taxRate),
         category: prodForm.category,
         unit: prodForm.unit,
@@ -344,16 +441,17 @@ export const StockModule: React.FC<StockModuleProps> = ({ initialTab }) => {
         imageUrl: prodForm.imageUrl,
         description: prodForm.description,
       });
+      if (!success) return;
       setEditingProduct(null);
     } else {
-      addProduct({
+      const success = addProduct({
         companyId: currentCompany.id,
-        name: prodForm.name,
-        sku: prodForm.sku,
-        barcode: prodForm.barcode || `560${Math.floor(1000000000 + Math.random() * 9000000000)}`,
+        name,
+        sku,
+        barcode: prodForm.barcode.trim(),
         category: prodForm.category,
-        price: Number(prodForm.price),
-        costPrice: Number(prodForm.costPrice),
+        price,
+        costPrice,
         taxRate: Number(prodForm.taxRate),
         unit: prodForm.unit,
         minStock: Number(prodForm.minStock),
@@ -363,6 +461,7 @@ export const StockModule: React.FC<StockModuleProps> = ({ initialTab }) => {
         imageUrl: prodForm.imageUrl,
         description: prodForm.description,
       });
+      if (!success) return;
       setShowNewProductModal(false);
     }
 
@@ -549,21 +648,6 @@ export const StockModule: React.FC<StockModuleProps> = ({ initialTab }) => {
               <span>Gestão de Categorias</span>
             </button>
 
-            <button
-              id="stock-offline-vault-btn"
-              onClick={() => {
-                const recovered = recoverOfflineProductsAction();
-                if (recovered === 0) {
-                  notify('Todos os artigos offline estão devidamente protegidos no cofre e sincronizados.', 'info');
-                }
-              }}
-              className="px-3.5 py-2 bg-[#1a1a1a] hover:bg-[#252525] text-sky-400 hover:text-sky-300 border border-sky-500/30 hover:border-sky-500/60 font-medium text-xs rounded-lg transition-colors flex items-center space-x-1.5 cursor-pointer shadow-xs"
-              title="Verificar integridade do cofre offline e restaurar artigos"
-            >
-              <ShieldCheck className="w-4 h-4 text-sky-400" />
-              <span>Cofre Offline</span>
-            </button>
-
             {canCreate && (
               <button
                 onClick={() => {
@@ -726,99 +810,105 @@ export const StockModule: React.FC<StockModuleProps> = ({ initialTab }) => {
                 </div>
               </div>
 
-              {/* Secondary Row: Stock Date Toggle (Current vs Past Days) and Location Only Option */}
-              <div className="flex flex-wrap items-center justify-between gap-3 pt-2.5 border-t border-[#262626]/80 text-xs">
-                {/* 1. Toggle Button: Stock Atual vs Dias Passados */}
+              {/* Second Row: Consulta de Stock Atual vs. Dias Passados & Filtro de Stock Disponível no Local Selecionado */}
+              <div className="pt-2.5 border-t border-[#262626] flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
+                {/* 1. Consulta de Stock Atual vs. Dias Passados */}
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-neutral-400 text-[11px] font-medium flex items-center gap-1.5">
-                    <Calendar className="w-3.5 h-3.5 text-[#c5a47e]" />
-                    <span>Visualização de Stock:</span>
+                  <span className="text-[11px] font-medium text-neutral-400 flex items-center gap-1">
+                    <Clock className="w-3.5 h-3.5 text-[#c5a47e]" />
+                    Consulta de Stock:
                   </span>
-
-                  <div className="inline-flex rounded-lg bg-[#0a0a0a] p-0.5 border border-[#262626]">
+                  <div className="inline-flex rounded-lg p-0.5 bg-[#0d0d0d] border border-[#262626]">
                     <button
                       type="button"
                       onClick={() => setStockDateMode('current')}
-                      className={`px-3 py-1 rounded-md text-[11px] font-medium transition-colors flex items-center space-x-1 cursor-pointer ${
+                      className={`px-2.5 py-1 text-xs rounded-md font-medium transition-colors flex items-center gap-1.5 cursor-pointer ${
                         stockDateMode === 'current'
-                          ? 'bg-[#c5a47e] text-neutral-950 font-bold shadow-xs'
+                          ? 'bg-[#c5a47e] text-neutral-950 shadow-xs'
                           : 'text-neutral-400 hover:text-neutral-200'
                       }`}
                     >
-                      <span>Stock Atual (Tempo Real)</span>
+                      <span className={`w-1.5 h-1.5 rounded-full ${stockDateMode === 'current' ? 'bg-neutral-950' : 'bg-emerald-500'}`} />
+                      Stock Atual (Tempo Real)
                     </button>
                     <button
                       type="button"
                       onClick={() => setStockDateMode('historical')}
-                      className={`px-3 py-1 rounded-md text-[11px] font-medium transition-colors flex items-center space-x-1 cursor-pointer ${
+                      className={`px-2.5 py-1 text-xs rounded-md font-medium transition-colors flex items-center gap-1.5 cursor-pointer ${
                         stockDateMode === 'historical'
-                          ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 font-bold shadow-xs'
+                          ? 'bg-amber-500 text-neutral-950 shadow-xs'
                           : 'text-neutral-400 hover:text-neutral-200'
                       }`}
                     >
-                      <Clock className="w-3 h-3 text-amber-400" />
-                      <span>Stock em Dias Passados</span>
+                      <History className="w-3 h-3" />
+                      Stock em Dias Passados
                     </button>
                   </div>
 
                   {stockDateMode === 'historical' && (
-                    <div className="flex items-center space-x-1.5 bg-[#191612] px-2.5 py-1 rounded-lg border border-amber-500/30">
-                      <span className="text-[11px] text-amber-300">Data:</span>
+                    <div className="flex items-center gap-1.5 bg-[#0d0d0d] border border-amber-500/40 rounded-lg px-2.5 py-1 animate-fadeIn">
+                      <Calendar className="w-3.5 h-3.5 text-amber-400" />
                       <input
                         type="date"
-                        value={historicalDate}
                         max={new Date().toISOString().slice(0, 10)}
+                        value={historicalDate}
                         onChange={(e) => setHistoricalDate(e.target.value)}
-                        className="bg-[#0d0d0d] border border-amber-500/40 text-amber-200 rounded px-2 py-0.5 text-xs focus:outline-hidden font-mono"
+                        className="bg-transparent text-xs text-amber-300 font-mono focus:outline-hidden cursor-pointer"
                       />
-                      <span className="text-[10px] text-amber-400/80">
-                        (Posição às 23:59)
-                      </span>
+                      <span className="text-[10px] text-neutral-500 font-mono">às 23:59</span>
                     </div>
                   )}
                 </div>
 
-                {/* 2. Option: Show available stock in the selected location ONLY */}
-                <div className="flex items-center space-x-2">
-                  {selectedWarehouseFilter !== 'all' ? (
-                    <label className="inline-flex items-center space-x-2 px-3 py-1 rounded-lg bg-[#1a1a1a] border border-emerald-500/30 hover:border-emerald-500/50 cursor-pointer transition-colors text-neutral-200">
-                      <input
-                        type="checkbox"
-                        checked={onlyWithStockInSelectedWarehouse}
-                        onChange={(e) => setOnlyWithStockInSelectedWarehouse(e.target.checked)}
-                        className="rounded border-[#444] text-emerald-500 focus:ring-0 focus:outline-hidden cursor-pointer"
-                      />
-                      <span className="text-[11px] text-neutral-300">
-                        Mostrar apenas stock disponível em <strong className="text-emerald-400">{selectedWarehouseName}</strong>
-                      </span>
-                    </label>
-                  ) : (
-                    <span className="text-[11px] text-neutral-500 italic">
-                      💡 Selecione um armazém específico para filtrar apenas artigos com stock disponível nesse lugar.
+                {/* 2. Filtro de Stock Disponível no Local Selecionado */}
+                <div className="flex items-center">
+                  <label
+                    className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs cursor-pointer transition-colors ${
+                      onlyWithStockInSelectedWarehouse
+                        ? 'bg-[#c5a47e]/15 border-[#c5a47e]/50 text-[#c5a47e]'
+                        : 'bg-[#0d0d0d] border-[#262626] text-neutral-400 hover:text-neutral-300'
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={onlyWithStockInSelectedWarehouse}
+                      onChange={(e) => setOnlyWithStockInSelectedWarehouse(e.target.checked)}
+                      className="rounded border-[#333] text-[#c5a47e] focus:ring-0 focus:ring-offset-0 bg-[#1a1a1a] cursor-pointer"
+                    />
+                    <Filter className="w-3.5 h-3.5" />
+                    <span>
+                      {selectedWarehouseFilter !== 'all'
+                        ? `Apenas com stock disponível em "${selectedWarehouseName}"`
+                        : 'Apenas artigos com stock disponível (> 0)'}
                     </span>
-                  )}
+                    {onlyWithStockInSelectedWarehouse && (
+                      <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-[#c5a47e]/20 text-[#c5a47e] font-semibold">
+                        Ativo
+                      </span>
+                    )}
+                  </label>
                 </div>
               </div>
-
-              {/* Informational banner when in historical mode */}
-              {stockDateMode === 'historical' && (
-                <div className="bg-amber-950/20 border border-amber-500/30 rounded-lg p-2 flex items-center justify-between text-xs text-amber-300">
-                  <div className="flex items-center space-x-2">
-                    <Clock className="w-4 h-4 text-amber-400 shrink-0" />
-                    <span>
-                      Modo Histórico Ativo: Visualizando stock acumulado na data de <strong>{new Date(`${historicalDate}T12:00:00`).toLocaleDateString('pt-PT')}</strong>.
-                      {selectedWarehouseFilter !== 'all' && ` Filtrado para o armazém "${selectedWarehouseName}".`}
-                    </span>
-                  </div>
-                  <button
-                    onClick={() => setStockDateMode('current')}
-                    className="text-[11px] underline hover:text-amber-200 cursor-pointer ml-2"
-                  >
-                    Voltar ao Stock Atual
-                  </button>
-                </div>
-              )}
             </div>
+
+            {/* Historical Mode Alert Banner */}
+            {stockDateMode === 'historical' && (
+              <div className="flex items-center justify-between px-4 py-2.5 bg-amber-500/10 border border-amber-500/30 rounded-xl text-amber-300 text-xs">
+                <div className="flex items-center gap-2">
+                  <Info className="w-4 h-4 text-amber-400 shrink-0" />
+                  <span>
+                    <strong>Modo de Consulta Histórica Ativo:</strong> A visualizar a posição de stock reconstituída a <strong>{historicalDate} às 23:59</strong> {selectedWarehouseFilter !== 'all' ? `no armazém "${selectedWarehouseName}"` : 'em todos os armazéns'}. As quantidades e valorizações refletem essa data.
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setStockDateMode('current')}
+                  className="ml-3 px-2.5 py-1 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 rounded-md text-[11px] font-medium transition-colors whitespace-nowrap cursor-pointer"
+                >
+                  Voltar ao Stock Atual
+                </button>
+              </div>
+            )}
 
             {/* Products Table */}
             <div className="bg-[#141414] border border-[#262626] rounded-xl overflow-hidden shadow-xs">
@@ -837,10 +927,8 @@ export const StockModule: React.FC<StockModuleProps> = ({ initialTab }) => {
                             ? `Stock em ${selectedWarehouseName}`
                             : 'Stock Global'}
                         </span>
-                        <span className="text-[9px] font-normal normal-case text-neutral-400">
-                          {stockDateMode === 'historical'
-                            ? `em ${new Date(`${historicalDate}T12:00:00`).toLocaleDateString('pt-PT')}`
-                            : 'Disponível Atual'}
+                        <span className="text-[9px] font-normal text-amber-400 font-mono tracking-normal normal-case">
+                          {stockDateMode === 'historical' ? `(em ${historicalDate} 23:59)` : '(Tempo Real)'}
                         </span>
                       </div>
                     </th>
@@ -850,12 +938,7 @@ export const StockModule: React.FC<StockModuleProps> = ({ initialTab }) => {
                 </thead>
                 <tbody className="divide-y divide-[#262626]">
                   {filteredProducts.map((prod) => {
-                    const totalQty = calculateProductStock(
-                      prod.id,
-                      selectedWarehouseFilter,
-                      stockDateMode,
-                      historicalDate
-                    );
+                    const totalQty = calculateProductStock(prod.id, selectedWarehouseFilter, stockDateMode, historicalDate);
                     const isLow = totalQty <= prod.minStock;
                     const cat = categories.find((c) => c.id === prod.category);
 
@@ -910,15 +993,13 @@ export const StockModule: React.FC<StockModuleProps> = ({ initialTab }) => {
                             <span className={isLow ? 'text-rose-400 font-bold' : 'text-neutral-200'}>
                               {totalQty} {prod.unit}
                             </span>
-                            {stockDateMode === 'historical' ? (
-                              <span className="text-[10px] text-amber-400/90 font-normal">
-                                Histórico
-                              </span>
-                            ) : (
-                              <span className="text-[10px] text-neutral-500 font-normal">
-                                Min: {prod.minStock} / Max: {prod.maxStock}
-                              </span>
-                            )}
+                            <span className="text-[10px] text-neutral-500 font-normal">
+                              {stockDateMode === 'historical' ? (
+                                <span className="text-amber-400/90 font-mono">Posição Reconstituída</span>
+                              ) : (
+                                `Min: ${prod.minStock} / Max: ${prod.maxStock}`
+                              )}
+                            </span>
                           </div>
                         </td>
                         <td className="px-4 py-3 text-center">
@@ -975,6 +1056,21 @@ export const StockModule: React.FC<StockModuleProps> = ({ initialTab }) => {
                       </tr>
                     );
                   })}
+                  {filteredProducts.length === 0 && (
+                    <tr>
+                      <td colSpan={8} className="px-4 py-12 text-center text-neutral-500">
+                        <div className="flex flex-col items-center justify-center space-y-2">
+                          <Package className="w-8 h-8 text-neutral-600" />
+                          <div className="text-sm font-medium text-neutral-400">Nenhum artigo encontrado</div>
+                          <div className="text-xs text-neutral-500 max-w-md">
+                            {onlyWithStockInSelectedWarehouse
+                              ? `Não foram encontrados artigos com stock positivo (> 0) ${selectedWarehouseFilter !== 'all' ? `no armazém "${selectedWarehouseName}"` : 'em stock global'}${stockDateMode === 'historical' ? ` na data ${historicalDate}` : ''}.`
+                              : 'Não existem artigos correspondentes aos critérios de pesquisa e filtros selecionados.'}
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
             </div>
@@ -1190,11 +1286,65 @@ export const StockModule: React.FC<StockModuleProps> = ({ initialTab }) => {
         {/* TAB 4: MOVEMENTS LOG CRUD */}
         {activeTab === 'movements' && (
           <div className="space-y-4">
+            {/* Header / Filter Toolbar */}
+            <div className="bg-[#141414] border border-[#262626] rounded-xl p-4 flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
+              <div className="flex flex-1 items-center gap-3 w-full md:w-auto">
+                <div className="relative flex-1 max-w-md">
+                  <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-neutral-500" />
+                  <input
+                    type="text"
+                    value={movementSearch}
+                    onChange={(e) => setMovementSearch(e.target.value)}
+                    placeholder="Pesquisar por artigo, doc ref, motivo, SKU..."
+                    className="w-full bg-[#1e1e1e] border border-[#333] rounded-lg pl-9 pr-3 py-2 text-xs text-neutral-200 placeholder-neutral-500 focus:outline-none focus:border-[#c5a47e]"
+                  />
+                  {movementSearch && (
+                    <button
+                      onClick={() => setMovementSearch('')}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-neutral-500 hover:text-neutral-300"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Type Filter Pills */}
+              <div className="flex flex-wrap items-center gap-1.5 w-full md:w-auto">
+                {(
+                  [
+                    { id: 'all', label: 'Todos' },
+                    { id: 'entrada', label: 'Entradas' },
+                    { id: 'saida', label: 'Saídas' },
+                    { id: 'transferencia', label: 'Transf.' },
+                    { id: 'ajuste', label: 'Ajustes' },
+                    { id: 'devolucao', label: 'Devoluções' },
+                  ] as const
+                ).map((t) => {
+                  const isActive = movementTypeFilter === t.id;
+                  return (
+                    <button
+                      key={t.id}
+                      onClick={() => setMovementTypeFilter(t.id)}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${
+                        isActive
+                          ? 'bg-[#c5a47e] text-neutral-950 font-semibold shadow-sm'
+                          : 'bg-[#1e1e1e] text-neutral-400 hover:text-neutral-200 border border-[#2a2a2a]'
+                      }`}
+                    >
+                      {t.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Movements Table */}
             <div className="bg-[#141414] border border-[#262626] rounded-xl overflow-hidden">
               <table className="w-full text-left text-xs text-neutral-300">
                 <thead className="bg-[#1a1a1a] text-neutral-400 font-medium uppercase tracking-wider text-[10px] border-b border-[#262626]">
                   <tr>
-                    <th className="px-4 py-3">Data/Hora</th>
+                    <th className="px-4 py-3">Data e Hora Exata</th>
                     <th className="px-4 py-3">Tipo</th>
                     <th className="px-4 py-3">Artigo</th>
                     <th className="px-4 py-3">Origem &rarr; Destino</th>
@@ -1205,33 +1355,80 @@ export const StockModule: React.FC<StockModuleProps> = ({ initialTab }) => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#262626]">
-                  {stockMovements.map((mov) => {
+                  {filteredAndSortedMovements.map((mov) => {
                     const prod = products.find((p) => p.id === mov.productId);
                     const fromWh = warehouses.find((w) => w.id === mov.originWarehouseId);
                     const toWh = warehouses.find((w) => w.id === mov.targetWarehouseId);
+                    const exactTs = mov.resolvedExactTimestamp;
 
                     return (
                       <tr key={mov.id} className="hover:bg-[#191919] transition-colors">
-                        <td className="px-4 py-3 font-mono text-neutral-400">{formatDate(mov.timestamp)}</td>
+                        <td
+                          className="px-4 py-3 whitespace-nowrap font-mono"
+                          title={`Data e Hora Exata: ${formatExactDateTime(exactTs, true)} (Timestamp: ${exactTs || '—'})`}
+                        >
+                          <div className="flex flex-col leading-tight">
+                            <span className="text-neutral-200 font-semibold text-xs">
+                              {formatExactDate(exactTs)}
+                            </span>
+                            <span className="text-neutral-400 text-[10px] flex items-center space-x-1 mt-0.5">
+                              <Clock className="w-2.5 h-2.5 text-[#c5a47e] shrink-0" />
+                              <span>{formatExactTime(exactTs, true)}</span>
+                            </span>
+                          </div>
+                        </td>
                         <td className="px-4 py-3">
-                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium uppercase ${
-                            mov.type === 'entrada' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30' :
-                            mov.type === 'saida' ? 'bg-rose-500/10 text-rose-400 border border-rose-500/30' :
-                            mov.type === 'transferencia' ? 'bg-cyan-500/10 text-cyan-400 border border-cyan-500/30' :
-                            'bg-amber-500/10 text-amber-400 border border-amber-500/30'
-                          }`}>
+                          <span
+                            className={`px-2 py-0.5 rounded-full text-[10px] font-medium uppercase ${
+                              mov.type === 'entrada'
+                                ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30'
+                                : mov.type === 'saida'
+                                ? 'bg-rose-500/10 text-rose-400 border border-rose-500/30'
+                                : mov.type === 'transferencia'
+                                ? 'bg-cyan-500/10 text-cyan-400 border border-cyan-500/30'
+                                : mov.type === 'devolucao'
+                                ? 'bg-purple-500/10 text-purple-400 border border-purple-500/30'
+                                : 'bg-amber-500/10 text-amber-400 border border-amber-500/30'
+                            }`}
+                          >
                             {mov.type}
                           </span>
                         </td>
-                        <td className="px-4 py-3 font-medium text-neutral-200">{prod?.name || mov.productId}</td>
+                        <td className="px-4 py-3">
+                          <div className="font-medium text-neutral-200">{prod?.name || mov.productId}</div>
+                          {prod?.sku && (
+                            <div className="text-[10px] font-mono text-neutral-500">SKU: {prod.sku}</div>
+                          )}
+                        </td>
                         <td className="px-4 py-3 text-neutral-400">
                           {fromWh?.name || '—'} &rarr; {toWh?.name || '—'}
                         </td>
                         <td className="px-4 py-3 text-right font-mono font-semibold text-neutral-200">
-                          {mov.quantity}
+                          <span
+                            className={
+                              mov.type === 'saida'
+                                ? 'text-rose-400'
+                                : mov.type === 'entrada' || mov.type === 'devolucao'
+                                ? 'text-emerald-400'
+                                : 'text-neutral-200'
+                            }
+                          >
+                            {mov.type === 'saida' ? '-' : mov.type === 'entrada' ? '+' : ''}
+                            {mov.quantity}
+                          </span>
                         </td>
-                        <td className="px-4 py-3 font-mono text-neutral-400">{mov.referenceDoc || '—'}</td>
-                        <td className="px-4 py-3 text-neutral-400">{mov.reason || '—'}</td>
+                        <td className="px-4 py-3 font-mono text-neutral-300">
+                          {mov.referenceDoc ? (
+                            <span className="bg-[#1e1e1e] px-1.5 py-0.5 rounded border border-[#333] text-[11px]">
+                              {mov.referenceDoc}
+                            </span>
+                          ) : (
+                            <span className="text-neutral-500">—</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-neutral-400 max-w-xs truncate" title={mov.reason}>
+                          {mov.reason || '—'}
+                        </td>
                         <td className="px-4 py-3 text-right">
                           {canDelete && (
                             <button
@@ -1246,10 +1443,12 @@ export const StockModule: React.FC<StockModuleProps> = ({ initialTab }) => {
                       </tr>
                     );
                   })}
-                  {stockMovements.length === 0 && (
+                  {filteredAndSortedMovements.length === 0 && (
                     <tr>
-                      <td colSpan={8} className="text-center py-8 text-neutral-500">
-                        Nenhum movimento de stock registado ainda.
+                      <td colSpan={8} className="text-center py-10 text-neutral-500">
+                        {stockMovements.length === 0
+                          ? 'Nenhum movimento de stock registado ainda.'
+                          : 'Nenhum movimento encontrado para os filtros selecionados.'}
                       </td>
                     </tr>
                   )}

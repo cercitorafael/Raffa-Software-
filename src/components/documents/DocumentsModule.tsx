@@ -953,7 +953,8 @@ export const DocumentsModule: React.FC = () => {
           docItems,
           currentStore.defaultWarehouseId,
           invNumber,
-          `Emissão de Nota de Crédito ${invNumber} ref. ${originInvoiceNumber || ''} (Devolução ao Stock)`
+          `Emissão de Nota de Crédito ${invNumber} ref. ${originInvoiceNumber || ''} (Devolução ao Stock)`,
+          dateStr
         );
       }
     } else if (isInventoryDocument) {
@@ -961,7 +962,8 @@ export const DocumentsModule: React.FC = () => {
         docItems,
         currentStore.defaultWarehouseId,
         invNumber,
-        `Emissão de ${docType} ${invNumber}`
+        `Emissão de ${docType} ${invNumber}`,
+        dateStr
       );
     }
 
