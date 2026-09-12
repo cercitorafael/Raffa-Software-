@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useApp } from '../../context/AppContext';
-import { formatCurrency, formatDate } from '../../utils/crypto';
+import { formatCurrency, formatDate, formatExactDate, formatExactTime, formatExactDateTime } from '../../utils/crypto';
 import {
   Users,
   Clock,
@@ -765,9 +765,30 @@ export const HRModule: React.FC = () => {
                             <span>{te.employeeName}</span>
                           </div>
                         </td>
-                        <td className="px-4 py-3 font-mono text-neutral-400">{formatDate(te.clockIn)}</td>
-                        <td className="px-4 py-3 font-mono text-neutral-400">
-                          {te.clockOut ? formatDate(te.clockOut) : <span className="text-emerald-400 font-semibold">Em Curso...</span>}
+                        <td className="px-4 py-3 whitespace-nowrap" title={`Timestamp ISO: ${te.clockIn}`}>
+                          <div className="flex flex-col font-mono text-[11px] leading-tight">
+                            <span className="text-neutral-200">{formatExactDate(te.clockIn)}</span>
+                            <span className="text-neutral-400 text-[10px] flex items-center space-x-1 mt-0.5">
+                              <Clock className="w-2.5 h-2.5 text-[#c5a47e] shrink-0" />
+                              <span>{formatExactTime(te.clockIn, true)}</span>
+                            </span>
+                          </div>
+                        </td>
+                        <td className="px-4 py-3 whitespace-nowrap" title={te.clockOut ? `Timestamp ISO: ${te.clockOut}` : 'Ponto em aberto'}>
+                          {te.clockOut ? (
+                            <div className="flex flex-col font-mono text-[11px] leading-tight">
+                              <span className="text-neutral-200">{formatExactDate(te.clockOut)}</span>
+                              <span className="text-neutral-400 text-[10px] flex items-center space-x-1 mt-0.5">
+                                <Clock className="w-2.5 h-2.5 text-emerald-400 shrink-0" />
+                                <span>{formatExactTime(te.clockOut, true)}</span>
+                              </span>
+                            </div>
+                          ) : (
+                            <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 text-[10px] font-semibold animate-pulse">
+                              <Clock className="w-2.5 h-2.5" />
+                              <span>Em Curso...</span>
+                            </span>
+                          )}
                         </td>
                         <td className="px-4 py-3 text-right font-mono font-semibold text-neutral-200">
                           {te.totalHours ? `${te.totalHours.toFixed(1)}h` : '—'}

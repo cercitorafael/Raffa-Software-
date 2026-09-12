@@ -33,18 +33,69 @@ export function generateFiscalHash(
   return full;
 }
 
-export function formatDate(dateString: string): string {
+export function formatDate(
+  dateString?: string | number | Date | null,
+  includeSeconds: boolean = true
+): string {
+  if (!dateString) return '—';
   try {
+    // If it's strictly a date string in YYYY-MM-DD format (no time component)
+    if (typeof dateString === 'string') {
+      const trimmed = dateString.trim();
+      if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+        const [y, m, d] = trimmed.split('-');
+        return `${d}/${m}/${y}`;
+      }
+    }
+
     const d = new Date(dateString);
-    return new Intl.DateTimeFormat('pt-PT', {
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    }).format(d);
+    if (isNaN(d.getTime())) return String(dateString);
+
+    const day = String(d.getDate()).padStart(2, '0');
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const year = d.getFullYear();
+    const hours = String(d.getHours()).padStart(2, '0');
+    const minutes = String(d.getMinutes()).padStart(2, '0');
+    const seconds = String(d.getSeconds()).padStart(2, '0');
+
+    if (includeSeconds) {
+      return `${day}/${month}/${year} ${hours}:${minutes}:${seconds}`;
+    }
+    return `${day}/${month}/${year} ${hours}:${minutes}`;
   } catch {
-    return dateString;
+    return String(dateString);
   }
+}
+
+export function formatExactDateTime(
+  dateInput?: string | number | Date | null,
+  includeSeconds: boolean = true
+): string {
+  return formatDate(dateInput, includeSeconds);
+}
+
+export function formatExactTime(
+  dateInput?: string | number | Date | null,
+  includeSeconds: boolean = true
+): string {
+  if (!dateInput) return '—';
+  try {
+    const d = new Date(dateInput);
+    if (isNaN(d.getTime())) return String(dateInput);
+    const hours = String(d.getHours()).padStart(2, '0');
+    const minutes = String(d.getMinutes()).padStart(2, '0');
+    const seconds = String(d.getSeconds()).padStart(2, '0');
+    return includeSeconds ? `${hours}:${minutes}:${seconds}` : `${hours}:${minutes}`;
+  } catch {
+    return String(dateInput);
+  }
+}
+
+export function formatExactDate(dateInput?: string | number | Date | null): string {
+  return formatDate(dateInput, false).split(' ')[0] || '—';
+}
+
+export function getExactTimestamp(): string {
+  return new Date().toISOString();
 }
 

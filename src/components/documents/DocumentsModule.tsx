@@ -74,7 +74,7 @@ import {
   getTemplateBankAccounts,
 } from '../../utils/documentUtils';
 import { defaultInvoiceTemplates } from '../../mockData';
-import { generateFiscalHash } from '../../utils/crypto';
+import { generateFiscalHash, formatCurrency, formatDate, formatExactDate, formatExactTime, formatExactDateTime } from '../../utils/crypto';
 
 export const DocumentsModule: React.FC = () => {
   const {
@@ -2259,8 +2259,14 @@ export const DocumentsModule: React.FC = () => {
                             </span>
                           )}
                         </td>
-                        <td className="p-3.5 text-neutral-300 font-mono text-[11px]">
-                          {new Date(doc.date).toLocaleString('pt-PT')}
+                        <td className="p-3.5 whitespace-nowrap" title={`Data e Hora Exata: ${formatExactDateTime(doc.date, true)}`}>
+                          <div className="flex flex-col font-mono text-[11px] leading-tight">
+                            <span className="text-neutral-200 font-semibold">{formatExactDate(doc.date)}</span>
+                            <span className="text-neutral-400 text-[10px] flex items-center space-x-1 mt-0.5">
+                              <Clock className="w-2.5 h-2.5 text-[#c5a47e] shrink-0" />
+                              <span>{formatExactTime(doc.date, true)}</span>
+                            </span>
+                          </div>
                         </td>
                         <td className="p-3.5 font-medium text-white truncate max-w-xs">
                           {doc.customerName || 'Consumidor Final'}
@@ -3099,7 +3105,7 @@ export const DocumentsModule: React.FC = () => {
                         </span>
                         <p className="text-xs font-mono font-bold text-neutral-900 mt-1">{selectedDocForPreview.invoiceNumber}</p>
                         <p className="text-[8.5px] font-mono text-neutral-500">
-                          Data: {new Date(selectedDocForPreview.date).toLocaleDateString('pt-PT')}
+                          Data: {formatExactDateTime(selectedDocForPreview.date, true)}
                         </p>
                       </div>
                     </div>
@@ -3276,7 +3282,7 @@ export const DocumentsModule: React.FC = () => {
                   <span className="font-mono text-neutral-400">NIF: {creditNoteModalDoc.customerNif || creditNoteModalDoc.customerTaxNumber || '999999990'}</span>
                 </div>
                 <div className="flex justify-between items-center text-neutral-300">
-                  <span>Data de Emissão: <strong className="text-white">{new Date(creditNoteModalDoc.date).toLocaleDateString('pt-PT')}</strong></span>
+                  <span>Data de Emissão: <strong className="text-white font-mono">{formatExactDateTime(creditNoteModalDoc.date, true)}</strong></span>
                   <span className="text-rose-400 font-mono font-bold text-sm">Total a Estornar: {formatCurrency(creditNoteModalDoc.total)}</span>
                 </div>
                 {creditNoteModalDoc.items && creditNoteModalDoc.items.length > 0 && (

@@ -46,6 +46,8 @@ export const Sidebar: React.FC = () => {
     notify,
     isSidebarCollapsed,
     toggleSidebar,
+    t,
+    language,
   } = useApp();
 
   // Keyboard shortcut Ctrl+B or Cmd+B to toggle sidebar
@@ -76,14 +78,14 @@ export const Sidebar: React.FC = () => {
   }[] = [
     {
       id: 'dashboard',
-      label: 'Visão Geral & Métricas',
+      label: t('nav.dashboard'),
       icon: BarChart3,
       roles: ['gerente', 'financeiro', 'admin'],
       permissionModule: 'analytics',
     },
     {
       id: 'analytics',
-      label: 'Relatórios Analíticos',
+      label: t('nav.analytics'),
       icon: TrendingUp,
       badge: 'BI',
       shortBadge: 'BI',
@@ -93,9 +95,9 @@ export const Sidebar: React.FC = () => {
     },
     {
       id: 'pos',
-      label: 'Ponto de Venda (POS)',
+      label: t('nav.pos'),
       icon: ShoppingBag,
-      badge: syncQueue.length > 0 ? `${syncQueue.length} offline` : undefined,
+      badge: syncQueue.length > 0 ? `${syncQueue.length} ${t('nav.offlineBadge')}` : undefined,
       shortBadge: syncQueue.length > 0 ? `${syncQueue.length}` : undefined,
       badgeColor: 'bg-amber-500 text-white',
       roles: ['caixa', 'gerente', 'admin'],
@@ -103,9 +105,9 @@ export const Sidebar: React.FC = () => {
     },
     {
       id: 'documents',
-      label: 'Gestão de Documentos',
+      label: t('nav.documents'),
       icon: FileSpreadsheet,
-      badge: pendingOrdersCount > 0 ? `${pendingOrdersCount} novos` : undefined,
+      badge: pendingOrdersCount > 0 ? `${pendingOrdersCount} ${t('nav.newBadge')}` : undefined,
       shortBadge: pendingOrdersCount > 0 ? `${pendingOrdersCount}` : undefined,
       badgeColor: 'bg-[#c5a47e] text-neutral-950',
       roles: ['caixa', 'gerente', 'financeiro', 'comprador', 'admin'],
@@ -113,9 +115,9 @@ export const Sidebar: React.FC = () => {
     },
     {
       id: 'stores',
-      label: 'Gestão de Lojas',
+      label: t('nav.stores'),
       icon: StoreIcon,
-      badge: `${stores.length} lojas`,
+      badge: `${stores.length} ${t('nav.storesBadge')}`,
       shortBadge: `${stores.length}`,
       badgeColor: 'bg-emerald-500/20 text-emerald-400',
       roles: ['gerente', 'admin', 'financeiro'],
@@ -123,44 +125,44 @@ export const Sidebar: React.FC = () => {
     },
     {
       id: 'stock',
-      label: 'Stock & Inventário',
+      label: t('nav.stock'),
       icon: Boxes,
       roles: ['gerente', 'comprador', 'admin', 'financeiro'],
       permissionModule: 'stock',
     },
     {
       id: 'finance',
-      label: 'Financeiro & Faturação',
+      label: t('nav.finance'),
       icon: Receipt,
       roles: ['financeiro', 'gerente', 'admin'],
       permissionModule: 'finance',
     },
     {
       id: 'hr',
-      label: 'Recursos Humanos',
+      label: t('nav.hr'),
       icon: Users,
       roles: ['rh', 'gerente', 'admin'],
       permissionModule: 'hr',
     },
     {
       id: 'procurement',
-      label: 'Compras & Fornecedores',
+      label: t('nav.procurement'),
       icon: Truck,
       roles: ['comprador', 'gerente', 'admin'],
       permissionModule: 'procurement',
     },
     {
       id: 'crm',
-      label: 'CRM & Fidelização',
+      label: t('nav.crm'),
       icon: HeartHandshake,
       roles: ['gerente', 'caixa', 'admin'],
       permissionModule: 'crm',
     },
     {
       id: 'users',
-      label: 'Gestão de Utilizadores',
+      label: t('nav.users'),
       icon: UserCheck,
-      badge: `${users.length} ativos`,
+      badge: `${users.length}`,
       shortBadge: `${users.length}`,
       badgeColor: 'bg-[#c5a47e]/20 text-[#c5a47e]',
       roles: ['admin', 'gerente'],
@@ -168,14 +170,14 @@ export const Sidebar: React.FC = () => {
     },
     {
       id: 'events',
-      label: 'Barramento de Eventos',
+      label: t('nav.events'),
       icon: Activity,
       roles: ['admin', 'gerente', 'financeiro'],
       permissionModule: 'events',
     },
     {
       id: 'settings',
-      label: 'Definições & SAF-T',
+      label: t('nav.settings'),
       icon: Settings,
       roles: ['admin', 'gerente', 'financeiro'],
       permissionModule: 'settings',
@@ -214,14 +216,14 @@ export const Sidebar: React.FC = () => {
         {!isSidebarCollapsed ? (
           <>
             <span className="px-1 text-[10px] font-semibold text-neutral-400 uppercase tracking-widest truncate">
-              Módulos Integrados
+              {t('nav.modulesTitle')}
             </span>
             <button
               id="sidebar-collapse-btn"
               onClick={toggleSidebar}
               className="p-1.5 rounded-md text-neutral-400 hover:text-[#c5a47e] hover:bg-[#141414] border border-transparent hover:border-[#c5a47e]/30 transition-all cursor-pointer flex items-center justify-center group"
-              title="Encolher menu lateral (↔ / Ctrl+B)"
-              aria-label="Encolher menu lateral"
+              title={`${t('nav.collapseSidebar')} (↔ / Ctrl+B)`}
+              aria-label={t('nav.collapseSidebar')}
             >
               <div className="flex items-center space-x-0.5 text-neutral-400 group-hover:text-[#c5a47e]">
                 <ChevronLeft className="w-4 h-4 transition-transform group-hover:-translate-x-0.5" />
@@ -234,8 +236,8 @@ export const Sidebar: React.FC = () => {
               id="sidebar-expand-btn"
               onClick={toggleSidebar}
               className="p-1.5 rounded-md text-neutral-400 hover:text-[#c5a47e] bg-[#141414] hover:bg-[#1c1c1c] border border-[#262626] hover:border-[#c5a47e]/50 transition-all cursor-pointer flex items-center justify-center group shadow-xs"
-              title="Expandir menu lateral (↔ / Ctrl+B)"
-              aria-label="Expandir menu lateral"
+              title={`${t('nav.expandSidebar')} (↔ / Ctrl+B)`}
+              aria-label={t('nav.expandSidebar')}
             >
               <ChevronRight className="w-4 h-4 text-[#c5a47e] transition-transform group-hover:translate-x-0.5" />
             </button>
@@ -367,7 +369,7 @@ export const Sidebar: React.FC = () => {
               <div className="min-w-0 flex-1">
                 <div className="flex items-center space-x-1.5 leading-none">
                   <span className="font-semibold text-xs truncate">
-                    {activeShift ? 'Caixa Aberto' : 'Caixa Fechado'}
+                    {activeShift ? t('header.shiftOpen') : t('header.shiftClosed')}
                   </span>
                   <span
                     className={`w-1.5 h-1.5 rounded-full shrink-0 ${
@@ -376,7 +378,7 @@ export const Sidebar: React.FC = () => {
                   />
                 </div>
                 <p className="text-[10px] text-neutral-400 truncate mt-0.5 font-mono">
-                  {activeShift ? `${activeShift.operatorName.split(' ')[0]} • Vendas: ${formatCurrency(activeShift.totalSales || 0)}` : 'Sem turno ativo'}
+                  {activeShift ? `${activeShift.operatorName.split(' ')[0]} • ${t('nav.sales')}: ${formatCurrency(activeShift.totalSales || 0)}` : t('nav.noActiveShift')}
                 </p>
               </div>
             </div>
@@ -387,11 +389,11 @@ export const Sidebar: React.FC = () => {
                   : 'bg-rose-500/10 text-rose-400 border-rose-500/30'
               }`}
             >
-              {activeShift ? 'ATIVO' : 'FECHADO'}
+              {activeShift ? (language === 'en' ? 'ACTIVE' : 'ATIVO') : (language === 'en' ? 'CLOSED' : 'FECHADO')}
             </span>
           </div>
         ) : (
-          <div className="flex justify-center" title={`Caixa: ${activeShift ? `Aberto (${activeShift.operatorName})` : 'Fechado'}`}>
+          <div className="flex justify-center" title={`${t('header.cashRegisterStatus')}: ${activeShift ? `${t('header.shiftOpen')} (${activeShift.operatorName})` : t('header.shiftClosed')}`}>
             <div
               className={`w-7 h-7 rounded-lg flex items-center justify-center border relative ${
                 activeShift
@@ -427,14 +429,14 @@ export const Sidebar: React.FC = () => {
               <button
                 onClick={lockScreen}
                 className="p-1.5 rounded-md text-neutral-400 hover:text-amber-400 hover:bg-amber-950/20 transition-colors cursor-pointer"
-                title="Bloquear Terminal"
+                title={t('header.lockTerminal')}
               >
                 <Lock className="w-3.5 h-3.5" />
               </button>
               <button
                 onClick={logout}
                 className="p-1.5 rounded-md text-neutral-400 hover:text-rose-400 hover:bg-rose-950/20 transition-colors cursor-pointer"
-                title="Terminar Sessão"
+                title={t('header.logout')}
               >
                 <LogOut className="w-3.5 h-3.5" />
               </button>

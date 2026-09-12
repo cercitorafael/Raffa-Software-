@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { useApp } from '../../context/AppContext';
-import { formatCurrency, formatDate } from '../../utils/crypto';
+import { formatCurrency, formatDate, formatExactDate, formatExactTime, formatExactDateTime } from '../../utils/crypto';
 import {
   Wallet,
   ArrowDownRight,
@@ -487,6 +487,53 @@ export const CashShiftModal: React.FC<CashShiftModalProps> = ({ onClose, initial
                     <p className="italic">{selectedHistoricalShift.notes}</p>
                   </div>
                 )}
+
+                {selectedHistoricalShift.movements && selectedHistoricalShift.movements.length > 0 && (
+                  <div className="pt-2 border-t border-[#262626] space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-bold uppercase tracking-widest text-[#c5a47e] flex items-center space-x-1.5">
+                        <Receipt className="w-3.5 h-3.5" />
+                        <span>Movimentos do Turno ({selectedHistoricalShift.movements.length})</span>
+                      </span>
+                    </div>
+                    <div className="bg-[#0f0f0f] rounded-lg border border-[#202020] overflow-hidden">
+                      <table className="w-full text-left text-[11px]">
+                        <thead className="bg-[#171717] text-neutral-400 text-[9px] uppercase border-b border-[#262626]">
+                          <tr>
+                            <th className="py-2 px-3">Data / Hora Exata</th>
+                            <th className="py-2 px-3">Tipo</th>
+                            <th className="py-2 px-3">Motivo</th>
+                            <th className="py-2 px-3 text-right">Valor</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-[#1e1e1e]">
+                          {selectedHistoricalShift.movements.map((m: any, idx: number) => (
+                            <tr key={m.id || idx} className="hover:bg-[#151515]">
+                              <td className="py-2 px-3 font-mono text-neutral-300 whitespace-nowrap">
+                                {formatExactDateTime(m.timestamp, true)}
+                              </td>
+                              <td className="py-2 px-3">
+                                <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase ${
+                                  m.type === 'sangria' ? 'bg-rose-500/15 text-rose-400 border border-rose-500/30' : 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
+                                }`}>
+                                  {m.type === 'sangria' ? 'Sangria' : 'Suprimento'}
+                                </span>
+                              </td>
+                              <td className="py-2 px-3 text-neutral-400 truncate max-w-[140px]">
+                                {m.reason || '—'}
+                              </td>
+                              <td className={`py-2 px-3 text-right font-mono font-bold whitespace-nowrap ${
+                                m.type === 'sangria' ? 'text-rose-400' : 'text-emerald-400'
+                              }`}>
+                                {m.type === 'sangria' ? '-' : '+'}{formatCurrency(m.amount)}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Print buttons for historical shift */}
@@ -602,8 +649,12 @@ export const CashShiftModal: React.FC<CashShiftModalProps> = ({ onClose, initial
                             <span className="px-2 py-0.5 bg-[#c5a47e]/15 text-[#c5a47e] border border-[#c5a47e]/30 rounded-md text-[11px] font-mono font-bold">
                               {sh.zReportNumber || `FECHO-${sh.id.substring(0, 8)}`}
                             </span>
-                            <span className="text-xs font-semibold text-neutral-200">
-                              {formatDate(sh.closedAt || sh.openedAt)}
+                            <span className="text-xs font-semibold text-neutral-200 flex items-center space-x-1.5 font-mono">
+                              <span>{formatExactDate(sh.closedAt || sh.openedAt)}</span>
+                              <span className="text-neutral-400 text-[11px] flex items-center space-x-0.5">
+                                <Clock className="w-2.5 h-2.5 text-[#c5a47e]" />
+                                <span>{formatExactTime(sh.closedAt || sh.openedAt, true)}</span>
+                              </span>
                             </span>
                           </div>
                           <div className="flex items-center space-x-2 text-[11px] text-neutral-400">
@@ -1070,6 +1121,54 @@ export const CashShiftModal: React.FC<CashShiftModalProps> = ({ onClose, initial
                       </button>
                     </div>
                   )}
+                </div>
+              )}
+
+              {/* Active Shift Movements Breakdown */}
+              {activeShift.movements && activeShift.movements.length > 0 && (
+                <div className="p-3.5 bg-[#0f0f0f] rounded-lg border border-[#262626] space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-bold uppercase tracking-widest text-[#c5a47e] flex items-center space-x-1.5">
+                      <Receipt className="w-3.5 h-3.5" />
+                      <span>Movimentos Registados no Turno Ativo ({activeShift.movements.length})</span>
+                    </span>
+                  </div>
+                  <div className="bg-[#141414] rounded-lg border border-[#202020] overflow-hidden">
+                    <table className="w-full text-left text-[11px]">
+                      <thead className="bg-[#1a1a1a] text-neutral-400 text-[9px] uppercase border-b border-[#262626]">
+                        <tr>
+                          <th className="py-2 px-3">Data / Hora Exata</th>
+                          <th className="py-2 px-3">Tipo</th>
+                          <th className="py-2 px-3">Motivo</th>
+                          <th className="py-2 px-3 text-right">Valor</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-[#202020]">
+                        {activeShift.movements.map((m: any, idx: number) => (
+                          <tr key={m.id || idx} className="hover:bg-[#181818]">
+                            <td className="py-2 px-3 font-mono text-neutral-300 whitespace-nowrap">
+                              {formatExactDateTime(m.timestamp, true)}
+                            </td>
+                            <td className="py-2 px-3">
+                              <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase ${
+                                m.type === 'sangria' ? 'bg-rose-500/15 text-rose-400 border border-rose-500/30' : 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
+                              }`}>
+                                {m.type === 'sangria' ? 'Sangria' : 'Suprimento'}
+                              </span>
+                            </td>
+                            <td className="py-2 px-3 text-neutral-400 truncate max-w-[140px]">
+                              {m.reason || '—'}
+                            </td>
+                            <td className={`py-2 px-3 text-right font-mono font-bold whitespace-nowrap ${
+                              m.type === 'sangria' ? 'text-rose-400' : 'text-emerald-400'
+                            }`}>
+                              {m.type === 'sangria' ? '-' : '+'}{formatCurrency(m.amount)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               )}
 

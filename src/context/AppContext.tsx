@@ -349,7 +349,15 @@ export interface AppContextType {
   deleteLot: (id: string) => void;
 
   stockMovements: StockMovement[];
-  recordStockMovement: (mov: Omit<StockMovement, 'id' | 'timestamp'>) => void;
+  recordStockMovement: (
+    mov: Omit<StockMovement, 'id' | 'timestamp'> & {
+      id?: string;
+      timestamp?: string;
+      date?: string;
+      createdAt?: string;
+      movementNumber?: string;
+    }
+  ) => void;
   deleteStockMovement: (id: string) => void;
   createStockAdjustment: (productId: string, warehouseId: string, newQty: number, reason: string) => void;
   transferStock: (productId: string, fromWarehouseId: string, toWarehouseId: string, quantity: number) => void;
@@ -3989,13 +3997,40 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     sound.playSuccessChime();
   };
 
-  const recordStockMovement = (mov: Omit<StockMovement, 'id' | 'timestamp'>) => {
+  const recordStockMovement = (
+    mov: Omit<StockMovement, 'id' | 'timestamp'> & {
+      id?: string;
+      timestamp?: string;
+      date?: string;
+      createdAt?: string;
+      movementNumber?: string;
+    }
+  ) => {
     const compId = mov.companyId || currentCompanyRef.current?.id || currentCompany?.id || 'comp-1';
+    const nowIso = new Date().toISOString();
+    const exactTimestamp = mov.timestamp || (mov as any).date || nowIso;
+    const d = new Date(exactTimestamp);
+    const validD = isNaN(d.getTime()) ? new Date() : d;
+    const y = validD.getFullYear();
+    const m = String(validD.getMonth() + 1).padStart(2, '0');
+    const day = String(validD.getDate()).padStart(2, '0');
+    const hh = String(validD.getHours()).padStart(2, '0');
+    const mm = String(validD.getMinutes()).padStart(2, '0');
+    const ss = String(validD.getSeconds()).padStart(2, '0');
+    const dateFormatted = `${y}-${m}-${day}`;
+    const seq = Math.floor(1000 + Math.random() * 9000);
+    const movementNumber =
+      mov.movementNumber ||
+      `MOV-${y}${m}${day}-${hh}${mm}${ss}-${seq}`;
+
     const newMov: StockMovement = {
       ...mov,
       companyId: compId,
-      id: `mov-${Date.now()}-${Math.floor(Math.random() * 100000)}`,
-      timestamp: new Date().toISOString(),
+      id: mov.id || `mov-${Date.now()}-${Math.floor(Math.random() * 100000)}`,
+      timestamp: exactTimestamp,
+      date: mov.date || dateFormatted,
+      createdAt: mov.createdAt || exactTimestamp,
+      movementNumber,
     };
     setStockMovements((prev) => {
       const updated = [newMov, ...prev];
@@ -4660,8 +4695,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           affectedStockMap.set(targetStock.id, { ...targetStock });
           qtyToDeduct -= deductAmount;
 
+          const seqP1 = Math.floor(1000 + Math.random() * 9000);
           newMovements.push({
             id: `mov-${Date.now()}-${Math.floor(Math.random() * 1000000)}`,
+            movementNumber: `MOV-${nowIso.replace(/[-:T.Z]/g, '').slice(0, 14)}-${seqP1}`,
             companyId: compId,
             type: 'saida',
             productId: item.productId,
@@ -4672,6 +4709,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             reason: reason || 'Venda / Saída de stock',
             operatorId: opId,
             timestamp: nowIso,
+            date: nowIso,
+            createdAt: nowIso,
           });
         }
       }
@@ -4697,8 +4736,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           qtyToDeduct -= deductFromOther;
 
           const whName = warehouses.find((w) => w.id === otherStock.warehouseId)?.name || otherStock.warehouseId;
+          const seqP2 = Math.floor(1000 + Math.random() * 9000);
           newMovements.push({
             id: `mov-${Date.now()}-${Math.floor(Math.random() * 1000000)}`,
+            movementNumber: `MOV-${nowIso.replace(/[-:T.Z]/g, '').slice(0, 14)}-${seqP2}`,
             companyId: compId,
             type: 'saida',
             productId: item.productId,
@@ -4709,6 +4750,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             reason: `${reason || 'Venda'} (Armazém: ${whName})`,
             operatorId: opId,
             timestamp: nowIso,
+            date: nowIso,
+            createdAt: nowIso,
           });
         }
       }
@@ -4736,8 +4779,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         }
         affectedStockMap.set(preferredStk.id, { ...preferredStk });
 
+        const seqP3 = Math.floor(1000 + Math.random() * 9000);
         newMovements.push({
           id: `mov-${Date.now()}-${Math.floor(Math.random() * 1000000)}`,
+          movementNumber: `MOV-${nowIso.replace(/[-:T.Z]/g, '').slice(0, 14)}-${seqP3}`,
           companyId: compId,
           type: 'saida',
           productId: item.productId,
@@ -4748,6 +4793,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           reason: `${reason || 'Venda'} (Saída em rutura/sem stock)`,
           operatorId: opId,
           timestamp: nowIso,
+          date: nowIso,
+          createdAt: nowIso,
         });
       }
     });
@@ -4859,8 +4906,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         affectedStockMap.set(newStk.id, newStk);
       }
 
+      const seqRep = Math.floor(1000 + Math.random() * 9000);
       newMovements.push({
         id: `mov-${Date.now()}-${Math.floor(Math.random() * 1000000)}`,
+        movementNumber: `MOV-${nowIso.replace(/[-:T.Z]/g, '').slice(0, 14)}-${seqRep}`,
         companyId: compId,
         type: 'devolucao',
         productId: item.productId,
@@ -4871,6 +4920,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         reason: reason || 'Devolução de stock por estorno',
         operatorId: opId,
         timestamp: nowIso,
+        date: nowIso,
+        createdAt: nowIso,
       });
     });
 
@@ -6194,7 +6245,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             ...ap,
             status: 'pago',
             paidAmount: ap.amount,
-            paymentDate: new Date().toISOString().split('T')[0],
+            paymentDate: new Date().toISOString(),
             paymentMethod: finalMethod as any,
           };
           pushRecordToSupabase('contas_pagar', 'update', updated);
@@ -6252,7 +6303,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             ...ar,
             status: isFullyPaid ? 'pago' : 'parcial',
             receivedAmount: newReceived,
-            receiptDate: new Date().toISOString().split('T')[0],
+            receiptDate: new Date().toISOString(),
           };
           pushRecordToSupabase('contas_receber', 'update', updated);
           return updated;
@@ -6731,7 +6782,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const emp = employees.find((e) => e.id === employeeId);
     if (!emp) return;
     const now = new Date();
-    const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+    const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
     const dateStr = now.toISOString().split('T')[0];
 
     const newEntry: TimeClockEntry = {
@@ -6748,22 +6799,35 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
     setTimeEntries((prev) => [newEntry, ...prev]);
     pushRecordToSupabase('registos_ponto', 'upsert', newEntry);
-    emitEvent('RH', 'hr.timeclock.clock_in', { employee: emp.name, time: timeStr });
+    emitEvent('RH', 'hr.timeclock.clock_in', { employee: emp.name, time: timeStr, exactTimestamp: now.toISOString() });
     sound.playSuccessChime();
-    notify(`Picagem de Entrada registada para ${emp.name}.`, 'success');
+    notify(`Picagem de Entrada registada para ${emp.name} às ${timeStr}.`, 'success');
   };
 
   const clockOutEmployee = (employeeId: string) => {
     const emp = employees.find((e) => e.id === employeeId);
     const now = new Date();
-    const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+    const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
     setTimeEntries((prev) =>
       prev.map((t) => {
         if (t.employeeId === employeeId && t.status === 'em_curso') {
+          // Calculate exact elapsed hours with second precision
+          let calcHours = 8.0;
+          if (t.clockIn) {
+            const inParts = t.clockIn.split(':').map(Number);
+            const inDate = new Date(now);
+            inDate.setHours(inParts[0] || 0, inParts[1] || 0, inParts[2] || 0, 0);
+            const elapsedMs = Math.max(0, now.getTime() - inDate.getTime());
+            const hours = Number((elapsedMs / (1000 * 60 * 60)).toFixed(2));
+            if (hours > 0 && hours <= 24) {
+              calcHours = hours;
+            }
+          }
+
           const updated = {
             ...t,
             clockOut: timeStr,
-            totalHours: 8.0,
+            totalHours: calcHours,
             status: 'concluido' as const,
           };
           pushRecordToSupabase('registos_ponto', 'upsert', updated);
@@ -6772,9 +6836,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         return t;
       })
     );
-    emitEvent('RH', 'hr.timeclock.clock_out', { employeeId, time: timeStr });
+    emitEvent('RH', 'hr.timeclock.clock_out', { employeeId, time: timeStr, exactTimestamp: now.toISOString() });
     sound.playSuccessChime();
-    notify(`Picagem de Saída registada para ${emp?.name || 'Colaborador'}.`, 'success');
+    notify(`Picagem de Saída registada para ${emp?.name || 'Colaborador'} às ${timeStr}.`, 'success');
   };
 
   const addPayrollSlip = (slip: Omit<PayrollSlip, 'id'>) => {

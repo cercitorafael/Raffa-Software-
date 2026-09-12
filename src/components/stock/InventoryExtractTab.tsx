@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { useApp } from '../../context/AppContext';
-import { formatCurrency, formatDate } from '../../utils/crypto';
+import { formatCurrency, formatDate, formatExactDate, formatExactTime, formatExactDateTime } from '../../utils/crypto';
 import {
   getTodayDateStr,
   getYesterdayDateStr,
@@ -18,6 +18,7 @@ import {
   Search,
   ArrowDownRight,
   ArrowUpRight,
+  Clock,
   RefreshCw,
   Layers,
   Warehouse as WarehouseIcon,
@@ -1355,8 +1356,14 @@ export const InventoryExtractTab: React.FC = () => {
                   filteredRows.map((r) => {
                     return (
                       <tr key={r.id} className="hover:bg-[#181818] transition-colors">
-                        <td className="py-3 px-4 whitespace-nowrap font-mono text-[11px] text-neutral-400">
-                          {formatDate(r.timestamp)}
+                        <td className="py-3 px-4 whitespace-nowrap" title={`Data e Hora Exata: ${formatExactDateTime(r.timestamp)} (ISO: ${r.timestamp})`}>
+                          <div className="flex flex-col font-mono leading-tight">
+                            <span className="text-neutral-200 font-semibold text-[11px]">{formatExactDate(r.timestamp)}</span>
+                            <span className="text-neutral-400 text-[10px] flex items-center space-x-1 mt-0.5">
+                              <Clock className="w-2.5 h-2.5 text-[#c5a47e] shrink-0" />
+                              <span>{formatExactTime(r.timestamp, true)}</span>
+                            </span>
+                          </div>
                         </td>
                         <td className="py-3 px-4">
                           <div className="font-semibold text-neutral-200">{r.productName}</div>

@@ -27,6 +27,9 @@ export const LockScreen: React.FC = () => {
     unlockScreen,
     logout,
     isOnline,
+    language,
+    toggleLanguage,
+    t,
   } = useApp();
 
   const [pinInput, setPinInput] = useState<string>('');
@@ -38,17 +41,18 @@ export const LockScreen: React.FC = () => {
   const [currentDate, setCurrentDate] = useState<string>('');
 
   useEffect(() => {
+    const locale = language === 'en' ? 'en-GB' : 'pt-PT';
     const updateTime = () => {
       const now = new Date();
       setCurrentTime(
-        now.toLocaleTimeString('pt-PT', {
+        now.toLocaleTimeString(locale, {
           hour: '2-digit',
           minute: '2-digit',
           second: '2-digit',
         })
       );
       setCurrentDate(
-        now.toLocaleDateString('pt-PT', {
+        now.toLocaleDateString(locale, {
           weekday: 'long',
           day: '2-digit',
           month: 'long',
@@ -59,7 +63,7 @@ export const LockScreen: React.FC = () => {
     updateTime();
     const timer = setInterval(updateTime, 1000);
     return () => clearInterval(timer);
-  }, []);
+  }, [language]);
 
   // Keyboard navigation
   useEffect(() => {
@@ -109,7 +113,7 @@ export const LockScreen: React.FC = () => {
 
   const handleUnlock = () => {
     if (!pinInput) {
-      setErrorMsg('Por favor introduza o seu PIN.');
+      setErrorMsg(t('auth.pleaseEnterPin'));
       sound.playError();
       return;
     }
@@ -120,7 +124,7 @@ export const LockScreen: React.FC = () => {
     setTimeout(() => {
       const res = unlockScreen(pinInput);
       if (!res.success) {
-        setErrorMsg(res.error || 'PIN incorreto.');
+        setErrorMsg(res.error || t('auth.invalidPin'));
         setPinInput('');
       }
       setIsSubmitting(false);
@@ -156,6 +160,18 @@ export const LockScreen: React.FC = () => {
         </div>
 
         <div className="flex items-center space-x-3">
+          {/* Language Toggle Button */}
+          <button
+            id="lockscreen-language-toggle-btn"
+            type="button"
+            onClick={toggleLanguage}
+            className="flex items-center space-x-1.5 px-2.5 py-1 rounded-md text-[11px] font-semibold bg-[#141414] border border-[#262626] text-neutral-300 hover:text-[#c5a47e] hover:border-[#c5a47e]/40 transition-all cursor-pointer shadow-xs"
+            title={t('header.switchTo', { lang: language === 'pt' ? 'English (🇬🇧)' : 'Português (🇲🇿)' })}
+          >
+            <span>{language === 'pt' ? '🇲🇿' : '🇬🇧'}</span>
+            <span className="font-mono uppercase font-bold">{language}</span>
+          </button>
+
           <div
             className={`flex items-center space-x-1.5 px-2.5 py-1 rounded-md text-[11px] font-medium border ${
               isOnline
@@ -164,7 +180,7 @@ export const LockScreen: React.FC = () => {
             }`}
           >
             {isOnline ? <Wifi className="w-3.5 h-3.5" /> : <WifiOff className="w-3.5 h-3.5" />}
-            <span className="hidden sm:inline">{isOnline ? 'Online' : 'Offline'}</span>
+            <span className="hidden sm:inline">{isOnline ? t('header.online') : t('header.offline')}</span>
           </div>
 
           <div className="text-right">
@@ -213,7 +229,7 @@ export const LockScreen: React.FC = () => {
           }`}
         >
           <Wallet className={`w-3.5 h-3.5 ${activeShift ? 'text-emerald-400' : 'text-rose-400'}`} />
-          <span className="font-semibold">{activeShift ? 'Caixa Aberto' : 'Caixa Fechado'}</span>
+          <span className="font-semibold">{activeShift ? t('header.shiftOpen') : t('header.shiftClosed')}</span>
           {activeShift && (
             <span className="text-[10px] text-emerald-400/80 font-mono">
               &bull; {activeShift.operatorName.split(' ')[0]} ({formatCurrency(activeShift.initialCash)})
@@ -222,7 +238,7 @@ export const LockScreen: React.FC = () => {
         </div>
 
         <p className="text-xs text-neutral-400 text-center mb-4">
-          Introduza o seu PIN para retomar a sessão de trabalho
+          {t('auth.unlockSubtitle')}
         </p>
 
         {/* Masked PIN Display */}
@@ -304,7 +320,7 @@ export const LockScreen: React.FC = () => {
             ) : (
               <Unlock className="w-4 h-4" />
             )}
-            <span>Desbloquear Terminal</span>
+            <span>{t('auth.unlockButton')}</span>
           </button>
 
           <button
@@ -312,7 +328,7 @@ export const LockScreen: React.FC = () => {
             className="w-full py-2.5 bg-transparent hover:bg-rose-950/20 text-neutral-400 hover:text-rose-300 border border-transparent hover:border-rose-500/30 rounded-xl text-xs font-semibold flex items-center justify-center space-x-1.5 transition-all cursor-pointer"
           >
             <LogOut className="w-3.5 h-3.5" />
-            <span>Trocar de Utilizador / Encerrar Sessão</span>
+            <span>{t('auth.switchUser')}</span>
           </button>
         </div>
       </div>

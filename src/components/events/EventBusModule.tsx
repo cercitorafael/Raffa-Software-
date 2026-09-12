@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { SystemEvent } from '../../types';
+import { formatExactDateTime, formatExactTime, formatExactDate } from '../../utils/crypto';
 import {
   Activity,
   Search,
@@ -281,8 +282,11 @@ export const EventBusModule: React.FC = () => {
                     <td className="px-4 py-2.5 font-mono font-medium text-white">
                       {evt.eventType}
                     </td>
-                    <td className="px-4 py-2.5 text-neutral-400 font-mono text-[11px]">
-                      {new Date(evt.timestamp).toLocaleTimeString()}
+                    <td className="px-4 py-2.5 text-neutral-400 font-mono text-[11px] whitespace-nowrap" title={`Timestamp ISO: ${evt.timestamp}`}>
+                      <div className="flex items-center space-x-1.5">
+                        <Clock className="w-3 h-3 text-[#c5a47e]" />
+                        <span>{formatExactTime(evt.timestamp, true)}</span>
+                      </div>
                     </td>
                     <td className="px-4 py-2.5 text-right" onClick={(e) => e.stopPropagation()}>
                       <div className="flex items-center justify-end space-x-1">
@@ -313,7 +317,7 @@ export const EventBusModule: React.FC = () => {
                             requestConfirm({
                               title: 'Eliminar Evento',
                               message: `Tem a certeza que deseja eliminar o evento "${evt.eventType}"?`,
-                              itemDetails: `ID: ${evt.id} | Serviço: ${evt.service} | Hora: ${new Date(evt.timestamp).toLocaleTimeString()}`,
+                              itemDetails: `ID: ${evt.id} | Serviço: ${evt.service} | Data/Hora Exata: ${formatExactDateTime(evt.timestamp, true)}`,
                               confirmLabel: 'Eliminar Evento',
                               isDestructive: true,
                               onConfirm: () => {
@@ -364,6 +368,14 @@ export const EventBusModule: React.FC = () => {
                 <span className="text-[10px] text-neutral-500 uppercase tracking-wider block mb-1">Tópico / Tipo:</span>
                 <div className="font-mono text-xs text-[#c5a47e] bg-[#141414] p-2 rounded border border-[#262626]">
                   {selectedEvent.eventType}
+                </div>
+              </div>
+
+              <div>
+                <span className="text-[10px] text-neutral-500 uppercase tracking-wider block mb-1">Data & Hora Exata:</span>
+                <div className="font-mono text-xs text-neutral-300 bg-[#141414] p-2 rounded border border-[#262626] flex flex-col gap-0.5">
+                  <span className="text-white font-semibold">{formatExactDateTime(selectedEvent.timestamp, true)}</span>
+                  <span className="text-[10px] text-neutral-500">{selectedEvent.timestamp}</span>
                 </div>
               </div>
 

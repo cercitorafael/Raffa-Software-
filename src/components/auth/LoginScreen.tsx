@@ -30,6 +30,9 @@ export const LoginScreen: React.FC = () => {
     formatCurrency,
     login,
     loginWithPin,
+    language,
+    toggleLanguage,
+    t,
   } = useApp();
 
   // Modes:
@@ -108,38 +111,38 @@ export const LoginScreen: React.FC = () => {
   // Role metadata
   const roleBadges: Record<string, { name: string; badge: string; color: string; desc: string }> = {
     admin: {
-      name: 'Administrador Geral',
-      badge: 'ADMIN SGPS',
+      name: t('roles.admin'),
+      badge: t('roles.adminBadge'),
       color: 'bg-rose-500/15 text-rose-400 border-rose-500/30',
       desc: 'Gestão total, parametrização fiscal AT e auditoria',
     },
     gerente: {
-      name: 'Gerente de Loja',
-      badge: 'GERÊNCIA',
+      name: t('roles.gerente'),
+      badge: t('roles.gerenteBadge'),
       color: 'bg-[#c5a47e]/20 text-[#c5a47e] border-[#c5a47e]/40',
       desc: 'Operações de loja, stocks, relatórios e turnos de caixa',
     },
     caixa: {
-      name: 'Operador de Caixa (POS)',
-      badge: 'POS / CAIXA',
+      name: t('roles.caixa'),
+      badge: t('roles.caixaBadge'),
       color: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30',
       desc: 'Emissão de faturas, abertura/fecho de caixa e fidelização',
     },
     financeiro: {
-      name: 'Diretor Financeiro',
-      badge: 'FINANÇAS',
+      name: t('roles.financeiro'),
+      badge: t('roles.financeiroBadge'),
       color: 'bg-blue-500/15 text-blue-400 border-blue-500/30',
       desc: 'Tesouraria, contabilidade, reconciliação e SAF-T',
     },
     rh: {
-      name: 'Recursos Humanos',
-      badge: 'RH',
+      name: t('roles.rh'),
+      badge: t('roles.rhBadge'),
       color: 'bg-purple-500/15 text-purple-400 border-purple-500/30',
       desc: 'Gestão de colaboradores, assiduidade e salários',
     },
     comprador: {
-      name: 'Gestor de Compras',
-      badge: 'COMPRAS',
+      name: t('roles.comprador'),
+      badge: t('roles.compradorBadge'),
       color: 'bg-cyan-500/15 text-cyan-400 border-cyan-500/30',
       desc: 'Fornecedores, requisições e receção de mercadorias',
     },
@@ -154,13 +157,13 @@ export const LoginScreen: React.FC = () => {
     const cleanPass = password.trim();
 
     if (!cleanIdent) {
-      setCredentialsError('Por favor introduza o seu utilizador ou email.');
+      setCredentialsError(t('auth.usernameOrEmail'));
       sound.playError();
       return;
     }
 
     if (!cleanPass) {
-      setCredentialsError('Por favor introduza a sua palavra-passe de acesso.');
+      setCredentialsError(t('auth.passwordField'));
       sound.playError();
       return;
     }
@@ -174,10 +177,10 @@ export const LoginScreen: React.FC = () => {
       });
 
       if (!result.success) {
-        setCredentialsError(result.error || 'Credenciais inválidas. Verifique o utilizador e a palavra-passe.');
+        setCredentialsError(result.error || t('auth.invalidCredentialsError'));
       }
     } catch (err: any) {
-      setCredentialsError('Erro durante a validação de credenciais.');
+      setCredentialsError(t('auth.validationError'));
     } finally {
       setIsSubmitting(false);
     }
@@ -186,13 +189,13 @@ export const LoginScreen: React.FC = () => {
   // Submit Touchscreen PIN
   const handlePinSubmit = () => {
     if (!selectedUser) {
-      setPinError('Selecione primeiro o operador antes de introduzir o PIN.');
+      setPinError(t('auth.selectOperatorFirst'));
       sound.playError();
       return;
     }
 
     if (!pinInput.trim()) {
-      setPinError('Por favor digite o código PIN de segurança.');
+      setPinError(t('auth.enterSecurityPin'));
       sound.playError();
       return;
     }
@@ -207,7 +210,7 @@ export const LoginScreen: React.FC = () => {
       );
 
       if (!result.success) {
-        setPinError(result.error || 'Código PIN incorreto.');
+        setPinError(result.error || t('auth.invalidPin'));
         setPinInput('');
       }
       setIsSubmitting(false);
@@ -255,7 +258,7 @@ export const LoginScreen: React.FC = () => {
               }`}
             >
               <UserIcon className="w-3.5 h-3.5" />
-              <span>Acesso Geral ERP</span>
+              <span>{t('auth.generalErpAccess')}</span>
             </button>
 
             <button
@@ -272,21 +275,35 @@ export const LoginScreen: React.FC = () => {
               }`}
             >
               <KeyRound className="w-3.5 h-3.5" />
-              <span>PIN Operador POS</span>
+              <span>{t('auth.posOperatorPin')}</span>
             </button>
           </div>
 
-          <button
-            type="button"
-            onClick={() => {
-              setShowRegisterModal(true);
-              sound.playBeep();
-            }}
-            className="px-3.5 py-1.5 rounded-xl text-xs font-bold bg-[#c5a47e]/15 text-[#c5a47e] hover:bg-[#c5a47e]/25 border border-[#c5a47e]/40 transition-all cursor-pointer flex items-center space-x-1.5"
-          >
-            <PlusCircle className="w-3.5 h-3.5" />
-            <span>Cadastrar Empresa</span>
-          </button>
+          <div className="flex items-center space-x-1.5">
+            {/* Language Switcher */}
+            <button
+              id="login-language-toggle-btn"
+              type="button"
+              onClick={toggleLanguage}
+              className="px-2.5 py-1.5 rounded-xl text-xs font-semibold bg-[#1a1a1a] text-neutral-300 hover:text-[#c5a47e] hover:bg-[#222222] border border-[#2a2a2a] transition-all cursor-pointer flex items-center space-x-1.5"
+              title={t('header.switchTo', { lang: language === 'pt' ? 'English (🇬🇧)' : 'Português (🇲🇿)' })}
+            >
+              <span>{language === 'pt' ? '🇲🇿' : '🇬🇧'}</span>
+              <span className="font-mono uppercase font-bold text-[11px]">{language}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setShowRegisterModal(true);
+                sound.playBeep();
+              }}
+              className="px-3.5 py-1.5 rounded-xl text-xs font-bold bg-[#c5a47e]/15 text-[#c5a47e] hover:bg-[#c5a47e]/25 border border-[#c5a47e]/40 transition-all cursor-pointer flex items-center space-x-1.5"
+            >
+              <PlusCircle className="w-3.5 h-3.5" />
+              <span>{t('auth.registerCompanyBtn')}</span>
+            </button>
+          </div>
         </div>
 
         {/* Multi-tenant Commercial Pitch Bar */}
@@ -297,10 +314,10 @@ export const LoginScreen: React.FC = () => {
             </div>
             <div>
               <p className="text-xs font-bold text-neutral-200">
-                Sistema Comercial Multi-Empresas & Ramos
+                {t('auth.multiTenantBannerTitle')}
               </p>
               <p className="text-[11px] text-neutral-400">
-                Venda este sistema para supermercados, farmácias, restauração, boutiques e mais.
+                {t('auth.multiTenantBannerDesc')}
               </p>
             </div>
           </div>
@@ -313,7 +330,7 @@ export const LoginScreen: React.FC = () => {
             className="hidden sm:flex items-center space-x-1 px-3 py-1.5 rounded-xl bg-[#c5a47e] text-neutral-950 text-xs font-bold hover:bg-[#b5946e] transition-all cursor-pointer shadow-sm shrink-0"
           >
             <Sparkles className="w-3.5 h-3.5" />
-            <span>Criar Nova Empresa</span>
+            <span>{t('auth.createNewCompany')}</span>
           </button>
         </div>
 

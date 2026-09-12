@@ -1591,6 +1591,12 @@ export async function obterExtratoInventarioArmazemClient(params: {
   movimentacoes_apos_data: number;
   stock_na_data: number;
   extrato_movimentos: any[];
+  itens_por_produto?: Record<string, {
+    produto_id: string;
+    saldo_atual: number;
+    movimentacoes_apos_data: number;
+    stock_na_data: number;
+  }>;
 }> {
   const queryParams = new URLSearchParams({
     armazem_id: params.armazem_id,

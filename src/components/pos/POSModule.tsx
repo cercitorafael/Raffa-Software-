@@ -31,6 +31,8 @@ import {
   Phone,
   MapPin,
   Receipt,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 import { PaymentModal } from './PaymentModal';
 import { ReceiptModal } from './ReceiptModal';
@@ -94,6 +96,23 @@ export const POSModule: React.FC = () => {
   const [discountInput, setDiscountInput] = useState<number>(0);
   const [showSalesHistoryModal, setShowSalesHistoryModal] = useState(false);
   const [selectedCartProductId, setSelectedCartProductId] = useState<string | null>(null);
+  const [isShiftNoticeCollapsed, setIsShiftNoticeCollapsed] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('pos_shift_notice_collapsed') === 'true';
+    } catch {
+      return false;
+    }
+  });
+
+  const toggleShiftNotice = () => {
+    setIsShiftNoticeCollapsed((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem('pos_shift_notice_collapsed', String(next));
+      } catch {}
+      return next;
+    });
+  };
 
   // Sincronizar estado do turno de caixa entre múltiplos dispositivos ao abrir o POS
   useEffect(() => {
@@ -296,94 +315,208 @@ export const POSModule: React.FC = () => {
     <div className="flex-1 flex flex-col md:flex-row h-full overflow-hidden bg-[#0a0a0a] text-[#e5e5e5]">
       {/* Left Workspace: Product Catalog & Fast Search */}
       <div className="flex-1 flex flex-col min-w-0 p-4 overflow-hidden">
-        {/* Closed Cash Register Notice */}
+        {/* Cash Register Notice (Expandable / Collapsible) */}
         {!activeShift ? (
-          <div className="mb-3 p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs">
-            <div className="flex items-center space-x-2.5 text-amber-300">
-              <div className="w-8 h-8 rounded-lg bg-amber-500/20 flex items-center justify-center shrink-0">
-                <Lock className="w-4 h-4 text-amber-400" />
+          isShiftNoticeCollapsed ? (
+            /* Collapsed Closed Cash Notice */
+            <div
+              id="pos-shift-notice-collapsed"
+              className="mb-3 px-3 py-1.5 bg-amber-500/10 border border-amber-500/25 rounded-xl flex items-center justify-between gap-2 text-xs transition-all"
+            >
+              <div className="flex items-center space-x-2 text-amber-300 min-w-0">
+                <Lock className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                <span className="font-bold text-amber-200 truncate">Caixa Fechada</span>
+                <span className="text-neutral-600 hidden sm:inline">&bull;</span>
+                <span className="text-[11px] text-amber-400/80 truncate hidden sm:inline">
+                  Abertura obrigatória para faturar
+                </span>
               </div>
-              <div>
-                <p className="font-bold text-amber-200">Caixa Fechada &bull; Abertura Obrigatória</p>
-                <p className="text-[11px] text-amber-400/80">
-                  O caixa permanece fechado até que o operador realize a abertura manual com o fundo de maneio.
-                </p>
+              <div className="flex items-center space-x-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShiftModalInitialMode('open');
+                    setShowShiftModal(true);
+                  }}
+                  className="px-2.5 py-1 bg-[#c5a47e] hover:bg-[#d4b896] text-black font-bold rounded-lg text-xs flex items-center space-x-1 transition-all shadow-xs cursor-pointer"
+                  title="Abrir caixa informando o fundo de maneio"
+                >
+                  <Unlock className="w-3 h-3" />
+                  <span>Abrir Caixa</span>
+                </button>
+                <button
+                  id="pos-shift-expand-btn"
+                  type="button"
+                  onClick={toggleShiftNotice}
+                  className="px-2.5 py-1 bg-[#1a1a1a] hover:bg-[#252525] text-neutral-300 hover:text-white border border-[#333333] hover:border-[#c5a47e]/50 rounded-lg text-xs font-medium flex items-center space-x-1.5 transition-all cursor-pointer shadow-xs"
+                  title="Mostrar informação completa do caixa"
+                >
+                  <span>Mostrar Informação</span>
+                  <ChevronDown className="w-3.5 h-3.5 text-[#c5a47e]" />
+                </button>
               </div>
             </div>
-            <div className="flex items-center space-x-2 shrink-0">
-              <button
-                type="button"
-                onClick={() => {
-                  setShiftModalInitialMode('history');
-                  setShowShiftModal(true);
-                }}
-                className="px-2.5 py-1.5 bg-[#1a1a1a] hover:bg-[#252525] text-neutral-300 hover:text-white border border-[#333333] rounded-lg text-xs font-medium flex items-center space-x-1.5 transition-all cursor-pointer"
-                title="Consultar e reimprimir relatórios Z anteriores"
-              >
-                <FileText className="w-3.5 h-3.5 text-[#c5a47e]" />
-                <span>Relatórios Z Anteriores</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setShiftModalInitialMode('open');
-                  setShowShiftModal(true);
-                }}
-                className="px-3 py-1.5 bg-[#c5a47e] hover:bg-[#d4b896] text-black font-bold rounded-lg text-xs flex items-center space-x-1.5 transition-all shadow-xs cursor-pointer"
-              >
-                <Unlock className="w-3.5 h-3.5" />
-                <span>Abrir Caixa</span>
-              </button>
+          ) : (
+            /* Expanded Closed Cash Notice */
+            <div
+              id="pos-shift-notice-expanded"
+              className="mb-3 p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs transition-all"
+            >
+              <div className="flex items-center space-x-2.5 text-amber-300">
+                <div className="w-8 h-8 rounded-lg bg-amber-500/20 flex items-center justify-center shrink-0">
+                  <Lock className="w-4 h-4 text-amber-400" />
+                </div>
+                <div>
+                  <p className="font-bold text-amber-200">Caixa Fechada &bull; Abertura Obrigatória</p>
+                  <p className="text-[11px] text-amber-400/80">
+                    O caixa permanece fechado até que o operador realize a abertura manual com o fundo de maneio.
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center space-x-2 shrink-0 flex-wrap gap-y-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShiftModalInitialMode('history');
+                    setShowShiftModal(true);
+                  }}
+                  className="px-2.5 py-1.5 bg-[#1a1a1a] hover:bg-[#252525] text-neutral-300 hover:text-white border border-[#333333] rounded-lg text-xs font-medium flex items-center space-x-1.5 transition-all cursor-pointer"
+                  title="Consultar e reimprimir relatórios Z anteriores"
+                >
+                  <FileText className="w-3.5 h-3.5 text-[#c5a47e]" />
+                  <span>Relatórios Z Anteriores</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShiftModalInitialMode('open');
+                    setShowShiftModal(true);
+                  }}
+                  className="px-3 py-1.5 bg-[#c5a47e] hover:bg-[#d4b896] text-black font-bold rounded-lg text-xs flex items-center space-x-1.5 transition-all shadow-xs cursor-pointer"
+                >
+                  <Unlock className="w-3.5 h-3.5" />
+                  <span>Abrir Caixa</span>
+                </button>
+                <button
+                  id="pos-shift-collapse-btn"
+                  type="button"
+                  onClick={toggleShiftNotice}
+                  className="px-2.5 py-1.5 bg-[#1a1a1a] hover:bg-[#252525] text-neutral-300 hover:text-white border border-[#333333] hover:border-[#c5a47e]/50 rounded-lg text-xs font-medium flex items-center space-x-1.5 transition-all cursor-pointer shadow-xs"
+                  title="Encolher esta informação"
+                >
+                  <span>Encolher Informação</span>
+                  <ChevronUp className="w-3.5 h-3.5 text-[#c5a47e]" />
+                </button>
+              </div>
             </div>
-          </div>
+          )
         ) : (
-          <div className="mb-3 px-3 py-2 bg-emerald-500/10 border border-emerald-500/25 rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-xs">
-            <div className="flex items-center space-x-2.5 text-emerald-300 min-w-0">
-              <div className="w-7 h-7 rounded-lg bg-emerald-500/20 flex items-center justify-center shrink-0 border border-emerald-500/30 text-emerald-400">
-                <Wallet className="w-3.5 h-3.5" />
+          isShiftNoticeCollapsed ? (
+            /* Collapsed Open Cash Notice */
+            <div
+              id="pos-shift-notice-collapsed"
+              className="mb-3 px-3 py-1.5 bg-emerald-500/10 border border-emerald-500/25 rounded-xl flex items-center justify-between gap-2 text-xs transition-all"
+            >
+              <div className="flex items-center space-x-2 text-emerald-300 min-w-0 overflow-hidden">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shrink-0 inline-block" />
+                <span className="font-bold text-emerald-200 shrink-0">Caixa Aberto</span>
+                <span className="text-neutral-600 hidden sm:inline">&bull;</span>
+                <span className="text-[11px] text-neutral-300 truncate hidden sm:inline">
+                  Op: <strong className="text-white">{activeShift.operatorName}</strong>
+                </span>
+                <span className="text-neutral-600 hidden md:inline">&bull;</span>
+                <span className="text-[11px] text-neutral-400 font-mono truncate hidden md:inline">
+                  Faturado: <strong className="text-[#c5a47e]">{formatCurrency(activeShift.totalSales)}</strong>
+                </span>
               </div>
-              <div className="min-w-0">
-                <div className="flex items-center space-x-2">
-                  <span className="font-bold text-emerald-200 flex items-center space-x-1.5">
-                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse inline-block" />
-                    <span>Caixa Aberto</span>
-                  </span>
-                  <span className="text-[11px] text-neutral-400 font-mono">
-                    &bull; Operador: <strong className="text-neutral-200">{activeShift.operatorName}</strong>
-                  </span>
-                </div>
-                <div className="text-[10px] text-neutral-400 font-mono flex items-center space-x-3 mt-0.5">
-                  <span>Fundo Inicial: <strong className="text-neutral-200">{formatCurrency(activeShift.initialCash)}</strong></span>
-                  <span>Total Faturado no Turno: <strong className="text-[#c5a47e]">{formatCurrency(activeShift.totalSales)}</strong></span>
-                </div>
+              <div className="flex items-center space-x-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShiftModalInitialMode('info');
+                    setShowShiftModal(true);
+                  }}
+                  className="px-2.5 py-1 bg-[#1a1a1a] hover:bg-[#252525] text-neutral-200 hover:text-white border border-[#333333] rounded-lg text-xs font-medium flex items-center space-x-1 transition-all cursor-pointer"
+                  title="Gerir Turno, Sangria e Fecho Z"
+                >
+                  <Wallet className="w-3 h-3 text-[#c5a47e]" />
+                  <span className="hidden sm:inline">Gerir Turno</span>
+                </button>
+                <button
+                  id="pos-shift-expand-btn"
+                  type="button"
+                  onClick={toggleShiftNotice}
+                  className="px-2.5 py-1 bg-[#1a1a1a] hover:bg-[#252525] text-neutral-300 hover:text-white border border-[#333333] hover:border-[#c5a47e]/50 rounded-lg text-xs font-medium flex items-center space-x-1.5 transition-all cursor-pointer shadow-xs"
+                  title="Mostrar informação detalhada do caixa"
+                >
+                  <span>Mostrar Informação</span>
+                  <ChevronDown className="w-3.5 h-3.5 text-[#c5a47e]" />
+                </button>
               </div>
             </div>
-            <div className="flex items-center space-x-2 shrink-0">
-              <button
-                type="button"
-                onClick={() => {
-                  setShiftModalInitialMode('history');
-                  setShowShiftModal(true);
-                }}
-                className="px-2.5 py-1 bg-[#1a1a1a] hover:bg-[#252525] text-neutral-300 hover:text-white border border-[#333333] rounded-lg text-[11px] font-medium flex items-center space-x-1.5 transition-all cursor-pointer"
-                title="Consultar e reimprimir relatórios Z anteriores"
-              >
-                <FileText className="w-3.5 h-3.5 text-[#c5a47e]" />
-                <span>Relatórios Z Anteriores</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setShiftModalInitialMode('info');
-                  setShowShiftModal(true);
-                }}
-                className="px-2.5 py-1 bg-[#1a1a1a] hover:bg-[#252525] text-neutral-300 hover:text-white border border-[#333333] rounded-lg text-[11px] font-medium flex items-center space-x-1.5 transition-all cursor-pointer"
-                title="Gerir Turno, Sangria e Fecho Z"
-              >
-                <span>Gerir Turno / Fecho Z</span>
-              </button>
+          ) : (
+            /* Expanded Open Cash Notice */
+            <div
+              id="pos-shift-notice-expanded"
+              className="mb-3 px-3 py-2 bg-emerald-500/10 border border-emerald-500/25 rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-xs transition-all"
+            >
+              <div className="flex items-center space-x-2.5 text-emerald-300 min-w-0">
+                <div className="w-7 h-7 rounded-lg bg-emerald-500/20 flex items-center justify-center shrink-0 border border-emerald-500/30 text-emerald-400">
+                  <Wallet className="w-3.5 h-3.5" />
+                </div>
+                <div className="min-w-0">
+                  <div className="flex items-center space-x-2">
+                    <span className="font-bold text-emerald-200 flex items-center space-x-1.5">
+                      <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse inline-block" />
+                      <span>Caixa Aberto</span>
+                    </span>
+                    <span className="text-[11px] text-neutral-400 font-mono">
+                      &bull; Operador: <strong className="text-neutral-200">{activeShift.operatorName}</strong>
+                    </span>
+                  </div>
+                  <div className="text-[10px] text-neutral-400 font-mono flex items-center space-x-3 mt-0.5">
+                    <span>Fundo Inicial: <strong className="text-neutral-200">{formatCurrency(activeShift.initialCash)}</strong></span>
+                    <span>Total Faturado no Turno: <strong className="text-[#c5a47e]">{formatCurrency(activeShift.totalSales)}</strong></span>
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-center space-x-2 shrink-0 flex-wrap gap-y-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShiftModalInitialMode('history');
+                    setShowShiftModal(true);
+                  }}
+                  className="px-2.5 py-1 bg-[#1a1a1a] hover:bg-[#252525] text-neutral-300 hover:text-white border border-[#333333] rounded-lg text-[11px] font-medium flex items-center space-x-1.5 transition-all cursor-pointer"
+                  title="Consultar e reimprimir relatórios Z anteriores"
+                >
+                  <FileText className="w-3.5 h-3.5 text-[#c5a47e]" />
+                  <span>Relatórios Z Anteriores</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShiftModalInitialMode('info');
+                    setShowShiftModal(true);
+                  }}
+                  className="px-2.5 py-1 bg-[#1a1a1a] hover:bg-[#252525] text-neutral-300 hover:text-white border border-[#333333] rounded-lg text-[11px] font-medium flex items-center space-x-1.5 transition-all cursor-pointer"
+                  title="Gerir Turno, Sangria e Fecho Z"
+                >
+                  <span>Gerir Turno / Fecho Z</span>
+                </button>
+                <button
+                  id="pos-shift-collapse-btn"
+                  type="button"
+                  onClick={toggleShiftNotice}
+                  className="px-2.5 py-1 bg-[#1a1a1a] hover:bg-[#252525] text-neutral-300 hover:text-white border border-[#333333] hover:border-[#c5a47e]/50 rounded-lg text-[11px] font-medium flex items-center space-x-1.5 transition-all cursor-pointer shadow-xs"
+                  title="Encolher esta informação para uma linha compacta"
+                >
+                  <span>Encolher Informação</span>
+                  <ChevronUp className="w-3.5 h-3.5 text-[#c5a47e]" />
+                </button>
+              </div>
             </div>
-          </div>
+          )
         )}
 
         {/* Top Control Bar: Barcode Gun Simulation & Search */}

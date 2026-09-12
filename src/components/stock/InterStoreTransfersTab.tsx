@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { useApp } from '../../context/AppContext';
 import { StockTransfer, StockTransferItem } from '../../types';
-import { formatCurrency } from '../../utils/crypto';
+import { formatCurrency, formatExactDateTime, formatExactDate, formatExactTime } from '../../utils/crypto';
 import { TransferArticlePickerModal } from './TransferArticlePickerModal';
 import {
   RefreshCw,
@@ -635,8 +635,8 @@ export const InterStoreTransfersTab: React.FC<InterStoreTransfersTabProps> = () 
 
                     {renderStatusBadge(transfer.status)}
 
-                    <span className="text-[11px] text-neutral-400 font-mono">
-                      {new Date(transfer.createdAt).toLocaleString('pt-PT')}
+                    <span className="text-[11px] text-neutral-400 font-mono" title={`Timestamp ISO: ${transfer.createdAt}`}>
+                      {formatExactDateTime(transfer.createdAt, true)}
                     </span>
                   </div>
 
@@ -1398,8 +1398,8 @@ export const InterStoreTransfersTab: React.FC<InterStoreTransfersTabProps> = () 
                   <h3 className="text-base font-bold text-white">
                     Guia de Transferência {selectedTransfer.transferNumber}
                   </h3>
-                  <p className="text-xs text-neutral-400">
-                    Emitida em {new Date(selectedTransfer.createdAt).toLocaleString('pt-PT')}
+                  <p className="text-xs text-neutral-400 font-mono">
+                    Emitida em {formatExactDateTime(selectedTransfer.createdAt, true)}
                   </p>
                 </div>
               </div>
@@ -1463,13 +1463,13 @@ export const InterStoreTransfersTab: React.FC<InterStoreTransfersTabProps> = () 
 
             {/* Audit Log timeline */}
             <div className="p-3 bg-[#0d0d0d] rounded-xl border border-[#262626] text-xs space-y-1">
-              <span className="text-[10px] uppercase font-bold text-neutral-400 block mb-1">Rastreabilidade & Auditoria</span>
-              <div className="text-[11px] text-neutral-300">
-                &bull; <strong>Solicitado:</strong> {new Date(selectedTransfer.createdAt).toLocaleString('pt-PT')} por {selectedTransfer.requestedByName}
+              <span className="text-[10px] uppercase font-bold text-neutral-400 block mb-1">Rastreabilidade & Auditoria Temporal Rigorosa</span>
+              <div className="text-[11px] text-neutral-300 font-mono">
+                &bull; <strong>Solicitado:</strong> {formatExactDateTime(selectedTransfer.createdAt, true)} por {selectedTransfer.requestedByName}
               </div>
               {selectedTransfer.approvedAt && (
-                <div className="text-[11px] text-sky-300 flex flex-wrap items-center gap-1.5">
-                  <span>&bull; <strong>Aprovado & Abatido na Origem:</strong> {new Date(selectedTransfer.approvedAt).toLocaleString('pt-PT')} por {selectedTransfer.approvedByName}</span>
+                <div className="text-[11px] text-sky-300 flex flex-wrap items-center gap-1.5 font-mono">
+                  <span>&bull; <strong>Aprovado & Abatido na Origem:</strong> {formatExactDateTime(selectedTransfer.approvedAt, true)} por {selectedTransfer.approvedByName}</span>
                   {selectedTransfer.approvedByIp && (
                     <span className="font-mono text-[10px] px-1.5 py-0.5 bg-sky-950/60 text-sky-400 border border-sky-800/40 rounded">
                       IP: {selectedTransfer.approvedByIp}
@@ -1478,8 +1478,8 @@ export const InterStoreTransfersTab: React.FC<InterStoreTransfersTabProps> = () 
                 </div>
               )}
               {selectedTransfer.completedAt && (
-                <div className="text-[11px] text-emerald-300 flex flex-wrap items-center gap-1.5">
-                  <span>&bull; <strong>Validado & Descarregado no Destino:</strong> {new Date(selectedTransfer.completedAt).toLocaleString('pt-PT')} por {selectedTransfer.receivedByName}</span>
+                <div className="text-[11px] text-emerald-300 flex flex-wrap items-center gap-1.5 font-mono">
+                  <span>&bull; <strong>Validado & Descarregado no Destino:</strong> {formatExactDateTime(selectedTransfer.completedAt, true)} por {selectedTransfer.receivedByName}</span>
                   {selectedTransfer.receivedByIp && (
                     <span className="font-mono text-[10px] px-1.5 py-0.5 bg-emerald-950/60 text-emerald-400 border border-emerald-800/40 rounded">
                       IP: {selectedTransfer.receivedByIp}
@@ -1488,8 +1488,8 @@ export const InterStoreTransfersTab: React.FC<InterStoreTransfersTabProps> = () 
                 </div>
               )}
               {selectedTransfer.cancelledAt && (
-                <div className="text-[11px] text-rose-300">
-                  &bull; <strong>Cancelado:</strong> {new Date(selectedTransfer.cancelledAt).toLocaleString('pt-PT')} ({selectedTransfer.rejectionReason})
+                <div className="text-[11px] text-rose-300 font-mono">
+                  &bull; <strong>Cancelado:</strong> {formatExactDateTime(selectedTransfer.cancelledAt, true)} ({selectedTransfer.rejectionReason})
                 </div>
               )}
             </div>

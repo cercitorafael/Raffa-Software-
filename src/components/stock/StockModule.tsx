@@ -43,6 +43,7 @@ import { CategoryManagementModal } from './CategoryManagementModal';
 import { CategoryManagementTab } from './CategoryManagementTab';
 import { InventoryExtractTab } from './InventoryExtractTab';
 import { InterStoreTransfersTab } from './InterStoreTransfersTab';
+import { PhysicalInventoryCountTab } from './PhysicalInventoryCountTab';
 
 export const StockModule: React.FC = () => {
   const {
@@ -154,11 +155,6 @@ export const StockModule: React.FC = () => {
     currentQuantity: 50,
     supplierId: suppliers[0]?.id || '',
   });
-
-  
-  // Physical count state
-  const [countedQuantities, setCountedQuantities] = useState<Record<string, number>>({});
-  const [inventoryFinalized, setInventoryFinalized] = useState<boolean>(false);
 
   // Permissions check
   const canRead = hasPermission('stock', 'read') || currentUser?.role === 'admin';
@@ -381,16 +377,6 @@ export const StockModule: React.FC = () => {
       notes: `Reposição automática de stock mínimo crítico para ${prod.sku}`,
     });
     notify(`Requisição de Compra criada com sucesso para reposição de ${prod.name}!`, 'success');
-  };
-
-  // Apply inventory count adjustments
-  const handleFinalizeInventoryCount = () => {
-    const targetWh = warehouses.find((w) => w.id === adjustWarehouseId) || warehouses[0];
-    Object.entries(countedQuantities).forEach(([prodId, countedQty]) => {
-      createStockAdjustment(prodId, targetWh.id, countedQty, 'Inventário Físico Finalizado');
-    });
-    setInventoryFinalized(true);
-    setTimeout(() => setInventoryFinalized(false), 4000);
   };
 
   return (
@@ -1039,71 +1025,7 @@ export const StockModule: React.FC = () => {
 
         {/* TAB 6: PHYSICAL INVENTORY COUNT */}
         {activeTab === 'inventory_count' && (
-          <div className="space-y-4">
-            <div className="flex justify-between items-center bg-[#141414] p-4 rounded-xl border border-[#262626]">
-              <div>
-                <h3 className="text-sm font-semibold text-neutral-200">Sessão de Contagem Física de Inventário</h3>
-                <p className="text-xs text-neutral-400">
-                  Introduza as quantidades reais contadas fisicamente em armazém para calcular quebras ou sobras.
-                </p>
-              </div>
-              <button
-                onClick={handleFinalizeInventoryCount}
-                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-medium transition-colors cursor-pointer"
-              >
-                Finalizar e Aplicar Acertos
-              </button>
-            </div>
-
-            {inventoryFinalized && (
-              <div className="p-3 bg-emerald-500/10 border border-emerald-500/30 rounded-lg text-emerald-400 text-xs flex items-center space-x-2">
-                <CheckCircle className="w-4 h-4" />
-                <span>Inventário concluído! As diferenças foram gravadas e o stock atualizado.</span>
-              </div>
-            )}
-
-            <div className="bg-[#141414] border border-[#262626] rounded-xl overflow-hidden">
-              <table className="w-full text-left text-xs text-neutral-300">
-                <thead className="bg-[#1a1a1a] text-neutral-400 font-medium uppercase tracking-wider text-[10px] border-b border-[#262626]">
-                  <tr>
-                    <th className="px-4 py-3">Artigo</th>
-                    <th className="px-4 py-3">SKU</th>
-                    <th className="px-4 py-3 text-right">Stock em Sistema</th>
-                    <th className="px-4 py-3 text-right w-40">Qtd. Contada</th>
-                    <th className="px-4 py-3 text-right">Desvio</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[#262626]">
-                  {products.map((prod) => {
-                    const currentQty = stock.filter((s) => s.productId === prod.id).reduce((sum, s) => sum + s.quantity, 0);
-                    const counted = countedQuantities[prod.id] !== undefined ? countedQuantities[prod.id] : currentQty;
-                    const diff = counted - currentQty;
-
-                    return (
-                      <tr key={prod.id} className="hover:bg-[#191919]">
-                        <td className="px-4 py-3 font-medium text-neutral-200">{prod.name}</td>
-                        <td className="px-4 py-3 font-mono text-neutral-500">{prod.sku}</td>
-                        <td className="px-4 py-3 text-right font-mono text-neutral-400">{currentQty}</td>
-                        <td className="px-4 py-3 text-right">
-                          <input
-                            type="number"
-                            value={counted}
-                            onChange={(e) => setCountedQuantities((prev) => ({ ...prev, [prod.id]: Number(e.target.value) }))}
-                            className="w-24 bg-[#0d0d0d] border border-[#333] rounded px-2 py-1 text-right font-mono text-xs text-neutral-200 focus:outline-hidden focus:border-[#c5a47e]"
-                          />
-                        </td>
-                        <td className="px-4 py-3 text-right font-mono font-semibold">
-                          <span className={diff < 0 ? 'text-rose-400' : diff > 0 ? 'text-emerald-400' : 'text-neutral-500'}>
-                            {diff > 0 ? `+${diff}` : diff}
-                          </span>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </div>
+          <PhysicalInventoryCountTab />
         )}
 
         {/* TAB 7: REORDER & LOW STOCK */}

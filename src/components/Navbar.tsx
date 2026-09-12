@@ -64,6 +64,9 @@ export const Navbar: React.FC<{ onOpenShiftModal: () => void }> = ({ onOpenShift
     isSidebarCollapsed,
     toggleSidebar,
     supabaseRealtimeStatus,
+    language,
+    toggleLanguage,
+    t,
   } = useApp();
 
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -121,12 +124,12 @@ export const Navbar: React.FC<{ onOpenShiftModal: () => void }> = ({ onOpenShift
   }, [terminals]);
 
   const roleLabels: Record<string, { name: string; badge: string; color: string }> = {
-    caixa: { name: 'Operador de Caixa', badge: 'POS', color: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' },
-    gerente: { name: 'Gerente de Loja', badge: 'GERÊNCIA', color: 'bg-[#c5a47e]/15 text-[#c5a47e] border-[#c5a47e]/30' },
-    financeiro: { name: 'Diretor Financeiro', badge: 'FINANÇAS', color: 'bg-amber-500/10 text-amber-400 border-amber-500/30' },
-    rh: { name: 'Recursos Humanos', badge: 'RH', color: 'bg-rose-500/10 text-rose-400 border-rose-500/30' },
-    comprador: { name: 'Gestor de Compras', badge: 'PROCUREMENT', color: 'bg-cyan-500/10 text-cyan-400 border-cyan-500/30' },
-    admin: { name: 'Administrador Global', badge: 'ADMIN SGPS', color: 'bg-purple-500/10 text-purple-400 border-purple-500/30' },
+    caixa: { name: t('roles.caixa'), badge: t('roles.caixaBadge'), color: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' },
+    gerente: { name: t('roles.gerente'), badge: t('roles.gerenteBadge'), color: 'bg-[#c5a47e]/15 text-[#c5a47e] border-[#c5a47e]/30' },
+    financeiro: { name: t('roles.financeiro'), badge: t('roles.financeiroBadge'), color: 'bg-amber-500/10 text-amber-400 border-amber-500/30' },
+    rh: { name: t('roles.rh'), badge: t('roles.rhBadge'), color: 'bg-rose-500/10 text-rose-400 border-rose-500/30' },
+    comprador: { name: t('roles.comprador'), badge: t('roles.compradorBadge'), color: 'bg-cyan-500/10 text-cyan-400 border-cyan-500/30' },
+    admin: { name: t('roles.admin'), badge: t('roles.adminBadge'), color: 'bg-purple-500/10 text-purple-400 border-purple-500/30' },
   };
 
   return (
@@ -259,29 +262,29 @@ export const Navbar: React.FC<{ onOpenShiftModal: () => void }> = ({ onOpenShift
           {/* Quick Price Checker & SAF-T PT */}
           <button
             onClick={() => setShowPriceCheckerModal(true)}
-            title="Consultar Preço & Scanner de Artigos"
+            title={t('header.priceCheckerTooltip')}
             className="flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border bg-[#141414] hover:bg-[#1f1f1f] border-[#262626] hover:border-[#383838] text-neutral-300 transition-all cursor-pointer shrink-0 whitespace-nowrap shadow-xs"
           >
             <Barcode className="w-3.5 h-3.5 text-amber-400" />
-            <span>Preços & Stock</span>
+            <span>{t('header.priceChecker')}</span>
           </button>
 
           <button
             onClick={() => setShowFiscalAuditModal(true)}
-            title="Auditoria e Validador SAF-T (PT)"
+            title={t('header.fiscalAuditTooltip')}
             className="flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border bg-[#141414] hover:bg-[#1f1f1f] border-[#262626] hover:border-[#383838] text-neutral-300 transition-all cursor-pointer shrink-0 whitespace-nowrap shadow-xs"
           >
             <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-            <span>SAF-T PT</span>
+            <span>{t('header.fiscalAudit')}</span>
           </button>
 
           {/* Online Realtime Cloud Indicator */}
           <div
-            title="Conexão com a Nuvem em Tempo Real Ativa"
+            title={t('header.cloudConnectionActive')}
             className="flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border bg-emerald-500/10 text-emerald-400 border-emerald-500/30 shrink-0 whitespace-nowrap shadow-xs"
           >
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-            <span className="font-medium">Online</span>
+            <span className="font-medium">{t('header.online')}</span>
           </div>
 
           {/* Cash Register Shift Button */}
@@ -292,7 +295,7 @@ export const Navbar: React.FC<{ onOpenShiftModal: () => void }> = ({ onOpenShift
                 ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30 hover:bg-emerald-500/20'
                 : 'bg-rose-500/10 text-rose-300 border-rose-500/30 hover:bg-rose-500/20'
             }`}
-            title={`Estado do Caixa: ${activeShift ? `Aberto por ${activeShift.operatorName} (${currentTerminal?.code || 'POS-01'})` : 'Caixa Fechado - Clique para gerir'}`}
+            title={`${t('header.cashRegisterStatus')}: ${activeShift ? `${t('header.shiftOpen')} (${activeShift.operatorName})` : t('header.shiftClosed')}`}
           >
             <div className="relative flex items-center justify-center">
               <Wallet className={`w-3.5 h-3.5 ${activeShift ? 'text-emerald-400' : 'text-rose-400'}`} />
@@ -302,7 +305,7 @@ export const Navbar: React.FC<{ onOpenShiftModal: () => void }> = ({ onOpenShift
                 }`}
               />
             </div>
-            <span className="font-semibold">{activeShift ? 'Caixa Aberto' : 'Caixa Fechado'}</span>
+            <span className="font-semibold">{activeShift ? t('header.shiftOpen') : t('header.shiftClosed')}</span>
             {activeShift && (
               <span className="hidden md:inline text-[10px] opacity-80 font-mono pl-1 border-l border-emerald-500/30">
                 {activeShift.operatorName.split(' ')[0]}
@@ -310,11 +313,23 @@ export const Navbar: React.FC<{ onOpenShiftModal: () => void }> = ({ onOpenShift
             )}
           </button>
 
+          {/* Language Switcher Button */}
+          <button
+            id="navbar-language-toggle-btn"
+            onClick={toggleLanguage}
+            className="flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-semibold bg-[#141414] border-[#262626] text-neutral-300 hover:text-[#c5a47e] hover:border-[#c5a47e]/40 hover:bg-[#1a1a1a] transition-all cursor-pointer shadow-xs shrink-0"
+            title={t('header.switchTo', { lang: language === 'pt' ? 'English (🇬🇧)' : 'Português (🇲🇿)' })}
+            aria-label="Toggle language"
+          >
+            <span className="text-sm leading-none">{language === 'pt' ? '🇲🇿' : '🇬🇧'}</span>
+            <span className="font-mono text-[11px] font-bold uppercase">{language}</span>
+          </button>
+
           {/* Theme Switcher Button */}
           <button
             onClick={toggleTheme}
             className="p-2 rounded-lg border text-xs font-medium bg-[#141414] border-[#262626] text-neutral-300 hover:text-[#c5a47e] hover:border-[#c5a47e]/40 hover:bg-[#1a1a1a] transition-all cursor-pointer shadow-xs shrink-0"
-            title={`Trocar Tema Atual: ${theme === 'dark' ? 'Noir Dourado' : theme === 'light' ? 'Executivo Claro' : theme === 'midnight' ? 'Azul Meia-Noite' : 'Verde Esmeralda'}`}
+            title={`Trocar Tema: ${theme}`}
           >
             {theme === 'light' ? (
               <Sun className="w-4 h-4 text-amber-500 animate-in spin-in-180 duration-300" />
@@ -405,18 +420,18 @@ export const Navbar: React.FC<{ onOpenShiftModal: () => void }> = ({ onOpenShift
               {/* Context Details */}
               <div className="mt-2.5 pt-2 border-t border-[#202020] grid grid-cols-2 gap-2 text-[10px]">
                 <div>
-                  <span className="text-neutral-500 block">Loja Afeta:</span>
+                  <span className="text-neutral-500 block">{t('header.assignedStore')}</span>
                   <span className="text-neutral-300 font-medium truncate block">{currentStore?.name || 'Loja Principal'}</span>
                 </div>
                 <div>
-                  <span className="text-neutral-500 block">Terminal:</span>
+                  <span className="text-neutral-500 block">{t('header.terminal')}</span>
                   <span className="text-neutral-300 font-medium truncate block">{currentTerminal?.name || 'POS-01'}</span>
                 </div>
                 <div className="col-span-2 pt-1 border-t border-[#1a1a1a] flex items-center justify-between">
-                  <span className="text-neutral-500">Estado da Caixa:</span>
+                  <span className="text-neutral-500">{t('header.cashRegisterStatus')}</span>
                   <span className={`font-medium flex items-center space-x-1 ${activeShift ? 'text-emerald-400' : 'text-amber-400'}`}>
                     <span className={`w-1.5 h-1.5 rounded-full ${activeShift ? 'bg-emerald-400' : 'bg-amber-400'}`} />
-                    <span>{activeShift ? `Aberto (${activeShift.operatorName.split(' ')[0]})` : 'Fechado'}</span>
+                    <span>{activeShift ? `${t('header.shiftOpen')} (${activeShift.operatorName.split(' ')[0]})` : t('header.shiftClosed')}</span>
                   </span>
                 </div>
               </div>
@@ -430,7 +445,7 @@ export const Navbar: React.FC<{ onOpenShiftModal: () => void }> = ({ onOpenShift
                   className="w-full py-2 px-3 bg-[#1a1a1a] hover:bg-[#222222] text-[#c5a47e] border border-[#c5a47e]/30 rounded-lg text-xs font-semibold flex items-center justify-center space-x-2 transition-all cursor-pointer shadow-xs"
                 >
                   <UserCheck className="w-4 h-4 text-[#c5a47e]" />
-                  <span>Gestão de Utilizadores & Acessos</span>
+                  <span>{t('header.userManagement')}</span>
                 </button>
               )}
 
@@ -438,18 +453,18 @@ export const Navbar: React.FC<{ onOpenShiftModal: () => void }> = ({ onOpenShift
                 <button
                   onClick={lockScreen}
                   className="py-2 px-2 bg-[#1a1a1a] hover:bg-amber-950/30 text-amber-400 hover:text-amber-300 border border-[#262626] hover:border-amber-500/30 rounded-lg text-[11px] font-semibold flex items-center justify-center space-x-1.5 transition-all cursor-pointer"
-                  title="Bloquear terminal com código PIN"
+                  title={t('header.lockTerminal')}
                 >
                   <Lock className="w-3.5 h-3.5" />
-                  <span>Bloquear Terminal</span>
+                  <span>{t('header.lockTerminal')}</span>
                 </button>
                 <button
                   onClick={logout}
                   className="py-2 px-2 bg-[#1a1a1a] hover:bg-rose-950/30 text-rose-400 hover:text-rose-300 border border-[#262626] hover:border-rose-500/30 rounded-lg text-[11px] font-semibold flex items-center justify-center space-x-1.5 transition-all cursor-pointer"
-                  title="Encerrar sessão de forma segura"
+                  title={t('header.logout')}
                 >
                   <LogOut className="w-3.5 h-3.5" />
-                  <span>Terminar Sessão</span>
+                  <span>{t('header.logout')}</span>
                 </button>
               </div>
             </div>
@@ -458,7 +473,7 @@ export const Navbar: React.FC<{ onOpenShiftModal: () => void }> = ({ onOpenShift
             <div className="mx-2 mt-1 p-2 bg-[#0d0d0d] border border-[#1f1f1f] rounded-lg text-[10px] text-neutral-400 flex items-start space-x-2">
               <ShieldCheck className="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" />
               <p className="leading-tight">
-                Sessão com autenticação individual e trilha de auditoria AT. A troca de perfil exige novo login com credenciais/PIN.
+                {t('header.auditNotice')}
               </p>
             </div>
           </div>

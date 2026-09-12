@@ -197,3 +197,49 @@ export const getWeekInfo = (dateStr: string): WeekInfo => {
     endDate: endStr,
   };
 };
+
+export {
+  formatDate,
+  formatExactDateTime,
+  formatExactTime,
+  formatExactDate,
+  getExactTimestamp,
+} from './crypto';
+
+export interface DetailedMovementTimestamp {
+  dateStr: string;
+  timeStr: string;
+  formatted: string;
+  iso: string;
+}
+
+export const formatMovementTimestampDetailed = (
+  raw?: string | number | Date | null
+): DetailedMovementTimestamp => {
+  if (!raw) {
+    return { dateStr: '—', timeStr: '—', formatted: '—', iso: '' };
+  }
+  try {
+    const d = new Date(raw);
+    if (isNaN(d.getTime())) {
+      return { dateStr: String(raw), timeStr: '—', formatted: String(raw), iso: String(raw) };
+    }
+    const day = String(d.getDate()).padStart(2, '0');
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const year = d.getFullYear();
+    const hours = String(d.getHours()).padStart(2, '0');
+    const minutes = String(d.getMinutes()).padStart(2, '0');
+    const seconds = String(d.getSeconds()).padStart(2, '0');
+
+    const dateStr = `${day}/${month}/${year}`;
+    const timeStr = `${hours}:${minutes}:${seconds}`;
+    return {
+      dateStr,
+      timeStr,
+      formatted: `${dateStr} ${timeStr}`,
+      iso: d.toISOString(),
+    };
+  } catch {
+    return { dateStr: String(raw), timeStr: '—', formatted: String(raw), iso: String(raw) };
+  }
+};
