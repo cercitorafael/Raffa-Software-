@@ -920,7 +920,7 @@ export function printInvoiceDocument(
             justify-content: space-between;
             align-items: flex-start;
             padding-bottom: 10px;
-            border-bottom: 2px solid ${primaryColor};
+            border-bottom: 1.5px solid #d1d5db;
           }
           .company-info {
             max-width: 58%;
@@ -945,7 +945,7 @@ export function printInvoiceDocument(
           .company-slogan {
             font-size: 9.5px;
             font-weight: 700;
-            color: ${primaryColor};
+            color: #111827;
             margin: 2px 0 5px 0;
             letter-spacing: 0.04em;
           }
@@ -978,8 +978,8 @@ export function printInvoiceDocument(
             justify-content: space-between;
             align-items: center;
             font-size: 14px;
-            font-weight: 800;
-            color: #0f172a;
+            font-weight: 900;
+            color: #000000;
             margin-top: 12px;
             padding-bottom: 4px;
           }
@@ -1135,7 +1135,7 @@ export function printInvoiceDocument(
 
             <!-- Document Title & 4-Column Bar -->
             <div class="doc-title-bar">
-              <span style="color: ${primaryColor};">${docTitle} n.º ${sale.invoiceNumber}</span>
+              <span style="color: #000000; font-weight: 900; font-size: 15px;">${docTitle} n.º ${sale.invoiceNumber}</span>
               <span style="font-size: 11px; font-weight: normal; color: #4b5563;">Original &bull; ${activeTemplate.name}</span>
             </div>
 
@@ -1316,9 +1316,7 @@ export async function downloadInvoicePdf(
 
   const primaryRgb = hexToRgb(activeTemplate.primaryColor || activeTemplate.accentColor || '#166534');
 
-  // Top Accent Bar
-  doc.setFillColor(primaryRgb[0], primaryRgb[1], primaryRgb[2]);
-  doc.rect(14, 10, 182, 2, 'F');
+  // Top Accent Bar removed per user preference
 
   // Load and render company logo if enabled
   const shouldShowLogo = activeTemplate.showLogo !== false;
@@ -1350,7 +1348,7 @@ export async function downloadInvoicePdf(
   // Slogan / Header notes
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(8.5);
-  doc.setTextColor(primaryRgb[0], primaryRgb[1], primaryRgb[2]);
+  doc.setTextColor(17, 24, 39);
   doc.text(activeTemplate.headerNotes || 'FOCO NO AGRO, GANHO NO CAMPO', 14, compY + 4.5);
 
   // Company details
@@ -1406,8 +1404,8 @@ export async function downloadInvoicePdf(
   const docTitleY = Math.max(compY + 23, custY + 3, 46);
 
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(11);
-  doc.setTextColor(primaryRgb[0], primaryRgb[1], primaryRgb[2]);
+  doc.setFontSize(11.5);
+  doc.setTextColor(0, 0, 0);
   doc.text(`${docTypeName} n.º ${sale.invoiceNumber}`, 14, docTitleY);
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(8.5);

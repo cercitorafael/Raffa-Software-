@@ -2876,8 +2876,7 @@ export const DocumentsModule: React.FC = () => {
                 {isAgroStyle ? (
                   /* AGRO / VENDUS MZ EXACT PDF SIMULATION */
                   <div
-                    className="bg-white text-neutral-900 shadow-2xl p-6 rounded relative text-[10px] leading-snug w-full max-w-2xl font-sans border-t-4"
-                    style={{ borderColor: previewTmpl.primaryColor || '#166534' }}
+                    className="bg-white text-neutral-900 shadow-2xl p-6 rounded relative text-[10px] leading-snug w-full max-w-2xl font-sans border-0"
                   >
                     {/* Header: Logo + Company Info on Left, Customer on Right */}
                     <div className="flex justify-between items-start pb-2 border-b border-neutral-300">
@@ -2887,7 +2886,7 @@ export const DocumentsModule: React.FC = () => {
                             <img src={currentCompany.logoUrl} alt="Logo" className="h-14 max-w-[170px] object-contain" />
                           </div>
                         ) : (
-                          <div className="w-9 h-9 rounded-sm bg-emerald-700 text-white flex items-center justify-center font-bold text-[13px] mb-1.5">
+                          <div className="w-9 h-9 rounded-sm bg-neutral-800 text-white flex items-center justify-center font-bold text-[13px] mb-1.5">
                             🌱
                           </div>
                         )}
@@ -2895,7 +2894,7 @@ export const DocumentsModule: React.FC = () => {
                           <h5 className="font-bold text-[11px] text-neutral-950 uppercase tracking-tight leading-none">
                             {currentCompany.tradeName || currentCompany.name || 'RAFFA ALIADOS DO CAMPO, LDA'}
                           </h5>
-                          <p className="text-[8.5px] font-bold text-emerald-800 tracking-wider mt-0.5">
+                          <p className="text-[8.5px] font-bold text-neutral-900 tracking-wider mt-0.5">
                             {previewTmpl.headerNotes || 'FOCO NO AGRO, GANHO NO CAMPO'}
                           </p>
                         </div>
@@ -2926,8 +2925,8 @@ export const DocumentsModule: React.FC = () => {
 
                     {/* Document Title Bar & 4-Column Meta Header */}
                     <div className="my-2">
-                      <div className="flex justify-between items-center text-xs font-bold text-neutral-950 pb-1">
-                        <span>
+                      <div className="flex justify-between items-center text-xs pb-1">
+                        <span className="font-black text-black text-xs sm:text-[13px] tracking-tight">
                           {getDocumentTitle(selectedDocForPreview.invoiceType)} n.º {selectedDocForPreview.invoiceNumber}
                         </span>
                         <span className="font-normal text-neutral-600 text-[9px]">Original</span>
@@ -3086,8 +3085,7 @@ export const DocumentsModule: React.FC = () => {
                 ) : (
                   /* CLASSIC / MODERN / CORPORATE SIMULATION */
                   <div
-                    className="bg-white text-neutral-900 shadow-2xl p-6 rounded relative text-[10px] leading-snug w-full max-w-2xl font-sans border-t-4"
-                    style={{ borderColor: previewTmpl.primaryColor || '#1e293b' }}
+                    className="bg-white text-neutral-900 shadow-2xl p-6 rounded relative text-[10px] leading-snug w-full max-w-2xl font-sans border-0"
                   >
                     <div className="flex justify-between items-start pb-3 border-b border-neutral-200">
                       <div>
@@ -3098,12 +3096,11 @@ export const DocumentsModule: React.FC = () => {
                       </div>
                       <div className="text-right">
                         <span
-                          className="px-2 py-0.5 rounded text-[9px] font-mono font-bold text-white uppercase"
-                          style={{ backgroundColor: previewTmpl.primaryColor || '#1e293b' }}
+                          className="px-2 py-0.5 rounded text-[9px] font-mono font-black text-white uppercase bg-neutral-950"
                         >
                           {getDocumentTitle(selectedDocForPreview.invoiceType)}
                         </span>
-                        <p className="text-xs font-mono font-bold text-neutral-900 mt-1">{selectedDocForPreview.invoiceNumber}</p>
+                        <p className="text-xs font-mono font-black text-black mt-1">{selectedDocForPreview.invoiceNumber}</p>
                         <p className="text-[8.5px] font-mono text-neutral-500">
                           Data: {formatExactDateTime(selectedDocForPreview.date, true)}
                         </p>
