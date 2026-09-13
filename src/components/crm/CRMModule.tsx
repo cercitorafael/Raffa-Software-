@@ -117,9 +117,9 @@ export const CRMModule: React.FC = () => {
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
   const [address, setAddress] = useState('');
-  const [city, setCity] = useState(currentCompany?.city || 'Maputo');
+  const [city, setCity] = useState('');
   const [location, setLocation] = useState('');
-  const [postalCode, setPostalCode] = useState(currentCompany?.postalCode || '');
+  const [postalCode, setPostalCode] = useState('');
   const [notes, setNotes] = useState('');
   const [isLocating, setIsLocating] = useState(false);
 
@@ -240,34 +240,34 @@ export const CRMModule: React.FC = () => {
 
   const handleCreateCustomer = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name.trim() || !taxNumber.trim()) return;
+    if (!name.trim()) return;
 
     addCustomer({
       companyId: currentCompany.id,
       name: name.trim(),
       taxNumber: taxNumber.trim(),
-      email: email.trim() || `${name.toLowerCase().replace(/\s+/g, '.')}@email.mz`,
+      email: email.trim(),
       phone: phone.trim(),
-      address: address.trim() || 'Balcão / Loja Principal',
-      city: city.trim() || currentCompany?.city || 'Maputo',
+      address: address.trim(),
+      city: city.trim(),
       location: location.trim(),
-      country: currentCompany?.country || 'MZ',
-      postalCode: postalCode.trim() || currentCompany?.postalCode || '',
-      loyaltyPoints: 50,
+      country: '',
+      postalCode: postalCode.trim(),
+      loyaltyPoints: 0,
       loyaltyTier: 'bronze',
-      notes: notes.trim() || 'Cliente registado no CRM',
+      notes: notes.trim(),
     });
 
-    notify(`Cliente "${name}" registado com sucesso com morada e localização!`, 'success');
+    notify(`Cliente "${name}" registado com sucesso!`, 'success');
     setShowNewCustModal(false);
     setName('');
     setTaxNumber('');
     setEmail('');
     setPhone('');
     setAddress('');
-    setCity(currentCompany?.city || 'Maputo');
+    setCity('');
     setLocation('');
-    setPostalCode(currentCompany?.postalCode || '');
+    setPostalCode('');
     setNotes('');
   };
 
@@ -707,11 +707,11 @@ export const CRMModule: React.FC = () => {
                             )}
                           </div>
                         </td>
-                        <td className="p-3 font-mono text-[#c5a47e]">{cust.taxNumber || '999999990'}</td>
+                        <td className="p-3 font-mono text-[#c5a47e]">{cust.taxNumber || ''}</td>
                         
                         {/* Contacts Column with direct Click-to-Call */}
                         <td className="p-3 text-neutral-400">
-                          <div>{cust.email || '-'}</div>
+                          {cust.email ? <div className="text-xs text-neutral-300">{cust.email}</div> : null}
                           {cust.phone ? (
                             <div className="flex items-center gap-1.5 mt-0.5">
                               <button
@@ -732,36 +732,38 @@ export const CRMModule: React.FC = () => {
                                 <ExternalLink className="w-3 h-3" />
                               </a>
                             </div>
-                          ) : (
-                            <span className="text-[10px] text-neutral-500">-</span>
-                          )}
+                          ) : null}
                         </td>
 
                         <td className="p-3 text-neutral-300">
-                          <div className="flex items-start space-x-1.5 max-w-xs">
-                            <MapPin className="w-3.5 h-3.5 text-[#c5a47e] shrink-0 mt-0.5" />
-                            <div className="text-xs leading-tight min-w-0">
-                              <span className="text-neutral-200 font-medium block truncate" title={cust.address || 'Sem morada'}>
-                                {cust.address || 'Balcão / Loja'}
-                              </span>
-                              <div className="flex items-center space-x-1 text-[11px] text-neutral-400 truncate">
-                                <span>{[cust.location, cust.city].filter(Boolean).join(' • ') || cust.country || 'Sem localização'}</span>
-                                {(cust.address || cust.location) && (
-                                  <a
-                                    href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
-                                      [cust.address, cust.location, cust.city, cust.country].filter(Boolean).join(', ')
-                                    )}`}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    className="text-[#c5a47e] hover:text-[#d4b896] inline-flex items-center ml-1"
-                                    title="Abrir Morada e Localização no Google Maps"
-                                  >
-                                    <ExternalLink className="w-2.5 h-2.5" />
-                                  </a>
-                                )}
+                          {(cust.address || cust.location || cust.city) ? (
+                            <div className="flex items-start space-x-1.5 max-w-xs">
+                              <MapPin className="w-3.5 h-3.5 text-[#c5a47e] shrink-0 mt-0.5" />
+                              <div className="text-xs leading-tight min-w-0">
+                                {cust.address ? (
+                                  <span className="text-neutral-200 font-medium block truncate" title={cust.address}>
+                                    {cust.address}
+                                  </span>
+                                ) : null}
+                                {[cust.location, cust.city].filter(Boolean).length > 0 ? (
+                                  <div className="flex items-center space-x-1 text-[11px] text-neutral-400 truncate">
+                                    <span>{[cust.location, cust.city].filter(Boolean).join(' • ')}</span>
+                                    <a
+                                      href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
+                                        [cust.address, cust.location, cust.city, cust.country].filter(Boolean).join(', ')
+                                      )}`}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="text-[#c5a47e] hover:text-[#d4b896] inline-flex items-center ml-1"
+                                      title="Abrir Morada e Localização no Google Maps"
+                                    >
+                                      <ExternalLink className="w-2.5 h-2.5" />
+                                    </a>
+                                  </div>
+                                ) : null}
                               </div>
                             </div>
-                          </div>
+                          ) : null}
                         </td>
                         <td className="p-3 text-center">
                           <span
@@ -1050,14 +1052,13 @@ export const CRMModule: React.FC = () => {
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
                     <label className="font-semibold text-neutral-300 block mb-1">
-                      NIF / NUIT Fiscal <span className="text-rose-400">*</span>
+                      NIF / NUIT Fiscal (Opcional)
                     </label>
                     <input
                       type="text"
-                      required
                       value={taxNumber}
                       onChange={(e) => setTaxNumber(e.target.value)}
-                      placeholder="999999990"
+                      placeholder="Deixe vazio se não tiver NIF"
                       className="w-full px-3 py-2 bg-[#0d0d0d] border border-[#262626] rounded-lg font-mono text-[#e5e5e5] placeholder-neutral-600 focus:outline-hidden focus:border-[#c5a47e]"
                     />
                   </div>
@@ -1241,12 +1242,12 @@ export const CRMModule: React.FC = () => {
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="font-semibold text-neutral-300 block mb-1">NIF / NUIT Fiscal</label>
+                  <label className="font-semibold text-neutral-300 block mb-1">NIF / NUIT Fiscal (Opcional)</label>
                   <input
                     type="text"
                     value={editTaxNumber}
                     onChange={(e) => setEditTaxNumber(e.target.value)}
-                    placeholder="999999990"
+                    placeholder="Deixe vazio se não tiver NIF"
                     className="w-full px-3 py-2 bg-[#0d0d0d] border border-[#262626] rounded-lg font-mono text-[#e5e5e5] placeholder-neutral-600 focus:outline-hidden focus:border-[#c5a47e]"
                   />
                 </div>

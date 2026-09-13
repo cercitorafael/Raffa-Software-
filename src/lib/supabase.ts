@@ -1273,7 +1273,7 @@ CREATE TABLE IF NOT EXISTS public.armazens (
 
 -- 9. TABELA DE STOCK / INVENTÁRIO
 CREATE TABLE IF NOT EXISTS public.stock (
-    id TEXT PRIMARY KEY,
+    id TEXT PRIMARY KEY DEFAULT ('stk-' || gen_random_uuid()::text),
     company_id TEXT DEFAULT 'comp-1',
     product_id TEXT NOT NULL,
     warehouse_id TEXT NOT NULL,
@@ -1285,6 +1285,16 @@ CREATE TABLE IF NOT EXISTS public.stock (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
+
+-- Garantir padrão para id e colunas caso a tabela stock já exista
+ALTER TABLE public.stock ALTER COLUMN id SET DEFAULT ('stk-' || gen_random_uuid()::text);
+ALTER TABLE public.stock ADD COLUMN IF NOT EXISTS company_id TEXT DEFAULT 'comp-1';
+ALTER TABLE public.stock ADD COLUMN IF NOT EXISTS quantity NUMERIC DEFAULT 0;
+ALTER TABLE public.stock ADD COLUMN IF NOT EXISTS reserved NUMERIC DEFAULT 0;
+ALTER TABLE public.stock ADD COLUMN IF NOT EXISTS avg_cost NUMERIC DEFAULT 0;
+ALTER TABLE public.stock ADD COLUMN IF NOT EXISTS batch_number TEXT;
+ALTER TABLE public.stock ADD COLUMN IF NOT EXISTS expiry_date TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS stock_product_warehouse_uniq ON public.stock(product_id, warehouse_id);
 
 -- 9.1. TABELA DE ESTOQUE ATUAL POR ARMAZÉM / LOJA
 CREATE TABLE IF NOT EXISTS public.estoque_atual (

@@ -168,6 +168,7 @@ export interface Company {
   id: string;
   name: string;
   tradeName: string;
+  slogan?: string; // Slogan / Lema da Empresa para faturas e documentos
   industry?: string; // Ramo de Atividade (Restauração, Supermercado, Farmácia, etc.)
   sector?: string;
   taxNumber: string; // NIF / NIPC / NUIT

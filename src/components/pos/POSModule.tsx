@@ -33,6 +33,10 @@ import {
   Receipt,
   ChevronDown,
   ChevronUp,
+  ChevronLeft,
+  ChevronRight,
+  PanelRightClose,
+  PanelRightOpen,
 } from 'lucide-react';
 import { PaymentModal } from './PaymentModal';
 import { ReceiptModal } from './ReceiptModal';
@@ -109,6 +113,25 @@ export const POSModule: React.FC = () => {
       const next = !prev;
       try {
         localStorage.setItem('pos_shift_notice_collapsed', String(next));
+      } catch {}
+      return next;
+    });
+  };
+
+  // Estado para encolher e mostrar a tela da Venda Atual
+  const [isCurrentSaleCollapsed, setIsCurrentSaleCollapsed] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('pos_current_sale_collapsed') === 'true';
+    } catch {
+      return false;
+    }
+  });
+
+  const toggleCurrentSale = () => {
+    setIsCurrentSaleCollapsed((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem('pos_current_sale_collapsed', String(next));
       } catch {}
       return next;
     });
@@ -628,46 +651,86 @@ export const POSModule: React.FC = () => {
             })}
           </div>
 
-          {/* View Mode Toggle: Grid vs List */}
-          <div className="bg-[#141414] p-1 rounded-lg border border-[#262626] flex items-center space-x-1 shrink-0">
-            <button
-              type="button"
-              id="pos-view-grid-btn"
-              onClick={() => {
-                setViewMode('grid');
-                try {
-                  localStorage.setItem('pos_catalog_view_mode', 'grid');
-                } catch {}
-              }}
-              title="Visualização em Grelha (Cartões)"
-              className={`p-1.5 rounded-md text-xs font-medium transition-all flex items-center space-x-1 cursor-pointer ${
-                viewMode === 'grid'
-                  ? 'bg-[#c5a47e] text-neutral-950 shadow-xs font-bold'
-                  : 'text-neutral-400 hover:text-neutral-200'
-              }`}
-            >
-              <LayoutGrid className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline text-[11px]">Grelha</span>
-            </button>
+          {/* Action Controls: View Mode & Toggle Current Sale */}
+          <div className="flex items-center space-x-2 shrink-0">
+            {/* View Mode Toggle: Grid vs List */}
+            <div className="bg-[#141414] p-1 rounded-lg border border-[#262626] flex items-center space-x-1 shrink-0">
+              <button
+                type="button"
+                id="pos-view-grid-btn"
+                onClick={() => {
+                  setViewMode('grid');
+                  try {
+                    localStorage.setItem('pos_catalog_view_mode', 'grid');
+                  } catch {}
+                }}
+                title="Visualização em Grelha (Cartões)"
+                className={`p-1.5 rounded-md text-xs font-medium transition-all flex items-center space-x-1 cursor-pointer ${
+                  viewMode === 'grid'
+                    ? 'bg-[#c5a47e] text-neutral-950 shadow-xs font-bold'
+                    : 'text-neutral-400 hover:text-neutral-200'
+                }`}
+              >
+                <LayoutGrid className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline text-[11px]">Grelha</span>
+              </button>
 
+              <button
+                type="button"
+                id="pos-view-list-btn"
+                onClick={() => {
+                  setViewMode('list');
+                  try {
+                    localStorage.setItem('pos_catalog_view_mode', 'list');
+                  } catch {}
+                }}
+                title="Visualização em Lista Compacta"
+                className={`p-1.5 rounded-md text-xs font-medium transition-all flex items-center space-x-1 cursor-pointer ${
+                  viewMode === 'list'
+                    ? 'bg-[#c5a47e] text-neutral-950 shadow-xs font-bold'
+                    : 'text-neutral-400 hover:text-neutral-200'
+                }`}
+              >
+                <List className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline text-[11px]">Lista</span>
+              </button>
+            </div>
+
+            {/* Toggle Current Sale Button */}
             <button
               type="button"
-              id="pos-view-list-btn"
-              onClick={() => {
-                setViewMode('list');
-                try {
-                  localStorage.setItem('pos_catalog_view_mode', 'list');
-                } catch {}
-              }}
-              title="Visualização em Lista Compacta"
-              className={`p-1.5 rounded-md text-xs font-medium transition-all flex items-center space-x-1 cursor-pointer ${
-                viewMode === 'list'
-                  ? 'bg-[#c5a47e] text-neutral-950 shadow-xs font-bold'
-                  : 'text-neutral-400 hover:text-neutral-200'
+              id="pos-toggle-sale-btn"
+              onClick={toggleCurrentSale}
+              className={`px-3 py-1.5 rounded-lg border text-xs font-semibold flex items-center space-x-1.5 transition-all cursor-pointer shadow-xs shrink-0 ${
+                isCurrentSaleCollapsed
+                  ? 'bg-[#c5a47e] hover:bg-[#d4b896] text-neutral-950 border-[#c5a47e] font-bold shadow-md'
+                  : 'bg-[#141414] hover:bg-[#202020] text-neutral-300 hover:text-[#c5a47e] border-[#262626]'
               }`}
+              title={isCurrentSaleCollapsed ? 'Mostrar a tela Venda Atual' : 'Encolher a tela Venda Atual'}
             >
-              <List className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline text-[11px]">Lista</span>
+              <ShoppingBag className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">
+                {isCurrentSaleCollapsed ? 'Mostrar Venda Atual' : 'Encolher Venda'}
+              </span>
+              <span className="sm:hidden">
+                {isCurrentSaleCollapsed ? 'Venda' : 'Encolher'}
+              </span>
+              {isCurrentSaleCollapsed ? (
+                <ChevronLeft className="w-3.5 h-3.5" />
+              ) : (
+                <ChevronRight className="w-3.5 h-3.5" />
+              )}
+              {totalItemsCount > 0 && (
+                <span
+                  className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono font-bold ${
+                    isCurrentSaleCollapsed
+                      ? 'bg-neutral-950 text-[#c5a47e]'
+                      : 'bg-[#c5a47e] text-neutral-950'
+                  }`}
+                >
+                  {totalItemsCount}
+                </span>
+              )}
             </button>
           </div>
         </div>
@@ -887,40 +950,109 @@ export const POSModule: React.FC = () => {
       </div>
 
       {/* Right Sidebar: POS Shopping Cart & Register Checkout */}
-      <div className="w-full md:w-96 lg:w-[420px] bg-[#0d0d0d] border-l border-[#262626] flex flex-col shrink-0 shadow-2xl z-20">
-        {/* Cart Header */}
-        <div className="p-3.5 border-b border-[#262626] flex items-center justify-between bg-[#141414]">
-          <div className="flex items-center space-x-2">
-            <div className="w-8 h-8 rounded-lg bg-[#c5a47e]/20 border border-[#c5a47e]/30 text-[#c5a47e] flex items-center justify-center font-bold">
-              <ShoppingBag className="w-4 h-4 text-[#c5a47e]" />
+      {isCurrentSaleCollapsed ? (
+        /* Collapsed Slim Dock on Desktop */
+        <div
+          id="pos-collapsed-current-sale-dock"
+          className="hidden md:flex w-14 lg:w-16 bg-[#0d0d0d] border-l border-[#262626] flex-col items-center py-3.5 justify-between shrink-0 shadow-2xl z-20 transition-all select-none"
+        >
+          {/* Top: Expand Button */}
+          <button
+            id="pos-expand-sale-dock-btn"
+            type="button"
+            onClick={toggleCurrentSale}
+            className="p-2.5 rounded-xl bg-[#141414] hover:bg-[#c5a47e] text-neutral-300 hover:text-neutral-950 border border-[#262626] hover:border-[#c5a47e] transition-all flex flex-col items-center gap-1 cursor-pointer group shadow-sm"
+            title="Mostrar tela Venda Atual"
+          >
+            <ChevronLeft className="w-4 h-4 text-[#c5a47e] group-hover:text-neutral-950 transition-transform group-hover:-translate-x-0.5" />
+            <div className="relative mt-1">
+              <ShoppingBag className="w-5 h-5" />
+              {totalItemsCount > 0 && (
+                <span className="absolute -top-2 -right-2.5 w-4 h-4 rounded-full bg-[#c5a47e] text-neutral-950 group-hover:bg-neutral-950 group-hover:text-[#c5a47e] font-extrabold text-[9px] flex items-center justify-center font-mono">
+                  {totalItemsCount}
+                </span>
+              )}
             </div>
-            <div>
-              <h3 className="text-xs font-bold text-[#f2f2f2] uppercase tracking-wider">Venda Atual</h3>
-              <p className="text-[10px] text-neutral-400">
-                {totalItemsCount} {totalItemsCount === 1 ? 'artigo' : 'artigos'} no cesto
-              </p>
-            </div>
-          </div>
+          </button>
 
-          <div className="flex items-center space-x-1">
-            <button
-              onClick={() => setShowSalesHistoryModal(true)}
-              className="p-1.5 text-neutral-400 hover:text-[#e5e5e5] hover:bg-[#1a1a1a] rounded-md transition-colors"
-              title="Histórico de Vendas"
-            >
-              <History className="w-4 h-4" />
-            </button>
+          {/* Middle: Clickable Vertical Label */}
+          <div
+            onClick={toggleCurrentSale}
+            className="flex-1 flex flex-col items-center justify-center py-6 cursor-pointer group w-full hover:bg-[#141414]/60 transition-colors"
+            title="Clique para mostrar a tela Venda Atual"
+          >
+            <span className="text-[11px] font-bold text-neutral-400 group-hover:text-[#c5a47e] uppercase tracking-widest transition-colors [writing-mode:vertical-rl] rotate-180 flex items-center gap-2">
+              <span className="w-1.5 h-1.5 rounded-full bg-[#c5a47e] group-hover:animate-ping" />
+              Venda Atual
+            </span>
             {cart.length > 0 && (
-              <button
-                onClick={clearCart}
-                className="p-1.5 text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 rounded-md transition-colors"
-                title="Limpar Cesto"
-              >
-                <Trash2 className="w-4 h-4" />
-              </button>
+              <span className="mt-4 text-[10px] font-mono font-bold text-neutral-300 group-hover:text-white [writing-mode:vertical-rl] rotate-180">
+                {formatCurrency(grandTotal)}
+              </span>
             )}
           </div>
+
+          {/* Bottom: Quick Summary / Expand */}
+          <button
+            type="button"
+            onClick={toggleCurrentSale}
+            className="p-2 rounded-xl bg-[#141414] hover:bg-[#1f1f1f] text-neutral-400 hover:text-[#c5a47e] border border-[#262626] transition-colors flex flex-col items-center gap-1 cursor-pointer"
+            title="Expandir tela Venda Atual"
+          >
+            <PanelRightOpen className="w-4 h-4 text-[#c5a47e]" />
+            <span className="text-[9px] font-mono font-bold text-neutral-300">{cart.length} itens</span>
+          </button>
         </div>
+      ) : (
+        /* Full Right Sidebar: POS Shopping Cart & Register Checkout */
+        <div
+          id="pos-expanded-current-sale-panel"
+          className="w-full md:w-96 lg:w-[420px] bg-[#0d0d0d] border-l border-[#262626] flex flex-col shrink-0 shadow-2xl z-20"
+        >
+          {/* Cart Header */}
+          <div className="p-3.5 border-b border-[#262626] flex items-center justify-between bg-[#141414]">
+            <div className="flex items-center space-x-2">
+              <div className="w-8 h-8 rounded-lg bg-[#c5a47e]/20 border border-[#c5a47e]/30 text-[#c5a47e] flex items-center justify-center font-bold">
+                <ShoppingBag className="w-4 h-4 text-[#c5a47e]" />
+              </div>
+              <div>
+                <h3 className="text-xs font-bold text-[#f2f2f2] uppercase tracking-wider">Venda Atual</h3>
+                <p className="text-[10px] text-neutral-400">
+                  {totalItemsCount} {totalItemsCount === 1 ? 'artigo' : 'artigos'} no cesto
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center space-x-1.5">
+              <button
+                onClick={() => setShowSalesHistoryModal(true)}
+                className="p-1.5 text-neutral-400 hover:text-[#e5e5e5] hover:bg-[#1a1a1a] rounded-md transition-colors"
+                title="Histórico de Vendas"
+              >
+                <History className="w-4 h-4" />
+              </button>
+              {cart.length > 0 && (
+                <button
+                  onClick={clearCart}
+                  className="p-1.5 text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 rounded-md transition-colors"
+                  title="Limpar Cesto"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              )}
+              {/* Botão Encolher Venda Atual */}
+              <button
+                id="pos-collapse-current-sale-header-btn"
+                type="button"
+                onClick={toggleCurrentSale}
+                className="px-2.5 py-1 bg-[#1a1a1a] hover:bg-[#262626] text-neutral-300 hover:text-[#c5a47e] border border-[#333333] hover:border-[#c5a47e]/50 rounded-lg text-xs font-medium flex items-center space-x-1.5 transition-all cursor-pointer shadow-xs ml-1"
+                title="Encolher e recolher a tela Venda Atual"
+              >
+                <ChevronRight className="w-3.5 h-3.5 text-[#c5a47e]" />
+                <span className="text-[11px] font-medium hidden sm:inline">Encolher</span>
+              </button>
+            </div>
+          </div>
 
         {/* Customer Selector / Direct Name Input */}
         <div className="px-3.5 py-2.5 bg-[#141414] border-b border-[#262626] relative">
@@ -1450,6 +1582,31 @@ export const POSModule: React.FC = () => {
           </button>
         </div>
       </div>
+      )}
+
+      {/* Mobile Floating Bar when Venda Atual is collapsed */}
+      {isCurrentSaleCollapsed && (
+        <div className="md:hidden fixed bottom-3 right-3 left-3 z-40">
+          <button
+            id="pos-mobile-show-sale-btn"
+            type="button"
+            onClick={toggleCurrentSale}
+            className="w-full py-3 px-4 bg-[#c5a47e] hover:bg-[#d4b896] text-neutral-950 rounded-xl shadow-2xl font-bold flex items-center justify-between transition-all cursor-pointer border border-[#e5cbb0]"
+          >
+            <div className="flex items-center space-x-2">
+              <ShoppingBag className="w-5 h-5" />
+              <span className="text-xs font-bold uppercase tracking-wider">Mostrar Venda Atual</span>
+              <span className="text-xs px-2 py-0.5 rounded-full bg-neutral-950 text-[#c5a47e] font-mono font-extrabold">
+                {totalItemsCount} {totalItemsCount === 1 ? 'artigo' : 'artigos'}
+              </span>
+            </div>
+            <div className="flex items-center space-x-2">
+              <span className="text-xs font-mono font-extrabold">{formatCurrency(grandTotal)}</span>
+              <ChevronUp className="w-4 h-4" />
+            </div>
+          </button>
+        </div>
+      )}
 
       {/* Customer Picker Modal */}
       {showCustomerPicker && (

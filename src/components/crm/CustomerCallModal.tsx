@@ -248,12 +248,14 @@ export const CustomerCallModal: React.FC<CustomerCallModalProps> = ({
                   {customer.loyaltyPoints || 0} pts
                 </span>
               </div>
-              <div>
-                <span className="text-[11px] text-slate-400 block">NIF / Fiscal</span>
-                <span className="text-sm font-semibold text-slate-200">
-                  {customer.taxNumber || 'Consumidor Final'}
-                </span>
-              </div>
+              {customer.taxNumber ? (
+                <div>
+                  <span className="text-[11px] text-slate-400 block">NIF / Fiscal</span>
+                  <span className="text-sm font-semibold text-slate-200">
+                    {customer.taxNumber}
+                  </span>
+                </div>
+              ) : null}
             </div>
           )}
 

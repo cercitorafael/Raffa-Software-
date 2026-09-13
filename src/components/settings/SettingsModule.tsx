@@ -134,6 +134,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
   const [companyForm, setCompanyForm] = useState({
     name: currentCompany?.name || '',
     tradeName: currentCompany?.tradeName || '',
+    slogan: currentCompany?.slogan || '',
     taxNumber: currentCompany?.taxNumber || '',
     address: currentCompany?.address || '',
     city: currentCompany?.city || '',
@@ -156,6 +157,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
       setCompanyForm({
         name: currentCompany.name || '',
         tradeName: currentCompany.tradeName || '',
+        slogan: currentCompany.slogan || '',
         taxNumber: currentCompany.taxNumber || '',
         address: currentCompany.address || '',
         city: currentCompany.city || '',
@@ -831,6 +833,17 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
                   </div>
 
                   <div>
+                    <label className="text-neutral-400 font-semibold block mb-1">Slogan / Lema da Empresa (opcional)</label>
+                    <input
+                      type="text"
+                      value={companyForm.slogan || ''}
+                      onChange={(e) => setCompanyForm({ ...companyForm, slogan: e.target.value })}
+                      placeholder="Ex: O seu slogan para faturas e documentos"
+                      className="w-full px-3 py-2 bg-[#0d0d0d] border border-[#262626] rounded-lg text-neutral-300 focus:outline-hidden focus:border-[#c5a47e]"
+                    />
+                  </div>
+
+                  <div>
                     <label className="text-neutral-400 font-semibold block mb-1">NIF da Empresa *</label>
                     <input
                       type="text"
@@ -852,12 +865,12 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
                   </div>
 
                   <div>
-                    <label className="text-neutral-400 font-semibold block mb-1">Sede Fiscal / Morada *</label>
+                    <label className="text-neutral-400 font-semibold block mb-1">Sede Fiscal / Morada da Empresa</label>
                     <input
                       type="text"
-                      required
                       value={companyForm.address}
                       onChange={(e) => setCompanyForm({ ...companyForm, address: e.target.value })}
+                      placeholder="Insira a morada da empresa (ou deixe vazio)"
                       className="w-full px-3 py-2 bg-[#0d0d0d] border border-[#262626] rounded-lg text-neutral-300 focus:outline-hidden focus:border-[#c5a47e]"
                     />
                   </div>

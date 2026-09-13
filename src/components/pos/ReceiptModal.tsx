@@ -98,8 +98,13 @@ Obrigado pela sua preferência!
           >
             {/* Store & Header */}
             <div className="text-center pb-3 border-b border-dashed border-[#333333]">
-              <h4 className="font-bold text-xs uppercase tracking-tight text-[#e5e5e5]">{company.name}</h4>
-              <p className="text-[10px] text-neutral-400">{company.address}, {company.city}</p>
+              <h4 className="font-bold text-xs uppercase tracking-tight text-[#e5e5e5]">{company.tradeName || company.name}</h4>
+              {company.slogan ? (
+                <p className="text-[9px] font-semibold text-neutral-300 tracking-wide">{company.slogan}</p>
+              ) : null}
+              {(company.address || company.city) ? (
+                <p className="text-[10px] text-neutral-400">{[company.address, company.city].filter(Boolean).join(', ')}</p>
+              ) : null}
               <p className="text-[10px] font-semibold text-[#c5a47e]">NUIT / NIF: {company.taxNumber}</p>
               <p className="text-[10px] text-neutral-400">{store.name} ({store.code})</p>
             </div>

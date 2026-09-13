@@ -715,13 +715,13 @@ export const InvoiceTemplatesSection: React.FC = () => {
             <div className="space-y-3">
               <div>
                 <label className="text-neutral-400 font-semibold block mb-1">
-                  Notas de Cabeçalho / Menções de Enquadramento
+                  Slogan / Notas de Cabeçalho da Empresa
                 </label>
                 <textarea
                   rows={2}
                   value={templateForm.headerNotes || ''}
                   onChange={(e) => setTemplateForm({ ...templateForm, headerNotes: e.target.value })}
-                  placeholder="Ex: Documento processado por computador com certificação oficial..."
+                  placeholder="Ex: O slogan ou lema da sua empresa (deixe vazio se não pretender slogan)..."
                   className="w-full px-3 py-2 bg-[#0d0d0d] border border-[#262626] rounded-xl text-neutral-300 focus:outline-hidden focus:border-[#c5a47e]"
                 />
               </div>
@@ -787,17 +787,27 @@ export const InvoiceTemplatesSection: React.FC = () => {
                       )}
                       <div>
                         <h5 className="font-bold text-[11px] text-neutral-950 uppercase tracking-tight leading-none">
-                          {currentCompany.tradeName || currentCompany.name || 'RAFFA ALIADOS DO CAMPO, LDA'}
+                          {currentCompany.tradeName || currentCompany.name || ''}
                         </h5>
-                        <p className="text-[8.5px] font-bold text-neutral-900 tracking-wider mt-0.5">
-                          {templateForm.headerNotes || 'FOCO NO AGRO, GANHO NO CAMPO'}
-                        </p>
+                        {(templateForm.headerNotes?.trim() || currentCompany.slogan?.trim()) ? (
+                          <p className="text-[8.5px] font-bold text-neutral-900 tracking-wider mt-0.5">
+                            {templateForm.headerNotes?.trim() || currentCompany.slogan?.trim()}
+                          </p>
+                        ) : null}
                       </div>
                       <div className="text-[8.5px] text-neutral-700 leading-tight pt-1">
-                        <div>Vila de Ribaue, Namiconha</div>
-                        <div>Contribuinte: <span className="font-mono font-semibold">{currentCompany.taxNumber || '402172967'}</span></div>
-                        <div>E-mail: {currentCompany.email || 'raffaaliadosdocampo@gmail.com'}</div>
-                        <div>Tel: {currentCompany.phone || '258848361130'} | Tlm: 258870095149</div>
+                        {(currentCompany.address || currentCompany.city) ? (
+                          <div>{[currentCompany.address, currentCompany.city].filter(Boolean).join(', ')}</div>
+                        ) : null}
+                        {currentCompany.taxNumber ? (
+                          <div>Contribuinte: <span className="font-mono font-semibold">{currentCompany.taxNumber}</span></div>
+                        ) : null}
+                        {currentCompany.email ? (
+                          <div>E-mail: {currentCompany.email}</div>
+                        ) : null}
+                        {(currentCompany.phone || currentCompany.mobile) ? (
+                          <div>Tel: {currentCompany.phone || currentCompany.mobile}</div>
+                        ) : null}
                       </div>
                     </div>
 
@@ -961,7 +971,7 @@ export const InvoiceTemplatesSection: React.FC = () => {
                     <span>WgSI-Gerado Online</span>
                   </div>
                   <div className="text-[7px] text-neutral-500 text-center mt-0.5">
-                    {templateForm.footerNotes || 'Sede: Nampula, 3100, Ribaue. Obrigado pela preferência, volte mais!'}
+                    {templateForm.footerNotes || (currentCompany.city ? `Sede: ${currentCompany.city}. Obrigado pela preferência!` : 'Obrigado pela sua preferência!')}
                   </div>
                 </div>
               ) : (

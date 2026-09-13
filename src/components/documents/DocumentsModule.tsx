@@ -2894,17 +2894,27 @@ export const DocumentsModule: React.FC = () => {
                         )}
                         <div>
                           <h5 className="font-bold text-[11px] text-neutral-950 uppercase tracking-tight leading-none">
-                            {currentCompany.tradeName || currentCompany.name || 'RAFFA ALIADOS DO CAMPO, LDA'}
+                            {currentCompany.tradeName || currentCompany.name || ''}
                           </h5>
-                          <p className="text-[8.5px] font-bold text-neutral-900 tracking-wider mt-0.5">
-                            {previewTmpl.headerNotes || 'FOCO NO AGRO, GANHO NO CAMPO'}
-                          </p>
+                          {(previewTmpl.headerNotes?.trim() || currentCompany.slogan?.trim()) ? (
+                            <p className="text-[8.5px] font-bold text-neutral-900 tracking-wider mt-0.5">
+                              {previewTmpl.headerNotes?.trim() || currentCompany.slogan?.trim()}
+                            </p>
+                          ) : null}
                         </div>
                         <div className="text-[8.5px] text-neutral-700 leading-tight pt-1">
-                          <div>{currentCompany.address || 'Vila de Ribaue, Namiconha'}{currentCompany.city ? `, ${currentCompany.city}` : ''}</div>
-                          <div>Contribuinte: <span className="font-mono font-semibold">{currentCompany.taxNumber || '402172967'}</span></div>
-                          <div>E-mail: {currentCompany.email || 'raffaaliadosdocampo@gmail.com'}</div>
-                          <div>Tel: {currentCompany.phone || '258848361130'} {currentCompany.mobile ? `| Tlm: ${currentCompany.mobile}` : ''}</div>
+                          {(currentCompany.address || currentCompany.city) ? (
+                            <div>{[currentCompany.address, currentCompany.city].filter(Boolean).join(', ')}</div>
+                          ) : null}
+                          {currentCompany.taxNumber ? (
+                            <div>Contribuinte: <span className="font-mono font-semibold">{currentCompany.taxNumber}</span></div>
+                          ) : null}
+                          {currentCompany.email ? (
+                            <div>E-mail: {currentCompany.email}</div>
+                          ) : null}
+                          {(currentCompany.phone || currentCompany.mobile) ? (
+                            <div>Tel: {currentCompany.phone || currentCompany.mobile} {currentCompany.phone && currentCompany.mobile ? `| Tlm: ${currentCompany.mobile}` : ''}</div>
+                          ) : null}
                         </div>
                       </div>
 

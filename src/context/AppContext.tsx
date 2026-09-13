@@ -684,12 +684,33 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Internationalization
   const { language, setLanguage, toggleLanguage, t, languages, currentLanguageOption } = useI18n();
 
+  // Helper to ensure company address and slogan placeholders are kept clean/empty for the operator
+  const sanitizeCompanyData = (comp: Company): Company => {
+    if (!comp) return comp;
+    const isOldDefaultAddress =
+      comp.address === 'Av. 24 de Julho, Nº 1420' ||
+      comp.address === 'Vila de Ribaue, Namiconha';
+    const cleanedTemplates = (comp.invoiceTemplates || []).map((tmpl) => {
+      if (tmpl.headerNotes === 'FOCO NO AGRO, GANHO NO CAMPO') {
+        return { ...tmpl, headerNotes: '' };
+      }
+      return tmpl;
+    });
+    return {
+      ...comp,
+      address: isOldDefaultAddress ? '' : comp.address,
+      invoiceTemplates: cleanedTemplates.length ? cleanedTemplates : comp.invoiceTemplates,
+    };
+  };
+
   // Multi-Tenancy & User
-  const [companies, setCompanies] = useState<Company[]>(() =>
-    deduplicateById(loadFromStorage('companies', initialCompanies))
-  );
+  const [companies, setCompanies] = useState<Company[]>(() => {
+    const raw = deduplicateById(loadFromStorage('companies', initialCompanies));
+    return raw.map(sanitizeCompanyData);
+  });
   const [currentCompany, setCurrentCompany] = useState<Company>(() => {
-    const comp = loadFromStorage('company', initialCompanies[0]);
+    const rawComp = loadFromStorage('company', initialCompanies[0]);
+    const comp = sanitizeCompanyData(rawComp);
     if (comp) {
       setActiveAppCompany(comp);
       setActiveAppCurrency(comp.currencySymbol || comp.currency);
@@ -1021,9 +1042,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   );
 
   // CRM
-  const [customers, setCustomers] = useState<Customer[]>(() =>
-    loadFromStorage('customers', initialCustomers)
-  );
+  const [customers, setCustomers] = useState<Customer[]>(() => {
+    const raw = loadFromStorage<Customer[]>('customers', initialCustomers);
+    return Array.isArray(raw)
+      ? raw.map((c) => ({
+          ...c,
+          taxNumber: c.taxNumber === '999999990' ? '' : (c.taxNumber || ''),
+          email: c.email && (c.email.endsWith('@email.mz') || c.email.endsWith('@exemplo.mz')) ? '' : (c.email || ''),
+          address: c.address === 'Balcão / Loja Principal' || c.address === 'Balcão / Loja' ? '' : (c.address || ''),
+        }))
+      : [];
+  });
   const [callLogs, setCallLogs] = useState<CallLog[]>(() =>
     loadFromStorage('callLogs', initialCallLogs)
   );

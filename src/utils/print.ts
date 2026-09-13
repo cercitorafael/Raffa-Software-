@@ -362,7 +362,7 @@ export function printThermalReceipt(sale: Sale, company: Company, store: Store):
       <body>
         <div class="center">
           <div style="font-size: 14px; font-weight: bold; text-transform: uppercase;">${company.name}</div>
-          <div style="font-size: 10px;">${company.address || ''} ${company.city ? `- ${company.city}` : ''}</div>
+          ${(company.address || company.city) ? `<div style="font-size: 10px;">${[company.address, company.city].filter(Boolean).join(' - ')}</div>` : ''}
           <div style="font-size: 10px; font-weight: bold;">NUIT / NIF: ${company.taxNumber || ''}</div>
           <div style="font-size: 10px;">${store.name} (${store.code || ''})</div>
         </div>
@@ -761,8 +761,8 @@ export function printInvoiceDocument(
   const templateBankAccounts = getTemplateBankAccounts(activeTemplate, company);
   const bankName = activeTemplate?.bankName || company.defaultBank || 'Millennium BIM (Moçambique)';
   const bankIban = activeTemplate?.bankIban || activeTemplate?.iban || company.defaultIban || '000100000119090246657';
-  const headerSlogan = activeTemplate?.headerNotes || 'FOCO NO AGRO, GANHO NO CAMPO';
-  const footerNotes = activeTemplate?.footerNotes || `${company.city || 'Nampula'}, ${company.country || 'Moçambique'}. Obrigado pela preferência, volte sempre!`;
+  const headerSlogan = activeTemplate?.headerNotes?.trim() || company.slogan?.trim() || '';
+  const footerNotes = activeTemplate?.footerNotes || (company.city ? `${company.city}, ${company.country || 'Moçambique'}. Obrigado pela sua preferência!` : 'Obrigado pela sua preferência!');
   const legalNotice = activeTemplate?.legalNotice || '(1) Não sujeito; não tributado ou similar ao abrigo do Código do IVA';
   const watermark = activeTemplate?.showWatermark ? (activeTemplate.watermarkText || 'ORIGINAL') : '';
   const fontFamily =
@@ -1105,9 +1105,9 @@ export function printInvoiceDocument(
                 <div class="company-name">${company.tradeName || company.name}</div>
                 ${headerSlogan ? `<div class="company-slogan">${headerSlogan}</div>` : ''}
                 <div class="company-details">
-                  <div>${company.address || ''}${company.city ? `, ${company.city}` : ''}</div>
-                  <div>NUIT / Contribuinte: <strong style="font-family: monospace;">${company.taxNumber || ''}</strong></div>
-                  <div>E-mail: ${company.email || ''} ${company.phone ? `| Tel: ${company.phone}` : ''} ${company.mobile ? `| Tlm: ${company.mobile}` : ''}</div>
+                  ${(company.address || company.city) ? `<div>${[company.address, company.city].filter(Boolean).join(', ')}</div>` : ''}
+                  ${company.taxNumber ? `<div>NUIT / Contribuinte: <strong style="font-family: monospace;">${company.taxNumber}</strong></div>` : ''}
+                  ${[company.email ? `E-mail: ${company.email}` : '', company.phone ? `Tel: ${company.phone}` : '', company.mobile ? `Tlm: ${company.mobile}` : ''].filter(Boolean).length > 0 ? `<div>${[company.email ? `E-mail: ${company.email}` : '', company.phone ? `Tel: ${company.phone}` : '', company.mobile ? `Tlm: ${company.mobile}` : ''].filter(Boolean).join(' | ')}</div>` : ''}
                 </div>
               </div>
 
@@ -1345,19 +1345,38 @@ export async function downloadInvoicePdf(
   doc.setTextColor(15, 23, 42);
   doc.text(company.tradeName || company.name, 14, compY);
 
+  let currentCompOffset = compY + 4.5;
+
   // Slogan / Header notes
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(8.5);
-  doc.setTextColor(17, 24, 39);
-  doc.text(activeTemplate.headerNotes || 'FOCO NO AGRO, GANHO NO CAMPO', 14, compY + 4.5);
+  const headerSloganPdf = activeTemplate.headerNotes?.trim() || company.slogan?.trim() || '';
+  if (headerSloganPdf) {
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8.5);
+    doc.setTextColor(17, 24, 39);
+    doc.text(headerSloganPdf, 14, currentCompOffset);
+    currentCompOffset += 4.5;
+  }
 
   // Company details
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(8);
   doc.setTextColor(55, 65, 81);
-  doc.text(`${company.address || ''}${company.city ? `, ${company.city}` : ''}`, 14, compY + 9);
-  doc.text(`NUIT / NIF: ${company.taxNumber || ''}`, 14, compY + 13);
-  doc.text(`E-mail: ${company.email || ''} | Tel: ${company.phone || company.mobile || ''}`, 14, compY + 17);
+  const companyAddressLine = [company.address?.trim(), company.city?.trim()].filter(Boolean).join(', ');
+  if (companyAddressLine) {
+    doc.text(companyAddressLine, 14, currentCompOffset);
+    currentCompOffset += 4;
+  }
+  if (company.taxNumber) {
+    doc.text(`NUIT / NIF: ${company.taxNumber}`, 14, currentCompOffset);
+    currentCompOffset += 4;
+  }
+  const contactParts: string[] = [];
+  if (company.email) contactParts.push(`E-mail: ${company.email}`);
+  const contactPhone = company.phone || company.mobile;
+  if (contactPhone) contactParts.push(`Tel: ${contactPhone}`);
+  if (contactParts.length > 0) {
+    doc.text(contactParts.join(' | '), 14, currentCompOffset);
+  }
 
   // Customer Right Top
   let custY = 16;
@@ -1889,7 +1908,7 @@ export function printZReportA4(
             <div class="company-title">${company.tradeName || (company as any).legalName || company.name}</div>
             <div class="company-meta">
               <strong>NIF:</strong> ${company.taxNumber || '400123987'} &bull; <strong>Registo:</strong> ${(company as any).crn || company.taxNumber || '00234/2020'}<br>
-              ${company.address || 'Av. 25 de Setembro, Nº 1420'}, ${company.city || 'Maputo'} - ${company.country || 'Moçambique'}<br>
+              ${[company.address, company.city].filter(Boolean).join(', ')}${company.country ? ` - ${company.country}` : ''}<br>
               <strong>Email:</strong> ${company.email || 'contato@empresa.co.mz'} &bull; <strong>Tel:</strong> ${company.phone || '+258 84 000 0000'}
             </div>
           </div>

@@ -284,7 +284,9 @@ export const TopBuyersReport: React.FC<TopBuyersReportProps> = ({
                 </div>
                 <div>
                   <h4 className="font-bold text-white text-sm">{filteredAndSortedCustomers[1]?.name}</h4>
-                  <span className="text-xs text-slate-400">NIF: {filteredAndSortedCustomers[1]?.taxNumber}</span>
+                  {filteredAndSortedCustomers[1]?.taxNumber ? (
+                    <span className="text-xs text-slate-400">NIF: {filteredAndSortedCustomers[1]?.taxNumber}</span>
+                  ) : null}
                 </div>
               </div>
               <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-slate-700 text-slate-300">
@@ -330,7 +332,9 @@ export const TopBuyersReport: React.FC<TopBuyersReportProps> = ({
                 </div>
                 <div>
                   <h4 className="font-bold text-white text-base leading-tight">{filteredAndSortedCustomers[0]?.name}</h4>
-                  <span className="text-xs text-amber-200/80">NIF: {filteredAndSortedCustomers[0]?.taxNumber}</span>
+                  {filteredAndSortedCustomers[0]?.taxNumber ? (
+                    <span className="text-xs text-amber-200/80">NIF: {filteredAndSortedCustomers[0]?.taxNumber}</span>
+                  ) : null}
                 </div>
               </div>
             </div>
@@ -370,7 +374,9 @@ export const TopBuyersReport: React.FC<TopBuyersReportProps> = ({
                 </div>
                 <div>
                   <h4 className="font-bold text-white text-sm">{filteredAndSortedCustomers[2]?.name}</h4>
-                  <span className="text-xs text-slate-400">NIF: {filteredAndSortedCustomers[2]?.taxNumber}</span>
+                  {filteredAndSortedCustomers[2]?.taxNumber ? (
+                    <span className="text-xs text-slate-400">NIF: {filteredAndSortedCustomers[2]?.taxNumber}</span>
+                  ) : null}
                 </div>
               </div>
               <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-slate-700 text-slate-300">
@@ -549,13 +555,15 @@ export const TopBuyersReport: React.FC<TopBuyersReportProps> = ({
                                   <Phone className="w-3 h-3" />
                                   <span>{customer.phone}</span>
                                 </button>
-                              ) : (
-                                <span>Sem telefone</span>
-                              )}
-                              <span>•</span>
-                              <span className="truncate max-w-[200px]" title={[customer.address, customer.location, customer.city].filter(Boolean).join(', ')}>
-                                {[customer.location, customer.city].filter(Boolean).join(' • ') || customer.address || customer.city || 'Sem morada'}
-                              </span>
+                              ) : null}
+                              {customer.phone && [customer.location, customer.city, customer.address].filter(Boolean).length > 0 ? (
+                                <span>•</span>
+                              ) : null}
+                              {[customer.location, customer.city, customer.address].filter(Boolean).length > 0 ? (
+                                <span className="truncate max-w-[200px]" title={[customer.address, customer.location, customer.city].filter(Boolean).join(', ')}>
+                                  {[customer.location, customer.city].filter(Boolean).join(' • ') || customer.address || customer.city}
+                                </span>
+                              ) : null}
                             </div>
                           </div>
                         </div>

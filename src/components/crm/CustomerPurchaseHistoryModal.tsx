@@ -162,7 +162,9 @@ export const CustomerPurchaseHistoryModal: React.FC<CustomerPurchaseHistoryModal
                   )}
                 </div>
                 <div className="flex items-center gap-4 mt-1.5 text-xs text-slate-400 flex-wrap">
-                  <span>NIF: <strong className="text-slate-200">{customer.taxNumber || '999999990'}</strong></span>
+                  {customer.taxNumber ? (
+                    <span>NIF: <strong className="text-slate-200">{customer.taxNumber}</strong></span>
+                  ) : null}
                   {customer.phone && (
                     <span className="flex items-center gap-1">
                       <Phone className="w-3 h-3 text-emerald-400" />

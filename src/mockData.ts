@@ -236,11 +236,12 @@ export const initialCompanies: Company[] = [
   {
     id: 'comp-1',
     name: 'A Minha Empresa, Lda.',
-    tradeName: 'Raffa POS & ERP Solutions',
-    taxNumber: '400123987',
-    address: 'Av. 24 de Julho, Nº 1420',
-    city: 'Maputo',
-    postalCode: '1100',
+    tradeName: 'A Minha Empresa',
+    slogan: '', // Vazio para o operador colocar o slogan da sua empresa
+    taxNumber: '',
+    address: '', // Vazio para o operador colocar a morada da sua empresa
+    city: '',
+    postalCode: '',
     country: 'Moçambique',
     currency: 'MZN',
     currencySymbol: 'Mt',
