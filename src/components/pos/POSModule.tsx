@@ -33,6 +33,10 @@ import {
   Receipt,
   ChevronDown,
   ChevronUp,
+  ChevronLeft,
+  ChevronRight,
+  PanelRightClose,
+  PanelRightOpen,
 } from 'lucide-react';
 import { PaymentModal } from './PaymentModal';
 import { ReceiptModal } from './ReceiptModal';
@@ -109,6 +113,24 @@ export const POSModule: React.FC = () => {
       const next = !prev;
       try {
         localStorage.setItem('pos_shift_notice_collapsed', String(next));
+      } catch {}
+      return next;
+    });
+  };
+
+  const [isCartCollapsed, setIsCartCollapsed] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('pos_cart_collapsed') === 'true';
+    } catch {
+      return false;
+    }
+  });
+
+  const toggleCartCollapsed = () => {
+    setIsCartCollapsed((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem('pos_cart_collapsed', String(next));
       } catch {}
       return next;
     });
@@ -669,6 +691,32 @@ export const POSModule: React.FC = () => {
               <List className="w-3.5 h-3.5" />
               <span className="hidden sm:inline text-[11px]">Lista</span>
             </button>
+
+            <div className="w-[1px] h-4 bg-[#2e2e2e] mx-0.5" />
+
+            <button
+              type="button"
+              id="pos-toggle-cart-btn"
+              onClick={toggleCartCollapsed}
+              title={isCartCollapsed ? "Mostrar tela de venda atual" : "Encolher tela de venda atual"}
+              className={`px-2.5 py-1.5 rounded-md text-xs font-medium transition-all flex items-center space-x-1.5 cursor-pointer shadow-xs ${
+                isCartCollapsed
+                  ? 'bg-[#c5a47e] hover:bg-[#d4b896] text-neutral-950 font-bold animate-pulse'
+                  : 'bg-[#1e1e1e] hover:bg-[#2a2a2a] text-neutral-300 hover:text-white border border-[#333]'
+              }`}
+            >
+              {isCartCollapsed ? (
+                <>
+                  <PanelRightOpen className="w-3.5 h-3.5 text-neutral-950" />
+                  <span className="text-[11px]">Mostrar Venda ({totalItemsCount})</span>
+                </>
+              ) : (
+                <>
+                  <PanelRightClose className="w-3.5 h-3.5 text-[#c5a47e]" />
+                  <span className="hidden sm:inline text-[11px]">Encolher Venda</span>
+                </>
+              )}
+            </button>
           </div>
         </div>
 
@@ -887,40 +935,101 @@ export const POSModule: React.FC = () => {
       </div>
 
       {/* Right Sidebar: POS Shopping Cart & Register Checkout */}
-      <div className="w-full md:w-96 lg:w-[420px] bg-[#0d0d0d] border-l border-[#262626] flex flex-col shrink-0 shadow-2xl z-20">
-        {/* Cart Header */}
-        <div className="p-3.5 border-b border-[#262626] flex items-center justify-between bg-[#141414]">
-          <div className="flex items-center space-x-2">
-            <div className="w-8 h-8 rounded-lg bg-[#c5a47e]/20 border border-[#c5a47e]/30 text-[#c5a47e] flex items-center justify-center font-bold">
-              <ShoppingBag className="w-4 h-4 text-[#c5a47e]" />
-            </div>
-            <div>
-              <h3 className="text-xs font-bold text-[#f2f2f2] uppercase tracking-wider">Venda Atual</h3>
-              <p className="text-[10px] text-neutral-400">
-                {totalItemsCount} {totalItemsCount === 1 ? 'artigo' : 'artigos'} no cesto
-              </p>
+      {isCartCollapsed ? (
+        /* Collapsed Sidebar Dock (Desktop) */
+        <aside
+          id="pos-collapsed-cart-bar"
+          onClick={toggleCartCollapsed}
+          className="hidden md:flex w-14 bg-[#0d0d0d] border-l border-[#262626] flex-col items-center py-4 justify-between shrink-0 shadow-2xl z-20 cursor-pointer hover:bg-[#141414] transition-all group select-none"
+          title="Clique para expandir a tela de venda atual"
+        >
+          <div className="flex flex-col items-center space-y-3">
+            <button
+              type="button"
+              id="pos-expand-cart-top-btn"
+              onClick={(e) => {
+                e.stopPropagation();
+                toggleCartCollapsed();
+              }}
+              className="w-9 h-9 rounded-lg bg-[#1a1a1a] group-hover:bg-[#c5a47e] text-[#c5a47e] group-hover:text-neutral-950 border border-[#333] flex items-center justify-center transition-colors shadow-xs"
+              title="Mostrar Venda Atual"
+            >
+              <PanelRightOpen className="w-4 h-4" />
+            </button>
+            <div className="relative">
+              <div className="w-9 h-9 rounded-lg bg-[#c5a47e]/15 border border-[#c5a47e]/30 text-[#c5a47e] flex items-center justify-center">
+                <ShoppingBag className="w-4 h-4 text-[#c5a47e]" />
+              </div>
+              {totalItemsCount > 0 && (
+                <span className="absolute -top-1.5 -right-1.5 bg-[#c5a47e] text-neutral-950 text-[10px] font-bold w-4 h-4 rounded-full flex items-center justify-center shadow-xs">
+                  {totalItemsCount}
+                </span>
+              )}
             </div>
           </div>
 
-          <div className="flex items-center space-x-1">
-            <button
-              onClick={() => setShowSalesHistoryModal(true)}
-              className="p-1.5 text-neutral-400 hover:text-[#e5e5e5] hover:bg-[#1a1a1a] rounded-md transition-colors"
-              title="Histórico de Vendas"
-            >
-              <History className="w-4 h-4" />
-            </button>
-            {cart.length > 0 && (
-              <button
-                onClick={clearCart}
-                className="p-1.5 text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 rounded-md transition-colors"
-                title="Limpar Cesto"
-              >
-                <Trash2 className="w-4 h-4" />
-              </button>
-            )}
+          <div className="my-auto py-6 [writing-mode:vertical-rl] rotate-180 flex items-center space-x-3 text-xs">
+            <span className="font-bold text-neutral-300 group-hover:text-[#c5a47e] uppercase tracking-widest text-[11px] transition-colors">
+              Venda Atual
+            </span>
+            <span className="font-bold text-emerald-400 font-mono text-xs">
+              {formatCurrency(grandTotal)}
+            </span>
           </div>
-        </div>
+
+          <div className="flex flex-col items-center space-y-2">
+            <span className="text-[10px] uppercase font-bold text-[#c5a47e] bg-[#c5a47e]/15 group-hover:bg-[#c5a47e] group-hover:text-neutral-950 border border-[#c5a47e]/30 px-2 py-1 rounded-md transition-colors">
+              Abrir
+            </span>
+          </div>
+        </aside>
+      ) : (
+        /* Expanded Full Cart Sidebar */
+        <div className="w-full md:w-96 lg:w-[420px] bg-[#0d0d0d] border-l border-[#262626] flex flex-col shrink-0 shadow-2xl z-20">
+          {/* Cart Header */}
+          <div className="p-3.5 border-b border-[#262626] flex items-center justify-between bg-[#141414]">
+            <div className="flex items-center space-x-2">
+              <div className="w-8 h-8 rounded-lg bg-[#c5a47e]/20 border border-[#c5a47e]/30 text-[#c5a47e] flex items-center justify-center font-bold">
+                <ShoppingBag className="w-4 h-4 text-[#c5a47e]" />
+              </div>
+              <div>
+                <h3 className="text-xs font-bold text-[#f2f2f2] uppercase tracking-wider">Venda Atual</h3>
+                <p className="text-[10px] text-neutral-400">
+                  {totalItemsCount} {totalItemsCount === 1 ? 'artigo' : 'artigos'} no cesto
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center space-x-1">
+              <button
+                type="button"
+                id="pos-collapse-sale-header-btn"
+                onClick={toggleCartCollapsed}
+                className="px-2 py-1 bg-[#1e1e1e] hover:bg-[#282828] text-neutral-200 hover:text-[#c5a47e] border border-[#333] hover:border-[#c5a47e]/50 rounded-md transition-colors flex items-center space-x-1 text-xs cursor-pointer shadow-xs mr-1"
+                title="Encolher Tela de Venda Atual"
+              >
+                <PanelRightClose className="w-3.5 h-3.5 text-[#c5a47e]" />
+                <span className="text-[11px] font-medium hidden sm:inline">Encolher</span>
+              </button>
+
+              <button
+                onClick={() => setShowSalesHistoryModal(true)}
+                className="p-1.5 text-neutral-400 hover:text-[#e5e5e5] hover:bg-[#1a1a1a] rounded-md transition-colors"
+                title="Histórico de Vendas"
+              >
+                <History className="w-4 h-4" />
+              </button>
+              {cart.length > 0 && (
+                <button
+                  onClick={clearCart}
+                  className="p-1.5 text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 rounded-md transition-colors"
+                  title="Limpar Cesto"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+          </div>
 
         {/* Customer Selector / Direct Name Input */}
         <div className="px-3.5 py-2.5 bg-[#141414] border-b border-[#262626] relative">
@@ -1450,6 +1559,22 @@ export const POSModule: React.FC = () => {
           </button>
         </div>
       </div>
+    )}
+
+    {/* Floating Button for Mobile when Cart is Collapsed */}
+    {isCartCollapsed && (
+      <button
+        type="button"
+        id="pos-mobile-expand-cart-btn"
+        onClick={toggleCartCollapsed}
+        className="md:hidden fixed bottom-4 right-4 z-40 bg-[#c5a47e] hover:bg-[#d4b896] text-neutral-950 px-4 py-2.5 rounded-full font-bold shadow-2xl flex items-center space-x-2 border border-black/20 animate-pulse cursor-pointer"
+        title="Mostrar Tela de Venda Atual"
+      >
+        <ShoppingBag className="w-4 h-4" />
+        <span className="text-xs">Venda ({totalItemsCount}) &bull; {formatCurrency(grandTotal)}</span>
+        <ChevronLeft className="w-4 h-4" />
+      </button>
+    )}
 
       {/* Customer Picker Modal */}
       {showCustomerPicker && (
