@@ -27,8 +27,6 @@ import {
   Filter,
   Wand2,
   DownloadCloud,
-  Maximize2,
-  Minimize2,
 } from 'lucide-react';
 import { formatCurrency } from '../../utils/crypto';
 import {
@@ -68,14 +66,10 @@ export const AVAILABLE_ICONS = [
 
 interface CategoryManagementTabProps {
   onFilterByCategory?: (categoryId: string) => void;
-  isMaximized?: boolean;
-  onToggleMaximize?: () => void;
 }
 
 export const CategoryManagementTab: React.FC<CategoryManagementTabProps> = ({
   onFilterByCategory,
-  isMaximized,
-  onToggleMaximize,
 }) => {
   const {
     categories,

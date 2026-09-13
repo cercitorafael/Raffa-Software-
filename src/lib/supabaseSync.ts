@@ -75,9 +75,7 @@ export type TableSyncName =
   | 'registos_ponto'
   | 'recibos_salario'
   | 'escalas_trabalho'
-  | 'metas_vendas'
-  | 'ordens_compra'
-  | 'requisicoes_compra';
+  | 'metas_vendas';
 
 export interface RealtimeSyncCallbacks {
   onProfileChange?: (event: 'INSERT' | 'UPDATE' | 'DELETE', item: Partial<UserProfile>, rawOld?: any) => void;
@@ -598,9 +596,9 @@ export function mapUserToSupabase(u: Partial<User>) {
     email: u.email || '',
     cargo: u.role || 'caixa',
     role: u.role || 'caixa',
-    pin: u.pin || null,
-    password: u.password || u.pin || null,
-    senha: u.password || u.pin || null,
+    pin: u.pin || '1234',
+    password: u.password || u.pin || '1234',
+    senha: u.password || u.pin || '1234',
     telefone: u.phone || null,
     phone: u.phone || null,
     ativo: u.isActive !== undefined ? u.isActive : true,
@@ -619,9 +617,9 @@ export function mapSupabaseToUser(row: any): User {
     name: row.name || row.nome || 'Utilizador',
     username: row.username || (row.email ? row.email.split('@')[0] : 'user'),
     email: row.email || '',
-    password: row.password || row.senha || row.pin || '',
+    password: row.password || row.senha || row.pin || '1234',
     role: (row.role || row.cargo || 'caixa').toLowerCase(),
-    pin: row.pin || '',
+    pin: row.pin || '1234',
     phone: row.phone || row.telefone || '',
     isActive: row.is_active !== undefined ? !!row.is_active : row.ativo !== undefined ? !!row.ativo : true,
     avatarUrl: row.avatar_url || '',

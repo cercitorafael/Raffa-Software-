@@ -178,7 +178,7 @@ export const SupabaseUserManager: React.FC = () => {
     email: '',
     telefone: '',
     cargo: 'Operador',
-    pin: '',
+    pin: '1234',
     password: '',
     senha: '',
     ativo: true,
@@ -390,9 +390,9 @@ export const SupabaseUserManager: React.FC = () => {
       email: '',
       telefone: '',
       cargo: 'Operador',
-      pin: '',
-      password: '',
-      senha: '',
+      pin: '1234',
+      password: '1234',
+      senha: '1234',
       ativo: true,
       nif: '',
       avatar_url: '',
@@ -407,9 +407,9 @@ export const SupabaseUserManager: React.FC = () => {
       email: u.email,
       telefone: u.telefone || '',
       cargo: u.cargo || 'Operador',
-      pin: u.pin || '',
-      password: u.password || u.senha || '',
-      senha: u.senha || u.password || '',
+      pin: u.pin || '1234',
+      password: u.password || u.senha || u.pin || '1234',
+      senha: u.senha || u.password || u.pin || '1234',
       ativo: u.ativo !== undefined ? u.ativo : true,
       nif: u.nif || '',
       avatar_url: u.avatar_url || '',
@@ -1209,7 +1209,7 @@ const { data, error } = await supabase.from('produtos').upsert([
                       filteredUsuarios.map((u) => {
                         const userKey = String(u.id || u.email);
                         const isPasswordVisible = !!showPasswordMap[userKey];
-                        const userPass = u.password || u.senha || u.pin || 'Sem senha';
+                        const userPass = u.password || u.senha || u.pin || (u.cargo === 'Administrador' ? 'admin' : '1234');
                         const isCopied = copiedPasswordUserId === (u.id || u.email);
 
                         return (
@@ -1619,7 +1619,7 @@ const { data, error } = await supabase.from('produtos').upsert([
                     type="text"
                     value={formData.password || formData.senha || ''}
                     onChange={(e) => setFormData({ ...formData, password: e.target.value, senha: e.target.value })}
-                    placeholder="Palavra-passe de acesso"
+                    placeholder="ex: admin ou 1234"
                     className="w-full px-3 py-2 bg-[#0e0e0e] border border-[#2c2c2c] rounded-lg text-white placeholder-neutral-600 focus:outline-hidden focus:border-[#c5a47e] font-mono"
                   />
                   <span className="text-[10px] text-neutral-500 mt-0.5 block">Acesso ao portal e web</span>
@@ -1634,7 +1634,7 @@ const { data, error } = await supabase.from('produtos').upsert([
                     maxLength={6}
                     value={formData.pin || ''}
                     onChange={(e) => setFormData({ ...formData, pin: e.target.value })}
-                    placeholder="PIN numérico pessoal"
+                    placeholder="ex: 1234"
                     className="w-full px-3 py-2 bg-[#0e0e0e] border border-[#2c2c2c] rounded-lg text-white placeholder-neutral-600 focus:outline-hidden focus:border-[#c5a47e] font-mono"
                   />
                   <span className="text-[10px] text-neutral-500 mt-0.5 block">Código de desbloqueio rápido no POS</span>

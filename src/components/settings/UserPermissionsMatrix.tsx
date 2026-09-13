@@ -356,7 +356,7 @@ export const UserPermissionsMatrix: React.FC = () => {
               >
                 {users.map((u) => (
                   <option key={u.id} value={u.id} className="bg-[#141414] text-white">
-                    {u.name} ({u.role.toUpperCase()}) &bull; PIN: {u.pin || 'Sem PIN'}
+                    {u.name} ({u.role.toUpperCase()}) &bull; PIN: {u.pin || '1234'}
                   </option>
                 ))}
               </select>

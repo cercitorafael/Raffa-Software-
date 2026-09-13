@@ -42,10 +42,8 @@ export const ProcurementModule: React.FC = () => {
     approveRequisition,
     rejectRequisition,
     createPurchaseOrder,
-    createPurchaseOrderFromReq,
     updatePurchaseOrder,
     deletePurchaseOrder,
-    receiveGoods,
     receivePurchaseOrder,
     hasPermission,
     requestConfirm,
@@ -95,13 +93,6 @@ export const ProcurementModule: React.FC = () => {
     notes: '',
   });
 
-  // Convert Requisition to PO modal
-  const [convertingReq, setConvertingReq] = useState<PurchaseRequisition | null>(null);
-  const [convertSupplierId, setConvertSupplierId] = useState<string>('');
-
-  // Receiving tab forms state
-  const [receivingInputs, setReceivingInputs] = useState<Record<string, { warehouseId: string; docNumber: string }>>({});
-
   // Permissions check
   const canCreate = hasPermission('procurement', 'create');
   const canEdit = hasPermission('procurement', 'edit');
@@ -110,45 +101,40 @@ export const ProcurementModule: React.FC = () => {
   // Filtered Suppliers
   const filteredSuppliers = suppliers.filter((s) => {
     const q = searchQuery.toLowerCase();
-    return s.name.toLowerCase().includes(q) || s.taxNumber.includes(q) || (s.code || '').toLowerCase().includes(q);
+    return s.name.toLowerCase().includes(q) || s.taxNumber.includes(q) || s.code.toLowerCase().includes(q);
   });
 
   // ================= SUPPLIER HANDLERS =================
   const handleSaveSupplier = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!supplierForm.name.trim() || !supplierForm.taxNumber.trim()) {
-      notify('Por favor preencha o Nome e o NIF do fornecedor.', 'warning');
-      return;
-    }
+    if (!supplierForm.name || !supplierForm.taxNumber) return;
 
     if (editingSupplier) {
       updateSupplier(editingSupplier.id, {
-        name: supplierForm.name.trim(),
-        code: supplierForm.code.trim() || editingSupplier.code,
-        taxNumber: supplierForm.taxNumber.trim(),
-        email: supplierForm.email.trim(),
-        phone: supplierForm.phone.trim(),
-        address: supplierForm.address.trim(),
+        name: supplierForm.name,
+        code: supplierForm.code,
+        taxNumber: supplierForm.taxNumber,
+        email: supplierForm.email,
+        phone: supplierForm.phone,
+        address: supplierForm.address,
         paymentTerms: supplierForm.paymentTerms,
-        rating: Number(supplierForm.rating) || 5,
+        rating: Number(supplierForm.rating),
       });
-      notify(`Fornecedor "${supplierForm.name.trim()}" atualizado com sucesso!`, 'success');
       setEditingSupplier(null);
     } else {
       addSupplier({
         companyId: currentCompany.id,
-        name: supplierForm.name.trim(),
-        code: supplierForm.code.trim() || `FOR-${Math.floor(100 + Math.random() * 900)}`,
-        taxNumber: supplierForm.taxNumber.trim(),
-        email: supplierForm.email.trim() || '',
-        phone: supplierForm.phone.trim() || '',
-        address: supplierForm.address.trim() || '',
+        name: supplierForm.name,
+        code: supplierForm.code || `FORN-${Math.floor(100 + Math.random() * 900)}`,
+        taxNumber: supplierForm.taxNumber,
+        email: supplierForm.email || 'contato@fornecedor.pt',
+        phone: supplierForm.phone || '+351 210 000 000',
+        address: supplierForm.address || 'Lisboa, Portugal',
         paymentTerms: supplierForm.paymentTerms,
         categories: ['Geral'],
-        rating: Number(supplierForm.rating) || 5,
+        rating: Number(supplierForm.rating),
         isActive: true,
       });
-      notify(`Fornecedor "${supplierForm.name.trim()}" registado com sucesso!`, 'success');
       setShowNewSupplierModal(false);
     }
   };
@@ -156,28 +142,22 @@ export const ProcurementModule: React.FC = () => {
   // ================= PURCHASE ORDER HANDLERS =================
   const handleSavePurchaseOrder = (e: React.FormEvent) => {
     e.preventDefault();
-    const sup = suppliers.find((s) => s.id === poForm.supplierId) || suppliers[0];
-    const prod = products.find((p) => p.id === poForm.productId) || products[0];
-    if (!sup || !prod) {
-      notify('Selecione um fornecedor e um artigo válidos.', 'error');
-      return;
-    }
+    const sup = suppliers.find((s) => s.id === poForm.supplierId);
+    const prod = products.find((p) => p.id === poForm.productId);
+    if (!sup || !prod) return;
 
-    const unitPrice = Number(poForm.unitPrice) || prod.costPrice || 10;
-    const qty = Number(poForm.quantity) || 1;
+    const unitPrice = Number(poForm.unitPrice) || prod.costPrice;
+    const qty = Number(poForm.quantity);
     const subtotal = unitPrice * qty;
-    const taxRate = Number(prod.taxRate || 0);
-    const tax = (subtotal * taxRate) / 100;
+    const tax = (subtotal * prod.taxRate) / 100;
     const total = subtotal + tax;
 
     if (editingOrder) {
       updatePurchaseOrder(editingOrder.id, {
         supplierId: sup.id,
         supplierName: sup.name,
-        warehouseId: poForm.warehouseId || warehouses[0]?.id,
-        destinationWarehouseId: poForm.warehouseId || warehouses[0]?.id,
+        warehouseId: poForm.warehouseId,
         expectedDeliveryDate: poForm.expectedDeliveryDate,
-        deliveryDateExpected: poForm.expectedDeliveryDate,
         notes: poForm.notes,
         subtotal,
         taxTotal: tax,
@@ -188,23 +168,19 @@ export const ProcurementModule: React.FC = () => {
             productName: prod.name,
             sku: prod.sku,
             quantity: qty,
-            quantityOrdered: qty,
-            quantityReceived: editingOrder.items?.[0]?.quantityReceived || 0,
             unitPrice,
-            taxRate,
+            taxRate: prod.taxRate,
             total,
           },
         ],
       });
-      notify(`Ordem de Compra ${editingOrder.orderNumber || editingOrder.code} atualizada!`, 'success');
       setEditingOrder(null);
     } else {
       createPurchaseOrder({
         companyId: currentCompany.id,
         supplierId: sup.id,
         supplierName: sup.name,
-        warehouseId: poForm.warehouseId || warehouses[0]?.id,
-        destinationWarehouseId: poForm.warehouseId || warehouses[0]?.id,
+        warehouseId: poForm.warehouseId,
         status: 'enviada',
         items: [
           {
@@ -212,10 +188,8 @@ export const ProcurementModule: React.FC = () => {
             productName: prod.name,
             sku: prod.sku,
             quantity: qty,
-            quantityOrdered: qty,
-            quantityReceived: 0,
             unitPrice,
-            taxRate,
+            taxRate: prod.taxRate,
             total,
           },
         ],
@@ -223,10 +197,8 @@ export const ProcurementModule: React.FC = () => {
         taxTotal: tax,
         total,
         expectedDeliveryDate: poForm.expectedDeliveryDate,
-        deliveryDateExpected: poForm.expectedDeliveryDate,
         notes: poForm.notes || 'Ordem de Compra direta',
       });
-      notify('Ordem de Compra criada e enviada com sucesso!', 'success');
       setShowNewOrderModal(false);
     }
   };
@@ -234,14 +206,11 @@ export const ProcurementModule: React.FC = () => {
   // ================= REQUISITION HANDLERS =================
   const handleSaveRequisition = (e: React.FormEvent) => {
     e.preventDefault();
-    const prod = products.find((p) => p.id === reqForm.productId) || products[0];
-    if (!prod) {
-      notify('Selecione um artigo válido para a requisição.', 'error');
-      return;
-    }
+    const prod = products.find((p) => p.id === reqForm.productId);
+    if (!prod) return;
 
-    const qty = Number(reqForm.quantity) || 1;
-    const estimatedCost = prod.costPrice || 10;
+    const qty = Number(reqForm.quantity);
+    const estimatedCost = prod.costPrice;
     const totalEst = qty * estimatedCost;
 
     if (editingRequisition) {
@@ -260,7 +229,6 @@ export const ProcurementModule: React.FC = () => {
           },
         ],
       });
-      notify(`Requisição ${editingRequisition.requisitionNumber || editingRequisition.code} atualizada!`, 'success');
       setEditingRequisition(null);
     } else {
       addPurchaseRequisition({
@@ -282,22 +250,8 @@ export const ProcurementModule: React.FC = () => {
         totalEstimated: totalEst,
         notes: reqForm.notes,
       });
-      notify('Requisição interna criada e registada!', 'success');
       setShowNewRequisitionModal(false);
     }
-  };
-
-  // Convert Requisition to PO
-  const handleConvertRequisitionToPO = () => {
-    if (!convertingReq || !convertSupplierId) {
-      notify('Selecione o fornecedor para adjudicar a encomenda.', 'warning');
-      return;
-    }
-    createPurchaseOrderFromReq(convertingReq.id, convertSupplierId);
-    notify(`Requisição ${convertingReq.requisitionNumber || convertingReq.code} convertida em Ordem de Compra!`, 'success');
-    setConvertingReq(null);
-    setConvertSupplierId('');
-    setActiveTab('orders');
   };
 
   return (
@@ -424,48 +378,37 @@ export const ProcurementModule: React.FC = () => {
                 </thead>
                 <tbody className="divide-y divide-[#262626]">
                   {purchaseOrders.map((po) => {
-                    const wh = warehouses.find((w) => w.id === (po.warehouseId || po.destinationWarehouseId));
-                    const isReceivable = po.status === 'enviada' || po.status === 'emitida';
-                    const isReceived = po.status === 'recebida' || po.status === 'recebida_total';
-
+                    const wh = warehouses.find((w) => w.id === po.warehouseId);
                     return (
                       <tr key={po.id} className="hover:bg-[#191919] transition-colors">
-                        <td className="px-4 py-3 font-mono font-semibold text-[#c5a47e]">{po.orderNumber || po.code}</td>
+                        <td className="px-4 py-3 font-mono font-semibold text-[#c5a47e]">{po.orderNumber}</td>
                         <td className="px-4 py-3 font-medium text-neutral-200">{po.supplierName}</td>
-                        <td className="px-4 py-3 text-neutral-400">{wh?.name || po.warehouseId || 'Armazém Central'}</td>
-                        <td className="px-4 py-3 font-mono text-neutral-400">{formatDate(po.createdAt || po.date)}</td>
-                        <td className="px-4 py-3 font-mono text-neutral-400">{formatDate(po.expectedDeliveryDate || po.deliveryDateExpected)}</td>
+                        <td className="px-4 py-3 text-neutral-400">{wh?.name || po.warehouseId}</td>
+                        <td className="px-4 py-3 font-mono text-neutral-400">{formatDate(po.createdAt)}</td>
+                        <td className="px-4 py-3 font-mono text-neutral-400">{formatDate(po.expectedDeliveryDate)}</td>
                         <td className="px-4 py-3 text-right font-mono font-semibold text-emerald-400">
                           {formatCurrency(po.total)}
                         </td>
                         <td className="px-4 py-3 text-center">
                           <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium uppercase ${
-                            isReceived ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30' :
+                            po.status === 'recebida' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30' :
                             po.status === 'enviada' ? 'bg-blue-500/10 text-blue-400 border border-blue-500/30' :
-                            po.status === 'emitida' ? 'bg-amber-500/10 text-amber-400 border border-amber-500/30' :
                             'bg-neutral-800 text-neutral-400'
                           }`}>
-                            {isReceived ? 'Recebida' : po.status}
+                            {po.status}
                           </span>
                         </td>
                         <td className="px-4 py-3 text-right">
                           <div className="flex items-center justify-end space-x-1">
-                            {isReceivable && (
+                            {po.status === 'enviada' && (
                               <button
-                                onClick={() => {
-                                  const targetWh = po.warehouseId || po.destinationWarehouseId || warehouses[0]?.id;
-                                  const docNum = `GUIA-${po.orderNumber || po.code}`;
-                                  receiveGoods(po.id, targetWh, docNum);
-                                  notify(`Mercadoria da PO ${po.orderNumber || po.code} registada no stock!`, 'success');
-                                }}
-                                className="px-2 py-1 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-400 border border-emerald-500/30 rounded text-[11px] font-medium cursor-pointer flex items-center space-x-1"
-                                title="Receber mercadoria e dar entrada no stock"
+                                onClick={() => receivePurchaseOrder(po.id)}
+                                className="px-2 py-1 bg-emerald-600/20 text-emerald-400 hover:bg-emerald-600/30 rounded text-[11px] font-medium cursor-pointer"
                               >
-                                <PackageCheck className="w-3.5 h-3.5" />
-                                <span>Receber</span>
+                                Receber
                               </button>
                             )}
-                            {canEdit && !isReceived && (
+                            {canEdit && (
                               <button
                                 onClick={() => {
                                   setEditingOrder(po);
@@ -480,7 +423,6 @@ export const ProcurementModule: React.FC = () => {
                                   });
                                 }}
                                 className="p-1.5 hover:bg-neutral-800 rounded text-cyan-400 cursor-pointer"
-                                title="Editar Ordem de Compra"
                               >
                                 <Edit2 className="w-3.5 h-3.5" />
                               </button>
@@ -490,18 +432,16 @@ export const ProcurementModule: React.FC = () => {
                                 onClick={() => {
                                   requestConfirm({
                                     title: 'Eliminar Ordem de Compra',
-                                    message: `Tem a certeza que deseja eliminar a ordem de compra ${po.orderNumber || po.code}?`,
+                                    message: `Tem a certeza que deseja eliminar a ordem de compra ${po.orderNumber}?`,
                                     itemDetails: `Fornecedor: ${po.supplierName} | Total: ${formatCurrency(po.total)} | Estado: ${po.status}`,
                                     confirmLabel: 'Eliminar Ordem',
                                     isDestructive: true,
                                     onConfirm: () => {
                                       deletePurchaseOrder(po.id);
-                                      notify(`Ordem ${po.orderNumber || po.code} eliminada.`, 'info');
                                     },
                                   });
                                 }}
                                 className="p-1.5 hover:bg-neutral-800 rounded text-rose-400 cursor-pointer"
-                                title="Eliminar Ordem de Compra"
                               >
                                 <Trash2 className="w-3.5 h-3.5" />
                               </button>
@@ -551,121 +491,92 @@ export const ProcurementModule: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#262626]">
-                  {purchaseRequisitions.map((req) => {
-                    const isApproved = req.status === 'aprovada' || req.status === 'aprovado';
-                    const isRejected = req.status === 'rejeitada' || req.status === 'rejeitado';
-                    const isConverted = req.status === 'convertido_em_po';
-
-                    return (
-                      <tr key={req.id} className="hover:bg-[#191919] transition-colors">
-                        <td className="px-4 py-3 font-mono font-semibold text-[#c5a47e]">{req.requisitionNumber || req.code}</td>
-                        <td className="px-4 py-3 font-medium text-neutral-200">{req.requesterName}</td>
-                        <td className="px-4 py-3 text-neutral-400">{req.department}</td>
-                        <td className="px-4 py-3">
-                          <span className={`px-2 py-0.5 rounded text-[10px] font-semibold uppercase ${
-                            req.priority === 'urgente' ? 'bg-rose-500/20 text-rose-400' :
-                            req.priority === 'alta' ? 'bg-amber-500/20 text-amber-400' :
-                            'bg-neutral-800 text-neutral-400'
-                          }`}>
-                            {req.priority}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3 text-right font-mono font-semibold text-neutral-200">
-                          {formatCurrency(req.totalEstimated)}
-                        </td>
-                        <td className="px-4 py-3 text-center">
-                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium uppercase ${
-                            isApproved ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30' :
-                            isRejected ? 'bg-rose-500/10 text-rose-400 border border-rose-500/30' :
-                            isConverted ? 'bg-blue-500/10 text-blue-400 border border-blue-500/30' :
-                            'bg-amber-500/10 text-amber-400 border border-amber-500/30'
-                          }`}>
-                            {isConverted ? 'Convertida em PO' : isApproved ? 'Aprovada' : isRejected ? 'Rejeitada' : 'Pendente'}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3 text-right">
-                          <div className="flex items-center justify-end space-x-1">
-                            {req.status === 'pendente' && (
-                              <>
-                                <button
-                                  onClick={() => {
-                                    approveRequisition(req.id);
-                                    notify(`Requisição ${req.requisitionNumber || req.code} aprovada com sucesso!`, 'success');
-                                  }}
-                                  title="Aprovar Requisição"
-                                  className="p-1 hover:bg-neutral-800 rounded text-emerald-400 cursor-pointer"
-                                >
-                                  <Check className="w-4 h-4" />
-                                </button>
-                                <button
-                                  onClick={() => {
-                                    rejectRequisition(req.id);
-                                    notify(`Requisição ${req.requisitionNumber || req.code} rejeitada.`, 'info');
-                                  }}
-                                  title="Rejeitar Requisição"
-                                  className="p-1 hover:bg-neutral-800 rounded text-rose-400 cursor-pointer"
-                                >
-                                  <Ban className="w-4 h-4" />
-                                </button>
-                              </>
-                            )}
-                            {isApproved && (
+                  {purchaseRequisitions.map((req) => (
+                    <tr key={req.id} className="hover:bg-[#191919] transition-colors">
+                      <td className="px-4 py-3 font-mono font-semibold text-[#c5a47e]">{req.requisitionNumber}</td>
+                      <td className="px-4 py-3 font-medium text-neutral-200">{req.requesterName}</td>
+                      <td className="px-4 py-3 text-neutral-400">{req.department}</td>
+                      <td className="px-4 py-3">
+                        <span className={`px-2 py-0.5 rounded text-[10px] font-semibold uppercase ${
+                          req.priority === 'urgente' ? 'bg-rose-500/20 text-rose-400' :
+                          req.priority === 'alta' ? 'bg-amber-500/20 text-amber-400' :
+                          'bg-neutral-800 text-neutral-400'
+                        }`}>
+                          {req.priority}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-right font-mono font-semibold text-neutral-200">
+                        {formatCurrency(req.totalEstimated)}
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium uppercase ${
+                          req.status === 'aprovada' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30' :
+                          req.status === 'rejeitada' ? 'bg-rose-500/10 text-rose-400 border border-rose-500/30' :
+                          'bg-amber-500/10 text-amber-400 border border-amber-500/30'
+                        }`}>
+                          {req.status}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        <div className="flex items-center justify-end space-x-1">
+                          {req.status === 'pendente' && (
+                            <>
                               <button
-                                onClick={() => {
-                                  setConvertingReq(req);
-                                  setConvertSupplierId(suppliers[0]?.id || '');
-                                }}
-                                title="Converter em Ordem de Compra"
-                                className="px-2 py-1 bg-[#c5a47e]/20 hover:bg-[#c5a47e]/30 text-[#c5a47e] border border-[#c5a47e]/40 rounded text-[11px] font-medium cursor-pointer flex items-center space-x-1"
+                                onClick={() => approveRequisition(req.id)}
+                                title="Aprovar e Gerar PO"
+                                className="p-1 hover:bg-neutral-800 rounded text-emerald-400 cursor-pointer"
                               >
-                                <ArrowRight className="w-3 h-3" />
-                                <span>Gerar PO</span>
+                                <Check className="w-4 h-4" />
                               </button>
-                            )}
-                            {canEdit && req.status === 'pendente' && (
                               <button
-                                onClick={() => {
-                                  setEditingRequisition(req);
-                                  setReqForm({
-                                    department: req.department,
-                                    priority: req.priority,
-                                    productId: req.items[0]?.productId || products[0]?.id || '',
-                                    quantity: req.items[0]?.quantity || 10,
-                                    notes: req.notes || '',
-                                  });
-                                }}
-                                className="p-1.5 hover:bg-neutral-800 rounded text-cyan-400 cursor-pointer"
-                                title="Editar Requisição"
+                                onClick={() => rejectRequisition(req.id)}
+                                title="Rejeitar"
+                                className="p-1 hover:bg-neutral-800 rounded text-rose-400 cursor-pointer"
                               >
-                                <Edit2 className="w-3.5 h-3.5" />
+                                <Ban className="w-4 h-4" />
                               </button>
-                            )}
-                            {canDelete && (
-                              <button
-                                onClick={() => {
-                                  requestConfirm({
-                                    title: 'Eliminar Requisição de Compra',
-                                    message: `Tem a certeza que deseja eliminar a requisição ${req.requisitionNumber || req.code}?`,
-                                    itemDetails: `Requisitante: ${req.requesterName} | Departamento: ${req.department} | Prioridade: ${req.priority}`,
-                                    confirmLabel: 'Eliminar Requisição',
-                                    isDestructive: true,
-                                    onConfirm: () => {
-                                      deletePurchaseRequisition(req.id);
-                                      notify(`Requisição ${req.requisitionNumber || req.code} eliminada.`, 'info');
-                                    },
-                                  });
-                                }}
-                                className="p-1.5 hover:bg-neutral-800 rounded text-rose-400 cursor-pointer"
-                                title="Eliminar Requisição"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
+                            </>
+                          )}
+                          {canEdit && (
+                            <button
+                              onClick={() => {
+                                setEditingRequisition(req);
+                                setReqForm({
+                                  department: req.department,
+                                  priority: req.priority,
+                                  productId: req.items[0]?.productId || products[0]?.id || '',
+                                  quantity: req.items[0]?.quantity || 10,
+                                  notes: req.notes || '',
+                                });
+                              }}
+                              className="p-1.5 hover:bg-neutral-800 rounded text-cyan-400 cursor-pointer"
+                            >
+                              <Edit2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                          {canDelete && (
+                            <button
+                              onClick={() => {
+                                requestConfirm({
+                                  title: 'Eliminar Requisição de Compra',
+                                  message: `Tem a certeza que deseja eliminar a requisição ${req.code}?`,
+                                  itemDetails: `Requisitante: ${req.requesterName} | Departamento: ${req.department} | Prioridade: ${req.priority}`,
+                                  confirmLabel: 'Eliminar Requisição',
+                                  isDestructive: true,
+                                  onConfirm: () => {
+                                    deletePurchaseRequisition(req.id);
+                                  },
+                                });
+                              }}
+                              className="p-1.5 hover:bg-neutral-800 rounded text-rose-400 cursor-pointer"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>
@@ -678,86 +589,45 @@ export const ProcurementModule: React.FC = () => {
             <div className="bg-[#141414] p-4 rounded-xl border border-[#262626]">
               <h3 className="text-sm font-semibold text-neutral-200">Entradas de Mercadoria no Armazém</h3>
               <p className="text-xs text-neutral-400">
-                Ordens com entrega pendente aguardando conferência física, afetação de stock e emissão de conta a pagar.
+                Ordens com entrega pendente aguardando conferência física e registo no stock.
               </p>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {purchaseOrders.filter((o) => o.status === 'enviada' || o.status === 'emitida').map((po) => {
-                const currentInput = receivingInputs[po.id] || {
-                  warehouseId: po.warehouseId || po.destinationWarehouseId || warehouses[0]?.id || '',
-                  docNumber: `FT-${po.orderNumber || po.code}`,
-                };
-
-                return (
-                  <div key={po.id} className="bg-[#141414] border border-emerald-500/20 rounded-xl p-4 flex flex-col justify-between space-y-4">
-                    <div>
-                      <div className="flex justify-between items-start">
-                        <div>
-                          <span className="text-xs font-mono text-[#c5a47e] font-semibold">{po.orderNumber || po.code}</span>
-                          <h4 className="text-sm font-semibold text-neutral-200 mt-1">{po.supplierName}</h4>
-                        </div>
-                        <span className="px-2 py-0.5 rounded-full text-[10px] bg-blue-500/20 text-blue-400 font-mono">
-                          {po.status === 'enviada' ? 'Em Trânsito' : 'Aguardando Entrada'}
-                        </span>
+              {purchaseOrders.filter((o) => o.status === 'enviada').map((po) => (
+                <div key={po.id} className="bg-[#141414] border border-emerald-500/20 rounded-xl p-4 flex flex-col justify-between">
+                  <div>
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <span className="text-xs font-mono text-[#c5a47e] font-semibold">{po.orderNumber}</span>
+                        <h4 className="text-sm font-semibold text-neutral-200 mt-1">{po.supplierName}</h4>
                       </div>
-
-                      <div className="mt-3 space-y-1 text-xs text-neutral-400 font-mono">
-                        <div>Previsão de Entrega: {formatDate(po.expectedDeliveryDate || po.deliveryDateExpected)}</div>
-                        <div>Total Artigos: {(po.items || []).reduce((s, i) => s + (i.quantity || i.quantityOrdered || 0), 0)} unidades</div>
-                        <div className="text-emerald-400 font-semibold">Valor Total: {formatCurrency(po.total)}</div>
-                      </div>
-
-                      <div className="mt-3 p-3 bg-[#0d0d0d] border border-[#262626] rounded-lg space-y-2 text-xs">
-                        <div>
-                          <label className="block text-[11px] text-neutral-400 mb-1">Armazém de Entrada:</label>
-                          <select
-                            value={currentInput.warehouseId}
-                            onChange={(e) => setReceivingInputs({
-                              ...receivingInputs,
-                              [po.id]: { ...currentInput, warehouseId: e.target.value },
-                            })}
-                            className="w-full bg-[#141414] border border-[#262626] rounded px-2.5 py-1 text-xs text-neutral-200 focus:outline-hidden"
-                          >
-                            {warehouses.map((w) => (
-                              <option key={w.id} value={w.id}>{w.name}</option>
-                            ))}
-                          </select>
-                        </div>
-                        <div>
-                          <label className="block text-[11px] text-neutral-400 mb-1">Nº da Guia / Fatura do Fornecedor:</label>
-                          <input
-                            type="text"
-                            value={currentInput.docNumber}
-                            onChange={(e) => setReceivingInputs({
-                              ...receivingInputs,
-                              [po.id]: { ...currentInput, docNumber: e.target.value },
-                            })}
-                            placeholder="ex: FT-10492 / GUIA-90"
-                            className="w-full bg-[#141414] border border-[#262626] rounded px-2.5 py-1 text-xs text-neutral-200 font-mono focus:outline-hidden"
-                          />
-                        </div>
-                      </div>
+                      <span className="px-2 py-0.5 rounded-full text-[10px] bg-blue-500/20 text-blue-400 font-mono">
+                        Em Trânsito
+                      </span>
                     </div>
 
-                    <div className="pt-3 border-t border-[#262626] flex justify-end">
-                      <button
-                        onClick={() => {
-                          const targetWh = currentInput.warehouseId || po.warehouseId || po.destinationWarehouseId || warehouses[0]?.id;
-                          const docNum = currentInput.docNumber || `FT-${po.orderNumber || po.code}`;
-                          receiveGoods(po.id, targetWh, docNum);
-                          notify(`Mercadoria da PO ${po.orderNumber || po.code} recebida no armazém e stock atualizado!`, 'success');
-                        }}
-                        className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-md text-xs font-medium transition-colors cursor-pointer flex items-center space-x-1.5 shadow-xs"
-                      >
-                        <PackageCheck className="w-4 h-4" />
-                        <span>Confirmar Entrada no Stock</span>
-                      </button>
+                    <div className="mt-3 space-y-1 text-xs text-neutral-400 font-mono">
+                      <div>Previsão de Entrega: {formatDate(po.expectedDeliveryDate)}</div>
+                      <div>Total Artigos: {po.items.reduce((s, i) => s + i.quantity, 0)} unidades</div>
+                      <div className="text-emerald-400 font-semibold">Valor Total: {formatCurrency(po.total)}</div>
                     </div>
                   </div>
-                );
-              })}
-              {purchaseOrders.filter((o) => o.status === 'enviada' || o.status === 'emitida').length === 0 && (
+
+                  <div className="mt-4 pt-3 border-t border-[#262626] flex justify-end">
+                    <button
+                      onClick={() => {
+                        receivePurchaseOrder(po.id);
+                        notify(`Mercadoria da PO ${po.orderNumber} conferida e stock atualizado!`, 'success');
+                      }}
+                      className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-md text-xs font-medium transition-colors cursor-pointer"
+                    >
+                      Confirmar Entrada no Stock
+                    </button>
+                  </div>
+                </div>
+              ))}
+              {purchaseOrders.filter((o) => o.status === 'enviada').length === 0 && (
                 <div className="col-span-2 text-center py-12 text-neutral-500 bg-[#141414] rounded-xl border border-[#262626]">
                   <CheckCircle className="w-8 h-8 text-emerald-400 mx-auto mb-2 opacity-80" />
                   <p>Não existem encomendas pendentes de receção no armazém.</p>
@@ -1242,89 +1112,6 @@ export const ProcurementModule: React.FC = () => {
                 </button>
               </div>
             </form>
-          </div>
-        </div>
-      )}
-
-      {/* ================= MODAL: CONVERT REQUISITION TO PO ================= */}
-      {convertingReq && (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-xs flex items-center justify-center p-4 z-50">
-          <div className="bg-[#141414] border border-[#262626] rounded-2xl w-full max-w-md overflow-hidden shadow-2xl">
-            <div className="px-6 py-4 border-b border-[#262626] flex items-center justify-between bg-[#191919]">
-              <h3 className="font-serif text-base text-[#e5e5e5]">
-                Adjudicar e Converter Requisição em PO
-              </h3>
-              <button
-                onClick={() => setConvertingReq(null)}
-                className="p-1 hover:bg-neutral-800 rounded-md text-neutral-400"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="p-6 space-y-4">
-              <div className="p-3 bg-[#0d0d0d] border border-[#262626] rounded-xl text-xs space-y-1.5">
-                <div className="flex justify-between">
-                  <span className="text-neutral-500">Nº Requisição:</span>
-                  <span className="font-mono text-[#c5a47e] font-semibold">{convertingReq.requisitionNumber || convertingReq.code}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-neutral-500">Requisitante:</span>
-                  <span className="text-neutral-200">{convertingReq.requesterName}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-neutral-500">Departamento:</span>
-                  <span className="text-neutral-300">{convertingReq.department}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-neutral-500">Valor Estimado:</span>
-                  <span className="text-emerald-400 font-mono font-semibold">{formatCurrency(convertingReq.totalEstimated)}</span>
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-neutral-300 mb-1">
-                  Selecione o Fornecedor Adjudicatário *
-                </label>
-                <select
-                  value={convertSupplierId}
-                  onChange={(e) => setConvertSupplierId(e.target.value)}
-                  className="w-full bg-[#0d0d0d] border border-[#262626] rounded-md px-3 py-2 text-xs text-neutral-200 focus:outline-hidden"
-                >
-                  <option value="">-- Selecionar Fornecedor --</option>
-                  {suppliers.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.name} ({s.taxNumber})
-                    </option>
-                  ))}
-                </select>
-                <p className="text-[10px] text-neutral-500 mt-1">
-                  Será gerada uma Ordem de Compra oficial com os artigos e quantidades desta requisição.
-                </p>
-              </div>
-
-              <div className="pt-4 border-t border-[#262626] flex items-center justify-end space-x-3">
-                <button
-                  type="button"
-                  onClick={() => setConvertingReq(null)}
-                  className="px-4 py-2 bg-neutral-800 text-neutral-300 rounded-lg text-xs font-medium"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="button"
-                  onClick={handleConvertRequisitionToPO}
-                  disabled={!convertSupplierId}
-                  className={`px-4 py-2 rounded-lg text-xs font-medium transition-colors ${
-                    convertSupplierId
-                      ? 'bg-[#c5a47e] hover:bg-[#b5946e] text-neutral-950 cursor-pointer'
-                      : 'bg-[#1e1e1e] text-neutral-500 cursor-not-allowed'
-                  }`}
-                >
-                  Converter em Ordem de Compra
-                </button>
-              </div>
-            </div>
           </div>
         </div>
       )}

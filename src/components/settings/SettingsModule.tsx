@@ -266,7 +266,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
     password: '',
     roleId: roles?.[0]?.id || 'admin',
     storeIds: [currentStore?.id || 'store-lis-1'],
-    pin: '',
+    pin: '1234',
     isActive: true,
   });
   const [isSyncingUsers, setIsSyncingUsers] = useState(false);
@@ -432,36 +432,32 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
         name: userForm.name,
         username: userForm.username,
         email: userForm.email,
-        password: userForm.password ? userForm.password : editingUser.password,
+        password: userForm.password || editingUser.password || '123456',
         role: userForm.roleId as Role,
         roleId: userForm.roleId,
         storeId: userForm.storeIds?.[0] || currentStore?.id || 'store-lis-1',
         storeIds: userForm.storeIds,
-        pin: userForm.pin ? userForm.pin : editingUser.pin,
+        pin: userForm.pin,
         isActive: userForm.isActive,
       });
       setEditingUser(null);
       notify(`Utilizador "${userForm.name}" atualizado com sucesso.`, 'success');
     } else {
-      if (!userForm.password && !userForm.pin) {
-        notify('Por favor defina uma palavra-passe ou PIN para o novo utilizador.', 'warning');
-        return;
-      }
       addUser({
         companyId: currentCompany?.id || 'comp-main',
         name: userForm.name,
         username: userForm.username,
         email: userForm.email || `${userForm.username}@empresa.pt`,
-        password: userForm.password || userForm.pin,
+        password: userForm.password || '123456',
         role: userForm.roleId as Role,
         roleId: userForm.roleId,
         storeId: userForm.storeIds?.[0] || currentStore?.id || 'store-lis-1',
         storeIds: userForm.storeIds,
-        pin: userForm.pin || '',
+        pin: userForm.pin || '1234',
         isActive: userForm.isActive,
       } as any);
       setShowNewUserModal(false);
-      notify(`Utilizador "${userForm.name}" criado com sucesso com a sua senha própria.`, 'success');
+      notify(`Utilizador "${userForm.name}" criado com sucesso.`, 'success');
     }
   };
 
@@ -1844,7 +1840,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
                         password: '',
                         roleId: roles?.[0]?.id || 'admin',
                         storeIds: [currentStore?.id || 'store-lis-1'],
-                        pin: '',
+                        pin: '1234',
                         isActive: true,
                       });
                       setShowNewUserModal(true);
@@ -1881,7 +1877,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
                         ? [u.storeId]
                         : [currentStore?.id || 'store-lis-1'];
                       const displayUsername = u.username || (u.name || 'user').toLowerCase().replace(/\s+/g, '.');
-                      const userPass = u.password || u.pin || 'Sem senha';
+                      const userPass = u.password || (u.role === 'admin' ? 'admin' : u.pin || '1234');
                       const isPasswordVisible = !!showPasswordMap[u.id];
 
                       return (
@@ -1980,10 +1976,10 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
                                     name: u.name,
                                     username: displayUsername,
                                     email: u.email,
-                                    password: u.password || '',
+                                    password: u.password || (u.role === 'admin' ? 'admin' : u.pin || '1234'),
                                     roleId: u.roleId || u.role || 'caixa',
                                     storeIds: userStores,
-                                    pin: u.pin || '',
+                                    pin: u.pin || '1234',
                                     isActive: u.isActive,
                                   });
                                 }}

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useApp } from '../../context/AppContext';
+import { supabase } from '../../lib/supabase';
 import { formatCurrency, formatDate, formatExactDate, formatExactTime, formatExactDateTime } from '../../utils/crypto';
 import {
   Boxes,
@@ -56,6 +57,7 @@ export const StockModule: React.FC<StockModuleProps> = ({ initialTab }) => {
     products,
     warehouses,
     stock,
+    setStock,
     lots,
     stockMovements,
     stockTransfers,
@@ -138,6 +140,13 @@ export const StockModule: React.FC<StockModuleProps> = ({ initialTab }) => {
   // Lot Modals
   const [showNewLotModal, setShowNewLotModal] = useState(false);
   const [editingLot, setEditingLot] = useState<LotBatch | null>(null);
+
+  // Adicionar Stock via Supabase (Acionamento explícito por clique de botão)
+  const [showAddStockModal, setShowAddStockModal] = useState(false);
+  const [produtoSelecionado, setProdutoSelecionado] = useState<string>('');
+  const [armazemSelecionado, setArmazemSelecionado] = useState<string>('');
+  const [quantidadeStock, setQuantidadeStock] = useState<number>(1);
+  const [isSubmittingStock, setIsSubmittingStock] = useState(false);
 
   // Movements Tab States (Search & Filter)
   const [movementSearch, setMovementSearch] = useState('');
@@ -519,6 +528,81 @@ export const StockModule: React.FC<StockModuleProps> = ({ initialTab }) => {
     setAdjustingProduct(null);
   };
 
+  // 1. Inserção DEVE ficar dentro de uma função acionada por clique de botão:
+  const handleAdicionarStock = async () => {
+    if (!produtoSelecionado || !armazemSelecionado) {
+      notify('Por favor, selecione o artigo e o armazém de destino.', 'warning');
+      return;
+    }
+
+    try {
+      setIsSubmittingStock(true);
+      const { data, error } = await supabase.from('stock').insert({
+        product_id: produtoSelecionado,
+        warehouse_id: armazemSelecionado
+      });
+      if (error) console.error(error);
+
+      // Atualiza o estado da aplicação e histórico de movimentos
+      const qtyToAdd = Number(quantidadeStock) || 1;
+      setStock((prev: any) => {
+        const list = Array.isArray(prev) ? [...prev] : [];
+        const existingIndex = list.findIndex(
+          (s: any) =>
+            (s.productId === produtoSelecionado || s.product_id === produtoSelecionado) &&
+            (s.warehouseId === armazemSelecionado || s.warehouse_id === armazemSelecionado)
+        );
+        if (existingIndex >= 0) {
+          list[existingIndex] = {
+            ...list[existingIndex],
+            quantity: (Number(list[existingIndex].quantity) || 0) + qtyToAdd,
+          };
+        } else {
+          list.push({
+            id: `stk-${Date.now()}`,
+            companyId: currentCompany?.id || 'comp-1',
+            productId: produtoSelecionado,
+            warehouseId: armazemSelecionado,
+            quantity: qtyToAdd,
+            avgCost: 0,
+          });
+        }
+        return list;
+      });
+
+      const prod = products.find((p) => p.id === produtoSelecionado);
+      recordStockMovement({
+        companyId: currentCompany?.id || 'comp-1',
+        type: 'entrada',
+        productId: produtoSelecionado,
+        targetWarehouseId: armazemSelecionado,
+        quantity: qtyToAdd,
+        unitCost: prod?.costPrice || 0,
+        referenceDoc: 'MANUAL-SUPABASE',
+        reason: `Adição manual de stock: ${prod?.name || 'Artigo'}`,
+        operatorId: currentUser?.id || 'user-1',
+        date: new Date().toISOString(),
+      });
+
+      notify(`Stock adicionado com sucesso para ${prod?.name || 'o artigo'}!`, 'success');
+      setShowAddStockModal(false);
+    } catch (err) {
+      console.error('Erro ao adicionar stock:', err);
+      notify('Erro ao registar stock no Supabase.', 'error');
+    } finally {
+      setIsSubmittingStock(false);
+    }
+  };
+
+  // 2. Se for buscar dados ao carregar a tela, o useEffect PRECISA dos colchetes vazios []:
+  useEffect(() => {
+    async function carregarStock() {
+      const { data } = await supabase.from('stock').select('*');
+      setStock(data);
+    }
+    carregarStock();
+  }, []); // <--- Esses colchetes [] impedem o loop!
+
   // Warehouse Handlers
   const handleSaveWarehouse = (e: React.FormEvent) => {
     e.preventDefault();
@@ -647,6 +731,27 @@ export const StockModule: React.FC<StockModuleProps> = ({ initialTab }) => {
               <Layers className="w-4 h-4 text-amber-400" />
               <span>Gestão de Categorias</span>
             </button>
+
+            {canCreate && (
+              <button
+                id="btn-adicionar-stock-modal"
+                onClick={() => {
+                  setProdutoSelecionado(products[0]?.id || '');
+                  setArmazemSelecionado(
+                    selectedWarehouseFilter !== 'all'
+                      ? selectedWarehouseFilter
+                      : (currentStore.defaultWarehouseId || warehouses[0]?.id || '')
+                  );
+                  setQuantidadeStock(1);
+                  setShowAddStockModal(true);
+                }}
+                className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-medium text-xs rounded-lg transition-colors flex items-center space-x-1.5 shadow-xs cursor-pointer"
+                title="Adicionar entrada de stock para um artigo num armazém (Supabase)"
+              >
+                <Boxes className="w-4 h-4" />
+                <span>Adicionar Stock</span>
+              </button>
+            )}
 
             {canCreate && (
               <button
@@ -1015,6 +1120,24 @@ export const StockModule: React.FC<StockModuleProps> = ({ initialTab }) => {
                         </td>
                         <td className="px-4 py-3 text-right">
                           <div className="flex items-center justify-end space-x-1">
+                            {canCreate && (
+                              <button
+                                onClick={() => {
+                                  setProdutoSelecionado(prod.id);
+                                  setArmazemSelecionado(
+                                    selectedWarehouseFilter !== 'all'
+                                      ? selectedWarehouseFilter
+                                      : (currentStore.defaultWarehouseId || warehouses[0]?.id || '')
+                                  );
+                                  setQuantidadeStock(1);
+                                  setShowAddStockModal(true);
+                                }}
+                                title="Adicionar Stock a este Artigo (Supabase)"
+                                className="p-1.5 hover:bg-neutral-800 rounded-md text-emerald-400 transition-colors cursor-pointer"
+                              >
+                                <Plus className="w-3.5 h-3.5" />
+                              </button>
+                            )}
                             <button
                               onClick={() => handleOpenAdjustStock(prod)}
                               title="Ajustar Stock Manualmente"
@@ -1739,6 +1862,107 @@ export const StockModule: React.FC<StockModuleProps> = ({ initialTab }) => {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* ================= MODAL: ADICIONAR STOCK (SUPABASE) ================= */}
+      {showAddStockModal && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+          <div className="bg-[#141414] border border-[#262626] rounded-2xl w-full max-w-md overflow-hidden shadow-2xl">
+            <div className="px-6 py-4 border-b border-[#262626] flex items-center justify-between bg-[#191919]">
+              <div className="flex items-center space-x-2">
+                <Boxes className="w-5 h-5 text-emerald-400" />
+                <h3 className="font-serif text-base text-[#e5e5e5]">Adicionar Stock (Supabase)</h3>
+              </div>
+              <button
+                onClick={() => setShowAddStockModal(false)}
+                className="p-1 hover:bg-neutral-800 rounded-md text-neutral-400 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <div>
+                <label className="block text-xs font-medium text-neutral-300 mb-1">
+                  Artigo a Selecionar *
+                </label>
+                <select
+                  value={produtoSelecionado}
+                  onChange={(e) => setProdutoSelecionado(e.target.value)}
+                  className="w-full bg-[#0d0d0d] border border-[#262626] rounded-md px-3 py-2 text-xs text-neutral-200 focus:outline-hidden focus:border-[#c5a47e]"
+                >
+                  <option value="">-- Selecionar Artigo --</option>
+                  {products.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name} {p.sku ? `(SKU: ${p.sku})` : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-neutral-300 mb-1">
+                  Armazém de Destino *
+                </label>
+                <select
+                  value={armazemSelecionado}
+                  onChange={(e) => setArmazemSelecionado(e.target.value)}
+                  className="w-full bg-[#0d0d0d] border border-[#262626] rounded-md px-3 py-2 text-xs text-neutral-200 focus:outline-hidden focus:border-[#c5a47e]"
+                >
+                  <option value="">-- Selecionar Armazém --</option>
+                  {warehouses.map((w) => (
+                    <option key={w.id} value={w.id}>
+                      {w.name} ({w.code})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-neutral-300 mb-1">
+                  Quantidade a Adicionar
+                </label>
+                <input
+                  type="number"
+                  min="1"
+                  step="1"
+                  value={quantidadeStock}
+                  onChange={(e) => setQuantidadeStock(Math.max(1, Number(e.target.value)))}
+                  className="w-full bg-[#0d0d0d] border border-[#262626] rounded-md px-3 py-2 text-xs text-neutral-200 focus:outline-hidden focus:border-[#c5a47e]"
+                />
+              </div>
+
+              <div className="pt-4 border-t border-[#262626] flex items-center justify-end space-x-3">
+                <button
+                  type="button"
+                  onClick={() => setShowAddStockModal(false)}
+                  className="px-4 py-2 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 rounded-lg text-xs font-medium cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  id="btn-confirmar-adicionar-stock"
+                  type="button"
+                  disabled={isSubmittingStock || !produtoSelecionado || !armazemSelecionado}
+                  onClick={handleAdicionarStock}
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-lg text-xs font-semibold flex items-center space-x-1.5 shadow-sm cursor-pointer"
+                >
+                  {isSubmittingStock ? (
+                    <>
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      <span>A gravar no Supabase...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>Confirmar e Adicionar Stock</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}
