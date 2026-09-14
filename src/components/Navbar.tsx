@@ -278,36 +278,14 @@ export const Navbar: React.FC<{ onOpenShiftModal: () => void }> = ({ onOpenShift
             <span>{t('header.fiscalAudit')}</span>
           </button>
 
-          {/* Online / Offline Sync Queue Trigger */}
-          <button
-            onClick={() => setShowOfflineSyncModal(true)}
-            title={`Fila IndexedDB & Supabase: ${isOnline ? 'Online' : 'Offline'} (${syncQueue.length} operações pendentes)`}
-            className={`flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-all cursor-pointer shrink-0 whitespace-nowrap shadow-xs ${
-              !isOnline
-                ? 'bg-amber-500/15 text-amber-300 border-amber-500/40 hover:bg-amber-500/25'
-                : syncQueue.length > 0
-                ? 'bg-blue-500/15 text-blue-300 border-blue-500/40 hover:bg-blue-500/25'
-                : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/20'
-            }`}
+          {/* Online Realtime Cloud Indicator */}
+          <div
+            title={t('header.cloudConnectionActive')}
+            className="flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border bg-emerald-500/10 text-emerald-400 border-emerald-500/30 shrink-0 whitespace-nowrap shadow-xs"
           >
-            <span
-              className={`w-2 h-2 rounded-full ${
-                !isOnline
-                  ? 'bg-amber-400 animate-ping'
-                  : syncQueue.length > 0
-                  ? 'bg-blue-400 animate-pulse'
-                  : 'bg-emerald-400 animate-pulse'
-              }`}
-            />
-            <span className="font-medium">
-              {!isOnline ? 'Offline' : isSyncing ? 'A sincronizar...' : t('header.online')}
-            </span>
-            {syncQueue.length > 0 && (
-              <span className="ml-1 px-1.5 py-0.2 text-[10px] font-bold rounded-full bg-amber-500 text-black font-mono">
-                {syncQueue.length}
-              </span>
-            )}
-          </button>
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+            <span className="font-medium">{t('header.online')}</span>
+          </div>
 
           {/* Cash Register Shift Button */}
           <button

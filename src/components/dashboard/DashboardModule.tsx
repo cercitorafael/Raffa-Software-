@@ -57,7 +57,6 @@ import {
   RefreshCw,
   X,
   Info,
-  CheckCircle2,
 } from 'lucide-react';
 
 export const DashboardModule: React.FC = () => {
@@ -65,9 +64,6 @@ export const DashboardModule: React.FC = () => {
     currentUser,
     hasPermission,
     salesHistory,
-    shiftsHistory,
-    isSyncing,
-    forceRefreshFromSupabase,
     products,
     stock,
     customers,
@@ -244,43 +240,12 @@ export const DashboardModule: React.FC = () => {
   const totalSalesRevenue = useMemo(() => calculateNetSalesRevenue(periodSalesHistory), [periodSalesHistory]);
   const prevSalesRevenue = useMemo(() => calculateNetSalesRevenue(prevPeriodSalesHistory), [prevPeriodSalesHistory]);
 
-  // Closed shifts within the selected period (reconciled across all company operators and terminals)
-  const periodClosedShifts = useMemo(() => {
-    return shiftsHistory.filter((s) => {
-      if (s.companyId && currentCompany?.id && s.companyId !== currentCompany.id) return false;
-      const d = s.closedAt || s.openedAt;
-      return s.status === 'fechado' && isDateInRange(d, rangeInfo.startDate, rangeInfo.endDate);
-    });
-  }, [shiftsHistory, currentCompany?.id, rangeInfo]);
-
-  const periodClosedShiftsRevenue = useMemo(() => {
-    return periodClosedShifts.reduce((acc, s) => acc + (Number(s.totalSales) || 0), 0);
-  }, [periodClosedShifts]);
-
-  // Consolidated revenue: reflects detailed fiscal sales or the total registered in operators' closed shifts
-  const effectiveSalesRevenue = useMemo(() => {
-    return Math.max(totalSalesRevenue, periodClosedShiftsRevenue);
-  }, [totalSalesRevenue, periodClosedShiftsRevenue]);
-
-  // Today's closed shifts across terminals
-  const todayClosedShifts = useMemo(() => {
-    return shiftsHistory.filter((s) => {
-      if (s.companyId && currentCompany?.id && s.companyId !== currentCompany.id) return false;
-      const d = s.closedAt || s.openedAt;
-      return s.status === 'fechado' && isDateInRange(d, todayDateStr, todayDateStr);
-    });
-  }, [shiftsHistory, currentCompany?.id, todayDateStr]);
-
-  const todayClosedShiftsRevenue = useMemo(() => {
-    return todayClosedShifts.reduce((acc, s) => acc + (Number(s.totalSales) || 0), 0);
-  }, [todayClosedShifts]);
-
   const revenueGrowthPercent = useMemo(() => {
     if (prevSalesRevenue > 0) {
-      return ((effectiveSalesRevenue - prevSalesRevenue) / prevSalesRevenue) * 100;
+      return ((totalSalesRevenue - prevSalesRevenue) / prevSalesRevenue) * 100;
     }
-    return effectiveSalesRevenue > 0 ? 100 : 0;
-  }, [effectiveSalesRevenue, prevSalesRevenue]);
+    return totalSalesRevenue > 0 ? 100 : 0;
+  }, [totalSalesRevenue, prevSalesRevenue]);
 
   const totalSubtotal = useMemo(() => calculateNetSubtotal(periodSalesHistory), [periodSalesHistory]);
   const totalTaxCollected = useMemo(() => calculateNetTax(periodSalesHistory), [periodSalesHistory]);
@@ -522,16 +487,6 @@ export const DashboardModule: React.FC = () => {
           </div>
 
           <button
-            onClick={() => forceRefreshFromSupabase()}
-            disabled={isSyncing}
-            className="flex items-center space-x-1.5 px-3 py-1.5 bg-[#c5a47e]/20 hover:bg-[#c5a47e]/30 text-[#c5a47e] hover:text-white border border-[#c5a47e]/40 rounded-lg text-xs font-semibold transition-all cursor-pointer disabled:opacity-50"
-            title="Puxar vendas, fechos de turno e dados mais recentes da nuvem Supabase"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
-            <span>{isSyncing ? 'A Sincronizar...' : 'Sincronizar Supabase'}</span>
-          </button>
-
-          <button
             onClick={() => setActiveNavTab('analytics')}
             className="flex items-center space-x-1.5 px-3 py-1.5 bg-[#c5a47e]/15 hover:bg-[#c5a47e]/25 text-[#c5a47e] hover:text-white border border-[#c5a47e]/30 rounded-lg text-xs font-semibold transition-all cursor-pointer"
             title="Abrir módulo completo de relatórios analíticos com gráficos Recharts"
@@ -551,67 +506,7 @@ export const DashboardModule: React.FC = () => {
       </div>
 
       <div className="p-6 space-y-6 max-w-7xl w-full mx-auto">
-        {/* Closed Cash Shifts Banner (Multi-Operator Reconciliation) */}
-        {timeRange === 'hoje' && todayClosedShifts.length > 0 && (
-          <div className="bg-[#141414] border border-[#2a2a2a] rounded-xl p-4 sm:p-5 shadow-lg relative overflow-hidden">
-            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-              <div className="flex items-start space-x-3.5 min-w-0">
-                <div className="w-10 h-10 rounded-xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center shrink-0 text-emerald-400 mt-0.5 sm:mt-0">
-                  <CheckCircle2 className="w-5 h-5" />
-                </div>
-                <div className="min-w-0">
-                  <div className="flex items-center space-x-2 flex-wrap gap-y-1">
-                    <h3 className="text-sm font-bold text-white">
-                      Turnos de Caixa Fechados Hoje ({todayClosedShifts.length})
-                    </h3>
-                    <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
-                      Total Fechado: {formatCurrency(todayClosedShiftsRevenue)}
-                    </span>
-                    <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-[#1c1c1c] text-neutral-300 border border-[#2e2e2e]">
-                      Sincronizado na Nuvem
-                    </span>
-                  </div>
-                  <div className="mt-2 space-y-1.5">
-                    {todayClosedShifts.map((shift) => (
-                      <div key={shift.id} className="flex items-center space-x-2 text-xs text-neutral-300 flex-wrap">
-                        <span className="font-semibold text-white">{shift.operatorName}</span>
-                        <span className="text-neutral-500">&bull;</span>
-                        <span className="text-neutral-400">
-                          {shift.openedAt ? shift.openedAt.substring(11, 16) : '--:--'} &rarr; {shift.closedAt ? shift.closedAt.substring(11, 16) : '--:--'}
-                        </span>
-                        <span className="text-neutral-500">&bull;</span>
-                        <span className="font-mono text-emerald-400 font-bold">
-                          Vendas no Turno: {formatCurrency(shift.totalSales)}
-                        </span>
-                        <span className="text-neutral-500">&bull;</span>
-                        <span className="font-mono text-neutral-400">
-                          Numerário: {formatCurrency(shift.finalCashReported ?? shift.totalCash)}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                  {commercialSales.length === 0 && todayClosedShiftsRevenue > 0 && (
-                    <p className="text-[11px] text-amber-400/90 mt-2 bg-amber-500/10 border border-amber-500/20 p-2 rounded-lg leading-relaxed">
-                      ℹ️ <strong>Fecho Registado pelo Colega:</strong> O fecho de caixa do colega foi recebido e integrado no seu Cockpit com <strong className="text-white font-mono">{formatCurrency(todayClosedShiftsRevenue)}</strong>. Caso pretenda auditar cada fatura detalhada linha a linha, o computador do operador fará a transmissão automática assim que a fila concluir o reenvio.
-                    </p>
-                  )}
-                </div>
-              </div>
-
-              <div className="flex items-center space-x-2 shrink-0 self-end lg:self-center">
-                <button
-                  onClick={() => forceRefreshFromSupabase()}
-                  disabled={isSyncing}
-                  className="flex items-center space-x-1.5 px-3 py-1.5 bg-[#c5a47e]/15 hover:bg-[#c5a47e]/25 text-[#c5a47e] border border-[#c5a47e]/30 rounded-lg text-xs font-semibold cursor-pointer transition-colors shadow-xs whitespace-nowrap disabled:opacity-50"
-                  title="Atualizar dados do Supabase agora"
-                >
-                  <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
-                  <span>{isSyncing ? 'A Sincronizar...' : 'Atualizar Dados'}</span>
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
+        {/* Cash Shift vs Daily Sales Reconciliation Banner */}
         {timeRange === 'hoje' && activeShift && (
           <div className="bg-[#141414] border border-[#2a2a2a] rounded-xl p-4 sm:p-5 shadow-lg relative overflow-hidden">
             <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
@@ -704,14 +599,10 @@ export const DashboardModule: React.FC = () => {
             </div>
             <div className="mt-3">
               <div className="text-2xl font-bold font-mono text-white tracking-tight">
-                {formatCurrency(effectiveSalesRevenue)}
+                {formatCurrency(totalSalesRevenue)}
               </div>
-              <div className="flex items-center space-x-1.5 text-xs mt-1 flex-wrap gap-y-1">
-                {periodClosedShiftsRevenue > totalSalesRevenue ? (
-                  <span className="px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400 border border-amber-500/30 text-[10px] font-semibold">
-                    Consolidado por Fechos de Caixa ({periodClosedShifts.length} {periodClosedShifts.length === 1 ? 'turno' : 'turnos'})
-                  </span>
-                ) : revenueGrowthPercent >= 0 ? (
+              <div className="flex items-center space-x-1.5 text-xs mt-1">
+                {revenueGrowthPercent >= 0 ? (
                   <span className="text-emerald-400 flex items-center space-x-1 font-semibold">
                     <ArrowUpRight className="w-3.5 h-3.5" />
                     <span>+{revenueGrowthPercent.toFixed(1)}%</span>

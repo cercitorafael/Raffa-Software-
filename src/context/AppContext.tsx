@@ -98,7 +98,7 @@ import {
 } from '../utils/crypto';
 import { CurrencyDefinition } from '../types';
 import { sound } from '../utils/audio';
-import { offlineDB, DBStats, RETRY_CONFIG, calculateExponentialBackoff } from '../utils/indexedDB';
+import { offlineDB, DBStats } from '../utils/indexedDB';
 import { registerServiceWorker, requestBackgroundSync } from '../serviceWorkerRegistration';
 import {
   startSupabaseRealtimeSync,
@@ -117,8 +117,6 @@ import {
   closeAllOpenShiftsInSupabase,
   fetchLatestShiftFromSupabase,
   flushPendingSyncQueue,
-  FlushQueueOptions,
-  testSupabaseConnectivity,
 } from '../lib/supabaseSync';
 import {
   getUserProfile,
@@ -294,13 +292,7 @@ export interface AppContextType {
   setIsOnline: (online: boolean) => void;
   isSyncing: boolean;
   syncQueue: OfflineSyncQueueItem[];
-  nextRetryTime: number | null;
-  triggerManualSync: (options?: FlushQueueOptions) => Promise<void>;
-  forceRefreshFromSupabase: () => Promise<{ success: boolean; message: string }>;
-  retryFailedOfflineOperations: (forceImmediate?: boolean) => Promise<number>;
-  clearSyncedOfflineQueue: () => Promise<number>;
-  verifyOfflineQueueIntegrity: () => Promise<{ valid: boolean; total: number; corrupted: number }>;
-  refreshOfflineQueue: () => Promise<void>;
+  triggerManualSync: () => Promise<void>;
   dbStats: DBStats | null;
   refreshDBStats: () => Promise<void>;
   showOfflineSyncModal: boolean;
@@ -830,8 +822,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [syncQueue, setSyncQueue] = useState<OfflineSyncQueueItem[]>(() =>
     loadFromStorage('syncQueue', [])
   );
-  const [nextRetryTime, setNextRetryTime] = useState<number | null>(null);
-  const triggerManualSyncRef = useRef<((options?: FlushQueueOptions) => Promise<void>) | null>(null);
   const [events, setEvents] = useState<SystemEvent[]>(() =>
     loadFromStorage('events', initialEvents)
   );
@@ -1186,10 +1176,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           offlineDB.cacheCustomers(customers),
           offlineDB.cacheStock(stock),
         ]);
-        const idbQueue = await offlineDB.getAllSyncQueue();
-        if (idbQueue && idbQueue.length > 0) {
-          setSyncQueue(idbQueue);
-        }
         await refreshDBStats();
       }
     });
@@ -1200,22 +1186,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setIsOnline(true);
       emitEvent('POS', 'network.status.online', {
         timestamp: new Date().toISOString(),
-        message: 'Ligação à internet restaurada. A redefinir temporizadores exponenciais e a sincronizar fila IndexedDB com o Supabase...',
+        message: 'Ligação à internet restaurada. A sincronizar dados offline com o servidor...',
       });
       sound.playSuccessChime();
-      // Immediately reset backoff timers and flush pending queue upon network restoration
-      if (triggerManualSyncRef.current) {
-        triggerManualSyncRef.current({ isReconnecting: true, ignoreBackoff: true });
-      } else {
-        flushPendingSyncQueue({ isReconnecting: true, ignoreBackoff: true }).catch(() => {});
-      }
+      // Immediately push offline-created records and flush pending queue
+      flushPendingSyncQueue().catch(() => {});
+      setTimeout(() => {
+        triggerManualSync();
+      }, 500);
     };
 
     const handleOffline = () => {
       setIsOnline(false);
       emitEvent('POS', 'network.status.offline', {
         timestamp: new Date().toISOString(),
-        message: 'Modo Offline ativado. As operações fiscais serão salvas em cache no IndexedDB com retry exponencial.',
+        message: 'Modo Offline ativado. As operações fiscais serão salvas em cache no IndexedDB.',
       });
     };
 
@@ -1225,7 +1210,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
       const handleSWMessage = (event: MessageEvent) => {
         if (event.data && event.data.type === 'TRIGGER_BACKGROUND_SYNC') {
-          triggerManualSyncRef.current?.({ isReconnecting: true, ignoreBackoff: true });
+          triggerManualSync();
         }
       };
       navigator.serviceWorker.addEventListener('message', handleSWMessage);
@@ -5309,57 +5294,49 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
-  // ==================== OFFLINE SYNC & INDEXEDDB QUEUE ====================
-  const refreshOfflineQueue = useCallback(async () => {
-    try {
-      const queue = await offlineDB.getAllSyncQueue();
-      setSyncQueue(queue);
-      const nextTime = await offlineDB.getNextScheduledRetryTime();
-      setNextRetryTime(nextTime);
-      await refreshDBStats();
-    } catch (err) {
-      console.warn('Erro ao atualizar fila offline do IndexedDB:', err);
-    }
-  }, [refreshDBStats]);
-
-  const triggerManualSync = useCallback(async (options?: FlushQueueOptions) => {
+  // ==================== OFFLINE SYNC TRIGGER ====================
+  const triggerManualSync = async () => {
     setIsSyncing(true);
     try {
-      // 1. Process and flush the unified IndexedDB queue to Supabase with FIFO order & checksum integrity
-      const flushedCount = await flushPendingSyncQueue(options);
+      // 1. Flush the general pending Supabase queue (includes produtos, stock, etc.)
+      const flushedCount = await flushPendingSyncQueue();
 
-      // 2. Mark local sales in React state as synced
-      const localSales = await offlineDB.getSales();
-      if (localSales.length > 0) {
-        setSalesHistory((prev) => {
-          const syncedMap = new Map(localSales.map((s) => [s.id, s.isSynced]));
-          return prev.map((s) => (syncedMap.has(s.id) ? { ...s, isSynced: syncedMap.get(s.id) } : s));
-        });
+      // 2. Process IndexedDB sync queue
+      const idbQueue = await offlineDB.getPendingSyncQueue();
+      const combinedQueue = [...syncQueue];
+      idbQueue.forEach((idbItem) => {
+        if (!combinedQueue.some((q) => q.id === idbItem.id)) {
+          combinedQueue.push(idbItem);
+        }
+      });
+
+      for (const item of combinedQueue) {
+        if (item.action === 'create_sale') {
+          const saleId = item.data.id;
+          setSalesHistory((prev) =>
+            prev.map((s) => (s.id === saleId ? { ...s, isSynced: true } : s))
+          );
+          await offlineDB.markSaleSynced(saleId);
+          await offlineDB.removeSyncQueueItem(item.id);
+
+          emitEvent('POS', 'pos.sale.synced_from_offline', {
+            saleId: item.data.id,
+            invoiceNumber: item.data.invoiceNumber,
+            total: item.data.total,
+            syncedAt: new Date().toISOString(),
+          });
+        } else if (item.action === 'create_product') {
+          await offlineDB.removeSyncQueueItem(item.id);
+        }
       }
 
-      // 3. Update syncQueue state directly from IndexedDB
-      await refreshOfflineQueue();
+      setSyncQueue([]);
+      await refreshDBStats();
+      sound.playSuccessChime();
 
-      if (flushedCount > 0) {
-        sound.playSuccessChime();
-        notify(`Sincronização concluída: ${flushedCount} operações sincronizadas com o Supabase com garantia de integridade.`, 'success');
-        emitEvent('POS', 'sync.completed', {
-          count: flushedCount,
-          timestamp: new Date().toISOString(),
-        });
-      } else {
-        const remaining = await offlineDB.getPendingSyncQueue({ ignoreBackoff: options?.ignoreBackoff });
-        if (remaining.length === 0) {
-          if (options?.ignoreBackoff) {
-            notify('Tudo em dia! Nenhuma operação pendente na fila local IndexedDB.', 'info');
-          }
-        } else {
-          const nextRetry = await offlineDB.getNextScheduledRetryTime();
-          if (nextRetry && nextRetry > Date.now()) {
-            const sec = Math.ceil((nextRetry - Date.now()) / 1000);
-            console.log(`[AutoSync] ${remaining.length} operações em fila. Próximo retry exponencial em ${sec}s.`);
-          }
-        }
+      const totalSynced = flushedCount + combinedQueue.length;
+      if (totalSynced > 0) {
+        notify(`Sincronização concluída: ${totalSynced} operações sincronizadas com o servidor.`, 'success');
       }
     } catch (e) {
       console.error('Sync failed:', e);
@@ -5367,263 +5344,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         error: String(e),
         timestamp: new Date().toISOString(),
       });
-      notify('Sincronização pendente: as operações estão guardadas no IndexedDB e serão reenviadas automaticamente pelo mecanismo de retry exponencial.', 'warning');
+      notify('Sincronização offline pendente: os dados estão salvos e serão reenviados assim que a ligação estabilizar.', 'warning');
     } finally {
       setIsSyncing(false);
     }
-  }, [refreshOfflineQueue, emitEvent, notify]);
-
-  // Keep triggerManualSyncRef synchronized
-  useEffect(() => {
-    triggerManualSyncRef.current = triggerManualSync;
-  }, [triggerManualSync]);
-
-  const forceRefreshFromSupabase = useCallback(async (): Promise<{ success: boolean; message: string }> => {
-    setIsSyncing(true);
-    try {
-      // 1. Process any local pending operations if online
-      if (isOnline) {
-        await flushPendingSyncQueue({ isReconnecting: true, ignoreBackoff: true }).catch(() => {});
-      }
-
-      // 2. Multi-tenant target company
-      const compId = currentCompanyRef.current?.id || currentCompany?.id;
-      if (!compId) {
-        return { success: false, message: 'Nenhuma empresa selecionada para sincronização.' };
-      }
-
-      // 3. Pull all data from Supabase
-      const res = await pullAllFromSupabase({ companyId: compId });
-      let salesCount = 0;
-      let shiftsCount = 0;
-
-      if (res.data) {
-        if (res.data.companies && res.data.companies.length > 0) {
-          setCompanies((prev) => {
-            const updated = [...prev];
-            res.data.companies!.forEach((c) => {
-              const idx = updated.findIndex((item) => item.id === c.id);
-              if (idx >= 0) updated[idx] = c;
-              else updated.push(c);
-            });
-            return updated;
-          });
-        }
-        if (res.data.stores && res.data.stores.length > 0) {
-          const compStores = res.data.stores.filter((s) => s.companyId === compId);
-          if (compStores.length > 0) {
-            setStores((prev) => {
-              const other = prev.filter((s) => s.companyId !== compId);
-              return [...compStores, ...other];
-            });
-          }
-        }
-        if (res.data.products && res.data.products.length > 0) {
-          const compProds = res.data.products.filter((p) => p.companyId === compId);
-          setProducts((prev) => {
-            const updated = [...prev];
-            compProds.forEach((remoteProd) => {
-              const idx = updated.findIndex((item) => String(item.id) === String(remoteProd.id));
-              if (idx >= 0) updated[idx] = { ...updated[idx], ...remoteProd };
-              else updated.unshift(remoteProd);
-            });
-            return updated;
-          });
-        }
-        if (res.data.customers && res.data.customers.length > 0) {
-          const compCust = res.data.customers.filter((c) => c.companyId === compId);
-          setCustomers((prev) => {
-            const updated = [...prev];
-            compCust.forEach((remoteCust) => {
-              const idx = updated.findIndex((item) => String(item.id) === String(remoteCust.id));
-              if (idx >= 0) updated[idx] = { ...updated[idx], ...remoteCust };
-              else updated.unshift(remoteCust);
-            });
-            return updated;
-          });
-        }
-        if (res.data.sales) {
-          const compSales = res.data.sales.filter((s) => s.companyId === compId);
-          salesCount = compSales.length;
-          setSalesHistory((prev) => {
-            const other = prev.filter((s) => s.companyId !== compId);
-            return [...compSales, ...other];
-          });
-        }
-        if (res.data.shifts) {
-          const compShifts = res.data.shifts.filter((s: CashShift) => s.companyId === compId);
-          shiftsCount = compShifts.length;
-          setShiftsHistory((prev) => {
-            const other = prev.filter((s) => s.companyId !== compId);
-            return [...compShifts, ...other];
-          });
-
-          // Reconciliação do caixa ativo
-          const sortedCompShifts = [...compShifts].sort(
-            (a, b) => new Date(b.openedAt || 0).getTime() - new Date(a.openedAt || 0).getTime()
-          );
-          const latestShift = sortedCompShifts[0];
-          if (latestShift && latestShift.status === 'aberto' && !latestShift.closedAt) {
-            setActiveShift(latestShift);
-            saveToStorage('activeShift', latestShift);
-          } else {
-            setActiveShift(null);
-            saveToStorage('activeShift', null);
-          }
-        }
-        if (res.data.stock && res.data.stock.length > 0) {
-          setStock((localPrev) => {
-            const localMap = new Map(localPrev.map((s) => [s.id, s]));
-            res.data.stock!.forEach((remoteStk) => {
-              localMap.set(remoteStk.id, {
-                ...remoteStk,
-                quantity: Number(remoteStk.quantity) || 0,
-                reserved: Number(remoteStk.reserved) || 0,
-                avgCost: Number(remoteStk.avgCost) || 0,
-              });
-            });
-            const merged = Array.from(localMap.values());
-            stockRef.current = merged;
-            saveToStorage('stock', merged);
-            return merged;
-          });
-        }
-      }
-
-      await refreshOfflineQueue();
-      const msg = `Sincronização concluída: ${shiftsCount} turnos de caixa e ${salesCount} faturas/vendas atualizados do Supabase com sucesso.`;
-      notify(msg, 'success');
-      sound.playSuccessChime();
-      return { success: true, message: msg };
-    } catch (err: any) {
-      console.error('Erro na atualização forçada do Supabase:', err);
-      const errTxt = `Falha ao atualizar do Supabase: ${err?.message || err}`;
-      notify(errTxt, 'error');
-      return { success: false, message: errTxt };
-    } finally {
-      setIsSyncing(false);
-    }
-  }, [currentCompany?.id, isOnline, notify, refreshOfflineQueue]);
-
-  const retryFailedOfflineOperations = useCallback(async (forceImmediate = true): Promise<number> => {
-    try {
-      const count = await offlineDB.retryFailedQueueItems(forceImmediate);
-      await refreshOfflineQueue();
-      if (count > 0) {
-        notify(`${count} operações com falha foram redefinidas para reenvio imediato.`, 'info');
-        if (isOnline) {
-          triggerManualSyncRef.current?.({ ignoreBackoff: forceImmediate });
-        }
-      } else {
-        notify('Não existem operações com erro na fila.', 'info');
-      }
-      return count;
-    } catch (err) {
-      console.error('Erro ao tentar novamente itens com falha:', err);
-      return 0;
-    }
-  }, [refreshOfflineQueue, isOnline, notify]);
-
-  const clearSyncedOfflineQueue = useCallback(async (): Promise<number> => {
-    try {
-      const count = await offlineDB.clearSyncedItems();
-      await refreshOfflineQueue();
-      if (count > 0) {
-        notify(`${count} operações sincronizadas foram limpas da fila local.`, 'success');
-      }
-      return count;
-    } catch (err) {
-      console.error('Erro ao limpar itens sincronizados:', err);
-      return 0;
-    }
-  }, [refreshOfflineQueue, notify]);
-
-  const verifyOfflineQueueIntegrity = useCallback(async () => {
-    try {
-      const result = await offlineDB.verifyQueueIntegrity();
-      if (result.valid) {
-        notify(`Integridade verificada: ${result.total} operações com checksum SHA-256 válido.`, 'success');
-      } else {
-        notify(`Alerta de integridade: ${result.corrupted} de ${result.total} operações têm inconformidades.`, 'warning');
-      }
-      return result;
-    } catch (err) {
-      console.error('Erro ao verificar integridade da fila:', err);
-      return { valid: false, total: 0, corrupted: 0 };
-    }
-  }, [notify]);
-
-  // Wrapper for setIsOnline to handle instant reconnection retry
-  const handleSetIsOnline = useCallback((online: boolean) => {
-    setIsOnline((prev) => {
-      if (!prev && online) {
-        notify('Modo online ativado. A re-tentar sincronização das transações pendentes no IndexedDB...', 'info');
-        triggerManualSyncRef.current?.({ isReconnecting: true, ignoreBackoff: true });
-      }
-      return online;
-    });
-  }, [notify]);
-
-  // Exponential Retry Scheduler: automatically triggers retry when nextRetryTimestamp expires
-  useEffect(() => {
-    if (!isOnline) return;
-
-    let timer: NodeJS.Timeout | null = null;
-
-    const scheduleNextRetry = async () => {
-      try {
-        const nextTimestamp = await offlineDB.getNextScheduledRetryTime();
-        setNextRetryTime(nextTimestamp);
-        if (!nextTimestamp) return;
-
-        const now = Date.now();
-        const delay = Math.max(250, nextTimestamp - now);
-
-        timer = setTimeout(() => {
-          console.log('[ExponentialRetry] Backoff timer expirado. Disparando sincronização automática da fila IndexedDB...');
-          triggerManualSyncRef.current?.();
-        }, delay);
-      } catch (err) {
-        console.warn('Erro ao agendar próximo retry exponencial:', err);
-      }
-    };
-
-    scheduleNextRetry();
-
-    return () => {
-      if (timer) clearTimeout(timer);
-    };
-  }, [syncQueue, isOnline]);
-
-  // Active connection detector & health check with Supabase
-  useEffect(() => {
-    const checkConnectionInterval = setInterval(async () => {
-      if (typeof navigator !== 'undefined' && !navigator.onLine) {
-        if (isOnline) setIsOnline(false);
-        return;
-      }
-
-      const hasPendingOrFailed = syncQueue.some((q) => q.status === 'pending' || q.status === 'failed');
-      if (!isOnline || hasPendingOrFailed) {
-        const isSupabaseReachable = await testSupabaseConnectivity();
-        if (isSupabaseReachable) {
-          if (!isOnline) {
-            console.log('[AutoConnect] Conexão com o Supabase restabelecida via health check!');
-            setIsOnline(true);
-            notify('Conexão ao Supabase restabelecida. Re-tentando sincronizar transações pendentes...', 'info');
-            triggerManualSyncRef.current?.({ isReconnecting: true, ignoreBackoff: true });
-          } else if (hasPendingOrFailed && !isSyncing) {
-            const ready = await offlineDB.getPendingSyncQueue();
-            if (ready.length > 0) {
-              triggerManualSyncRef.current?.();
-            }
-          }
-        }
-      }
-    }, 12000);
-
-    return () => clearInterval(checkConnectionInterval);
-  }, [isOnline, syncQueue, isSyncing, notify]);
+  };
 
   // ==================== POS & GESTÃO DE TURNOS ====================
   const addShiftType = useCallback((typeData: Omit<ShiftType, 'id'>) => {
@@ -5730,26 +5455,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     closeAllOpenShiftsInSupabase(currentCompany.id, now.toISOString());
     setActiveShift(shift);
     saveToStorage('activeShift', shift);
-    offlineDB.saveShift(shift).catch(() => {});
-
-    if (isOnline) {
-      pushRecordToSupabase('turnos_caixa', 'upsert', shift);
-    } else {
-      offlineDB.enqueueSyncItem({
-        id: `pos-q-shift-open-${shift.id}`,
-        action: 'open_shift',
-        table: 'turnos_caixa',
-        operationType: 'upsert',
-        data: shift,
-        timestamp: now.toISOString(),
-        status: 'pending',
-        retryCount: 0,
-        companyId: currentCompany.id,
-        storeId: currentStore.id,
-        terminalId: currentTerminal.id,
-      }).then(() => refreshOfflineQueue());
-    }
-
+    pushRecordToSupabase('turnos_caixa', 'upsert', shift);
     emitEvent('POS', 'pos.shift.opened', {
       shiftId: shift.id,
       terminal: currentTerminal.code,
@@ -5788,7 +5494,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     // 1. Limpar o caixa imediatamente no dispositivo local
     setActiveShift(null);
     saveToStorage('activeShift', null);
-    offlineDB.saveShift(closed).catch(() => {});
 
     // 2. Atualizar o histórico local
     setShiftsHistory((prev) => [
@@ -5800,36 +5505,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       ),
     ]);
 
-    // 3. Enviar o turno fechado para o Supabase ou enfileirar no IndexedDB
-    if (isOnline) {
-      pushRecordToSupabase('turnos_caixa', 'upsert', closed);
-      closeAllOpenShiftsInSupabase(closed.companyId, closed.closedAt);
-      // Imediatamente forçar a sincronização de todas as vendas e itens pendentes deste turno
-      flushPendingSyncQueue({ isReconnecting: true, ignoreBackoff: true }).catch(() => {});
-      // Garantir que vendas locais gravadas no IndexedDB deste turno também subam para o Supabase
-      offlineDB.getSales().then((localSales) => {
-        const unsynced = localSales.filter((s) => !s.isSynced && (s.companyId === closed.companyId || !s.companyId));
-        if (unsynced.length > 0) {
-          pushBatchRecordsToSupabase('vendas', 'upsert', unsynced).then(() => {
-            unsynced.forEach((s) => offlineDB.markSaleSynced(s.id));
-          }).catch(() => {});
-        }
-      }).catch(() => {});
-    } else {
-      offlineDB.enqueueSyncItem({
-        id: `pos-q-shift-close-${closed.id}`,
-        action: 'close_shift',
-        table: 'turnos_caixa',
-        operationType: 'upsert',
-        data: closed,
-        timestamp: closed.closedAt || new Date().toISOString(),
-        status: 'pending',
-        retryCount: 0,
-        companyId: closed.companyId,
-        storeId: closed.storeId,
-        terminalId: closed.terminalId,
-      }).then(() => refreshOfflineQueue());
-    }
+    // 3. Enviar o turno fechado para o Supabase
+    pushRecordToSupabase('turnos_caixa', 'upsert', closed);
+
+    // 4. Fechar em definitivo quaisquer turnos abertos desta empresa no Supabase
+    // Isso garante que nenhum outro dispositivo que consulte o Supabase encontre um turno aberto!
+    closeAllOpenShiftsInSupabase(closed.companyId, closed.closedAt);
 
     emitEvent('POS', 'pos.shift.closed', {
       shiftId: closed.id,
@@ -5871,26 +5552,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       movements: [...activeShift.movements, mov],
     };
     setActiveShift(updated);
-    offlineDB.saveShift(updated).catch(() => {});
-
-    if (isOnline) {
-      pushRecordToSupabase('turnos_caixa', 'upsert', updated);
-    } else {
-      offlineDB.enqueueSyncItem({
-        id: `pos-q-shift-mov-${updated.id}-${mov.id}`,
-        action: 'cash_movement',
-        table: 'turnos_caixa',
-        operationType: 'upsert',
-        data: updated,
-        timestamp: mov.timestamp,
-        status: 'pending',
-        retryCount: 0,
-        companyId: updated.companyId,
-        storeId: updated.storeId,
-        terminalId: updated.terminalId,
-      }).then(() => refreshOfflineQueue());
-    }
-
+    pushRecordToSupabase('turnos_caixa', 'upsert', updated);
     emitEvent('POS', `pos.cash.${type}`, { amount, reason });
     sound.playCashRegisterSound();
   };
@@ -6394,26 +6056,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     saveToStorage('lastCompletedSale', sale);
     pushRecordToSupabase('vendas', 'insert', sale);
 
-    // 5. Offline handling & IndexedDB Persistence
-    await offlineDB.saveSale(sale);
-
+    // 5. Offline handling
     if (!isOnline) {
       const syncItem: OfflineSyncQueueItem = {
-        id: `pos-q-vendas-${sale.id}`,
+        id: `sync-${Date.now()}`,
         action: 'create_sale',
-        table: 'vendas',
-        operationType: 'insert',
         entity: 'Sale',
         data: sale,
         timestamp: dateStr,
         retryCount: 0,
         status: 'pending',
-        companyId: compId,
-        storeId,
-        terminalId: termId,
       };
-      await offlineDB.enqueueSyncItem(syncItem);
-      await refreshOfflineQueue();
+      setSyncQueue((prev) => [...prev, syncItem]);
+      await offlineDB.saveSale(sale);
+      await offlineDB.addSyncQueueItem(syncItem);
       requestBackgroundSync();
     }
 
@@ -6497,21 +6153,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     // 4. Enqueue for background sync if offline
     if (!isOnline) {
       const syncItem: OfflineSyncQueueItem = {
-        id: `pos-q-vendas-${fullDoc.id}`,
+        id: `sync-${Date.now()}`,
         action: 'create_sale',
-        table: 'vendas',
-        operationType: 'insert',
         entity: 'Sale',
         data: fullDoc,
         timestamp: fullDoc.date,
         retryCount: 0,
         status: 'pending',
-        companyId: compId,
-        storeId,
-        terminalId: termId,
       };
-      await offlineDB.enqueueSyncItem(syncItem);
-      await refreshOfflineQueue();
+      setSyncQueue((prev) => [...prev, syncItem]);
+      await offlineDB.addSyncQueueItem(syncItem);
       requestBackgroundSync();
     }
 
@@ -8232,16 +7883,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         languages,
         currentLanguageOption,
         isOnline,
-        setIsOnline: handleSetIsOnline,
+        setIsOnline,
         isSyncing,
         syncQueue,
-        nextRetryTime,
         triggerManualSync,
-        forceRefreshFromSupabase,
-        retryFailedOfflineOperations,
-        clearSyncedOfflineQueue,
-        verifyOfflineQueueIntegrity,
-        refreshOfflineQueue,
         dbStats,
         refreshDBStats,
         showOfflineSyncModal,
