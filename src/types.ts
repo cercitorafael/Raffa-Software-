@@ -933,11 +933,32 @@ export interface SystemEvent {
 export interface OfflineSyncQueueItem {
   id: string;
   timestamp: string;
-  action: 'create_sale' | 'update_stock' | 'close_shift' | 'create_customer' | string;
+  sequence?: number;
+  action:
+    | 'create_sale'
+    | 'update_stock'
+    | 'close_shift'
+    | 'open_shift'
+    | 'cash_movement'
+    | 'create_customer'
+    | 'update_customer'
+    | 'fiscal_document'
+    | 'delete_sale'
+    | string;
+  table?: string;
+  operationType?: 'insert' | 'update' | 'upsert' | 'delete';
   data: any;
   entity?: string;
-  status: 'pending' | 'syncing' | 'synced' | 'conflict';
+  companyId?: string;
+  storeId?: string;
+  terminalId?: string;
+  status: 'pending' | 'syncing' | 'synced' | 'failed' | 'conflict';
   retryCount: number;
+  lastAttempt?: string;
+  nextRetryTimestamp?: number;
+  backoffDelayMs?: number;
+  errorMessage?: string;
+  checksum?: string;
 }
 
 export type OmnichannelOrderStatus =

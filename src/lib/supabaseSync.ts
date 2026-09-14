@@ -17,7 +17,9 @@ import {
   EmployeeShift,
   TimeClockEntry,
   PayrollSlip,
+  OfflineSyncQueueItem,
 } from '../types';
+import { offlineDB, calculatePayloadChecksum } from '../utils/indexedDB';
 
 export interface SalesGoalRecord {
   id: string;
@@ -148,14 +150,48 @@ function savePendingQueue(queue: PendingSyncQueueItem[]) {
   } catch {}
 }
 
+/**
+ * Map table name to standard POS offline queue action
+ */
+export function mapTableToAction(table: TableSyncName, operation: string): string {
+  if (table === 'vendas') return 'create_sale';
+  if (table === 'turnos_caixa') return 'close_shift';
+  if (table === 'stock') return 'update_stock';
+  if (table === 'clientes') return 'create_customer';
+  return `${operation}_${table}`;
+}
+
 export function enqueuePendingSync(table: TableSyncName, action: 'insert' | 'update' | 'upsert' | 'delete', record: any) {
   try {
+    const rawId = record?.id || `rec-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+    const queueId = `pos-q-${table}-${rawId}`;
+    const timestamp = new Date().toISOString();
+
+    const queueItem: OfflineSyncQueueItem = {
+      id: queueId,
+      timestamp,
+      action: mapTableToAction(table, action),
+      table,
+      operationType: action,
+      data: record,
+      entity: table,
+      companyId: record?.companyId || record?.company_id || 'comp-1',
+      storeId: record?.storeId || record?.store_id || 'store-1',
+      terminalId: record?.terminalId || record?.terminal_id || 'term-1',
+      status: 'pending',
+      retryCount: 0,
+    };
+
+    // 1. Primary enterprise persistence: IndexedDB
+    offlineDB.enqueueSyncItem(queueItem).catch((err) => {
+      console.warn('Erro ao salvar na fila IndexedDB:', err);
+    });
+
+    // 2. Backup in localStorage for redundancy
     const queue = getPendingQueue();
-    const id = record?.id || `item-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
-    // Avoid duplicate queue items for the same id and table
-    const filtered = queue.filter((q) => !(q.table === table && (q.record?.id || q.record) === id));
+    const filtered = queue.filter((q) => !(q.table === table && (q.record?.id || q.record) === rawId));
     filtered.push({
-      id,
+      id: queueId,
       table,
       action,
       record,
@@ -165,39 +201,172 @@ export function enqueuePendingSync(table: TableSyncName, action: 'insert' | 'upd
   } catch {}
 }
 
-export async function flushPendingSyncQueue(): Promise<number> {
-  const queue = getPendingQueue();
-  let successCount = 0;
-  const remaining: PendingSyncQueueItem[] = [];
+export interface FlushQueueOptions {
+  ignoreBackoff?: boolean;
+  isReconnecting?: boolean;
+}
 
-  if (queue.length > 0) {
-    for (const item of queue) {
-      try {
-        const res = await pushRecordToSupabaseDirect(item.table, item.action, item.record, false);
-        if (res.success) {
-          successCount++;
-        } else {
-          // Keep all pending offline items safely queued, never drop user data
-          remaining.push(item);
-        }
-      } catch (err: any) {
-        // Keep pending item on failure
-        remaining.push(item);
+/**
+ * Quick active health check to verify real-time connectivity to Supabase backend
+ */
+export async function testSupabaseConnectivity(): Promise<boolean> {
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    return false;
+  }
+
+  try {
+    const checkPromise = supabase.from('profiles').select('id').limit(1);
+    const timeoutPromise = new Promise<{ error: any }>((resolve) =>
+      setTimeout(() => resolve({ error: new Error('Timeout de conectividade') }), 3500)
+    );
+
+    const res: any = await Promise.race([checkPromise, timeoutPromise]);
+    if (!res) return false;
+
+    if (res.error) {
+      if (isTableMissingError(res.error)) {
+        return true;
+      }
+      const msg = String(res.error.message || '').toLowerCase();
+      if (msg.includes('fetch') || msg.includes('network') || msg.includes('timeout') || msg.includes('failed')) {
+        return false;
+      }
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function flushPendingSyncQueue(options?: FlushQueueOptions): Promise<number> {
+  let successCount = 0;
+
+  try {
+    // If reconnection occurred, reset backoff on failed items so they are re-attempted immediately
+    if (options?.isReconnecting) {
+      const resetCount = await offlineDB.resetBackoffForReconnection();
+      if (resetCount > 0) {
+        addSyncLog({
+          table: 'ALL',
+          action: 'PUSH',
+          origin: 'LOCAL_APP',
+          description: `🌐 Conexão restabelecida: ${resetCount} operações reativadas para sincronização imediata.`,
+          status: 'info',
+        });
       }
     }
 
-    savePendingQueue(remaining);
+    // 1. Migrate legacy localStorage items to IndexedDB if any
+    const legacyQueue = getPendingQueue();
+    if (legacyQueue.length > 0) {
+      for (const item of legacyQueue) {
+        await offlineDB.enqueueSyncItem({
+          id: item.id || `legacy-${item.table}-${Date.now()}`,
+          timestamp: new Date(item.timestamp || Date.now()).toISOString(),
+          action: mapTableToAction(item.table, item.action),
+          table: item.table,
+          operationType: item.action,
+          data: item.record,
+          entity: item.table,
+          status: 'pending',
+          retryCount: 0,
+        });
+      }
+      savePendingQueue([]); // Cleared legacy queue after migration
+    }
+
+    // 2. Retrieve pending or failed items from IndexedDB in strict FIFO order, respecting exponential backoff
+    const pendingItems = await offlineDB.getPendingSyncQueue({ ignoreBackoff: options?.ignoreBackoff });
+    if (pendingItems.length === 0) return 0;
+
+    for (const item of pendingItems) {
+      try {
+        // Mark as syncing in IndexedDB
+        await offlineDB.markItemSyncing(item.id);
+
+        // Verify cryptographic data integrity if checksum is present
+        if (item.checksum) {
+          const expectedChecksum = await calculatePayloadChecksum(item.data);
+          if (expectedChecksum !== item.checksum) {
+            console.warn(`[IndexedDB Sync] Violação de integridade detetada para o item ${item.id}`);
+            await offlineDB.updateSyncItem(item.id, {
+              status: 'conflict',
+              errorMessage: 'Erro de integridade de dados: checksum SHA-256 não coincide com o payload.',
+            });
+            continue;
+          }
+        }
+
+        const targetTable = (item.table as TableSyncName) || 'vendas';
+        const operation = (item.operationType as any) || (item.action === 'create_sale' ? 'upsert' : 'upsert');
+        const payload = item.data;
+
+        const res = await pushRecordToSupabaseDirect(targetTable, operation, payload, false);
+
+        if (res.success) {
+          successCount++;
+          await offlineDB.markItemSynced(item.id);
+
+          // If sale, mark local sale as synced
+          if (targetTable === 'vendas' && payload?.id) {
+            await offlineDB.markSaleSynced(payload.id);
+          }
+
+          // Clean up completed item from sync queue
+          await offlineDB.removeSyncQueueItem(item.id);
+        } else {
+          const errMsg = res.error?.message || (typeof res.error === 'string' ? res.error : 'Erro desconhecido');
+          const backoff = await offlineDB.markItemFailed(item.id, errMsg);
+          const nextSec = backoff?.backoffDelayMs ? Math.round(backoff.backoffDelayMs / 1000) : 2;
+
+          addSyncLog({
+            table: targetTable,
+            action: 'ERROR',
+            origin: 'LOCAL_APP',
+            description: `⚠️ Falha ao sincronizar (${backoff?.retryCount || 1}ª tentativa). Próximo retry em ${nextSec}s (Backoff Exponencial): ${errMsg}`,
+            status: 'error',
+          });
+
+          // In strict FIFO mode, stop processing remaining dependent items if network/server is failing
+          const isNetworkError =
+            errMsg.toLowerCase().includes('fetch') ||
+            errMsg.toLowerCase().includes('network') ||
+            errMsg.toLowerCase().includes('failed to fetch') ||
+            errMsg.toLowerCase().includes('timeout');
+          if (isNetworkError) {
+            break;
+          }
+        }
+      } catch (itemErr: any) {
+        const errMsg = itemErr?.message || String(itemErr);
+        const backoff = await offlineDB.markItemFailed(item.id, errMsg);
+        const nextSec = backoff?.backoffDelayMs ? Math.round(backoff.backoffDelayMs / 1000) : 2;
+
+        addSyncLog({
+          table: (item.table as TableSyncName) || 'vendas',
+          action: 'ERROR',
+          origin: 'LOCAL_APP',
+          description: `⚠️ Erro de execução (${backoff?.retryCount || 1}ª tentativa). Próximo retry em ${nextSec}s (Backoff Exponencial): ${errMsg}`,
+          status: 'error',
+        });
+      }
+    }
+
+    // Refresh last sync timestamp in IndexedDB metadata
+    if (successCount > 0) {
+      await offlineDB.setMetadata('last_sync_timestamp', new Date().toISOString());
+      addSyncLog({
+        table: 'ALL',
+        action: 'PUSH',
+        origin: 'LOCAL_APP',
+        description: `🔄 Fila IndexedDB: ${successCount} operações sincronizadas com sucesso com o Supabase!`,
+        status: 'success',
+      });
+    }
+  } catch (e) {
+    console.error('Erro geral ao processar fila IndexedDB:', e);
   }
 
-  if (successCount > 0) {
-    addSyncLog({
-      table: 'ALL',
-      action: 'PUSH',
-      origin: 'LOCAL_APP',
-      description: `🔄 Fila Offline: ${successCount} registos sincronizados com sucesso no Supabase!`,
-      status: 'success',
-    });
-  }
   return successCount;
 }
 
