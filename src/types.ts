@@ -598,6 +598,7 @@ export interface Customer {
   loyaltyTier: 'Bronze' | 'Prata' | 'Ouro' | 'Platina' | 'bronze' | 'prata' | 'ouro' | 'platina' | string;
   totalSpent: number;
   ordersCount?: number;
+  lastPurchaseDate?: string;
   creditLimit?: number;
   currentCredit?: number;
   createdAt: string;

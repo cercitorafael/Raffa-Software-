@@ -20,10 +20,12 @@ import {
   PieChart,
   BarChart3,
   Sparkles,
+  RefreshCw,
 } from 'lucide-react';
 import { Customer, Sale } from '../../types';
 import { useApp } from '../../context/AppContext';
 import { formatCurrency, formatDate } from '../../utils/crypto';
+import { matchSaleToCustomer } from '../../utils/salesRecovery';
 
 interface TopBuyersReportProps {
   onSelectCustomer: (customer: Customer) => void;
@@ -36,26 +38,23 @@ export const TopBuyersReport: React.FC<TopBuyersReportProps> = ({
   onInitiateCall,
   onViewHistory,
 }) => {
-  const { customers, salesHistory, addLoyaltyPoints, notify, currentCompany } = useApp();
+  const { customers, salesHistory, allSalesHistory, recoverAllSalesFromFirstDay, addLoyaltyPoints, notify, currentCompany } = useApp();
   const currSym = currentCompany?.currencySymbol || 'Mt';
 
   const [searchTerm, setSearchTerm] = useState('');
   const [tierFilter, setTierFilter] = useState<'all' | 'Bronze' | 'Prata' | 'Ouro' | 'Platina'>('all');
   const [periodFilter, setPeriodFilter] = useState<'all' | '30d' | '90d' | 'year'>('all');
   const [sortBy, setSortBy] = useState<'spent' | 'orders' | 'avgTicket' | 'points'>('spent');
+  const [isRecovering, setIsRecovering] = useState(false);
 
   // Compute detailed purchasing analytics for each customer
   const enrichedCustomers = useMemo(() => {
     const now = new Date();
+    const masterSales = allSalesHistory && allSalesHistory.length > 0 ? allSalesHistory : salesHistory;
 
     return customers.map((customer) => {
-      // Find all sales for this customer
-      const matchingSales = salesHistory.filter((s) => {
-        if (s.customerId && s.customerId === customer.id) return true;
-        if (customer.taxNumber && (s.customerTaxNumber === customer.taxNumber || s.customerNif === customer.taxNumber)) return true;
-        if (customer.name && s.customerName && s.customerName.toLowerCase().trim() === customer.name.toLowerCase().trim()) return true;
-        return false;
-      });
+      // Find all sales for this customer using resilient matching
+      const matchingSales = masterSales.filter((s) => matchSaleToCustomer(s, customer));
 
       // Filter by period if needed
       const periodSales = matchingSales.filter((s) => {
@@ -206,6 +205,20 @@ export const TopBuyersReport: React.FC<TopBuyersReportProps> = ({
         </div>
 
         <div className="flex items-center gap-2">
+          <button
+            id="recover-top-customers-sales-btn"
+            onClick={async () => {
+              setIsRecovering(true);
+              await recoverAllSalesFromFirstDay({ notifyUser: true });
+              setIsRecovering(false);
+            }}
+            disabled={isRecovering}
+            className="flex items-center gap-2 px-4 py-2.5 bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-300 border border-indigo-500/40 rounded-xl text-xs font-semibold shadow-sm transition-all disabled:opacity-50"
+            title="Sincronizar e recuperar todas as vendas do Supabase desde o 1º dia"
+          >
+            <RefreshCw className={`w-4 h-4 ${isRecovering ? 'animate-spin' : ''}`} />
+            <span>{isRecovering ? 'A Restaurar...' : 'Restaurar Vendas'}</span>
+          </button>
           <button
             id="export-top-customers-csv-btn"
             onClick={handleExportCSV}

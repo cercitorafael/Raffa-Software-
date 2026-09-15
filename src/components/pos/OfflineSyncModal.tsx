@@ -17,6 +17,7 @@ import {
   Radio,
 } from 'lucide-react';
 import { formatCurrency, formatDate } from '../../utils/crypto';
+import { DB_VERSION } from '../../utils/indexedDB';
 
 interface OfflineSyncModalProps {
   isOpen: boolean;
@@ -308,7 +309,7 @@ export const OfflineSyncModal: React.FC<OfflineSyncModalProps> = ({ isOpen, onCl
               <div className="bg-[#0d0d0d] p-3 rounded-lg border border-[#262626] text-xs">
                 <div className="flex items-center space-x-2 text-[#c5a47e] font-serif font-bold mb-1">
                   <Database className="w-4 h-4" />
-                  <span>Base de Dados Local: OmniPOS_OfflineDB (v1)</span>
+                  <span>Base de Dados Local: OmniPOS_OfflineDB (v{DB_VERSION})</span>
                 </div>
                 <p className="text-neutral-400 text-[11px]">
                   Os dados essenciais são armazenados no motor IndexedDB do browser, permitindo que a pesquisa de artigos, consulta de stock, atribuição de fidelização e emissão fiscal ocorram sem latência mesmo com falha total de internet.

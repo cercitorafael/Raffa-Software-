@@ -136,9 +136,24 @@ import {
   validateCompanySafetyDump,
   CompanySafetyDump,
 } from '../utils/companyBackup';
+import {
+  isCompanyDeleted,
+  markCompanyAsDeleted,
+  unmarkCompanyAsDeleted,
+  filterActiveCompanies,
+  filterActiveUsers,
+  createFreshDefaultCompany,
+  purgeDeletedCompanyFromLocalStorage,
+} from '../utils/companyDeletion';
 import { calculateSubscription, SubscriptionInfo } from '../utils/subscription';
 import { getTodayDateStr } from '../utils/dateUtils';
 import { isEffectiveSale, calculateShiftSalesTotals } from '../utils/documentUtils';
+import {
+  recoverAndReconcileAllSales,
+  matchSaleToCustomer,
+  reconcileCustomerMetrics,
+  fetchAllHistoricalSalesFromSupabase,
+} from '../utils/salesRecovery';
 
 export interface CartItem extends SaleItem {
   image?: string;
@@ -457,7 +472,9 @@ export interface AppContextType {
   ) => Promise<Sale>;
   registerDocSaleInShift: (amount: number, paymentMethod?: string) => void;
   salesHistory: Sale[];
+  allSalesHistory: Sale[];
   setSalesHistory: React.Dispatch<React.SetStateAction<Sale[]>>;
+  recoverAllSalesFromFirstDay: (options?: { notifyUser?: boolean; targetCompanyId?: string }) => Promise<{ success: boolean; count: number; totalRevenue: number }>;
   addFiscalDocument: (doc: Sale) => Promise<Sale>;
   cancelInvoice: (invoiceId: string, reason: string, restockStock?: boolean) => void;
   updateDocument: (id: string, updates: Partial<Sale>) => void;
@@ -725,23 +742,31 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Multi-Tenancy & User
   const [companiesState, setCompaniesState] = useState<Company[]>(() => {
     const raw = deduplicateById(loadFromStorage('companies', initialCompanies));
-    return deduplicateById(raw.map(sanitizeCompanyData));
+    const active = filterActiveCompanies(raw);
+    const result = active.length > 0 ? active : [createFreshDefaultCompany()];
+    return deduplicateById(result.map(sanitizeCompanyData));
   });
   const setCompanies: React.Dispatch<React.SetStateAction<Company[]>> = useCallback((action) => {
     setCompaniesState((prev) => {
       const next = typeof action === 'function' ? action(prev) : action;
-      return deduplicateById(next);
+      return filterActiveCompanies(deduplicateById(next));
     });
   }, []);
-  const companies = useMemo(() => deduplicateById(companiesState), [companiesState]);
+  const companies = useMemo(() => filterActiveCompanies(deduplicateById(companiesState)), [companiesState]);
 
   const [currentCompany, setCurrentCompany] = useState<Company>(() => {
-    const rawComp = loadFromStorage('company', initialCompanies[0]);
-    const comp = sanitizeCompanyData(rawComp);
-    if (comp) {
+    const rawComp = loadFromStorage<Company | null>('company', null);
+    if (rawComp && !isCompanyDeleted(rawComp.id, rawComp.name)) {
+      const comp = sanitizeCompanyData(rawComp);
       setActiveAppCompany(comp);
       setActiveAppCurrency(comp.currencySymbol || comp.currency);
+      return comp;
     }
+    const activeInitial = filterActiveCompanies(initialCompanies);
+    const fallback = activeInitial[0] || createFreshDefaultCompany();
+    const comp = sanitizeCompanyData(fallback);
+    setActiveAppCompany(comp);
+    setActiveAppCurrency(comp.currencySymbol || comp.currency);
     return comp;
   });
   const currentCompanyRef = useRef<Company>(currentCompany);
@@ -750,28 +775,28 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, [currentCompany]);
 
   const [storesState, setStoresState] = useState<Store[]>(() =>
-    deduplicateById(loadFromStorage('stores', initialStores))
+    deduplicateById(loadFromStorage('stores', initialStores)).filter((s) => !isCompanyDeleted(s.companyId))
   );
   const setStores: React.Dispatch<React.SetStateAction<Store[]>> = useCallback((action) => {
     setStoresState((prev) => {
       const next = typeof action === 'function' ? action(prev) : action;
-      return deduplicateById(next);
+      return deduplicateById(next).filter((s) => !isCompanyDeleted(s.companyId));
     });
   }, []);
-  const stores = useMemo(() => deduplicateById(storesState), [storesState]);
+  const stores = useMemo(() => deduplicateById(storesState).filter((s) => !isCompanyDeleted(s.companyId)), [storesState]);
 
   const [currentStore, setCurrentStore] = useState<Store>(() => {
     const storedCompany = loadFromStorage<Company>('company', initialCompanies[0]);
     const storedStore = loadFromStorage<Store | null>('store', null);
-    const allStoredStores = deduplicateById(loadFromStorage<Store[]>('stores', initialStores));
-    if (storedStore && storedCompany && storedStore.companyId === storedCompany.id) {
+    const allStoredStores = deduplicateById(loadFromStorage<Store[]>('stores', initialStores)).filter((s) => !isCompanyDeleted(s.companyId));
+    if (storedStore && storedCompany && storedStore.companyId === storedCompany.id && !isCompanyDeleted(storedStore.companyId)) {
       return storedStore;
     }
-    if (storedCompany) {
+    if (storedCompany && !isCompanyDeleted(storedCompany.id, storedCompany.name)) {
       const match = allStoredStores.find((s) => s.companyId === storedCompany.id);
       if (match) return match;
     }
-    return initialStores[0];
+    return allStoredStores[0] || initialStores[0];
   });
 
   const [terminalsState, setTerminalsState] = useState<Terminal[]>(() =>
@@ -815,22 +840,33 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const [usersState, setUsersState] = useState<User[]>(() => {
     const raw = deduplicateById(loadFromStorage('users', initialUsers));
-    const sanitized = raw.map(sanitizeUserCredentials);
+    const activeComps = filterActiveCompanies(loadFromStorage('companies', initialCompanies));
+    const active = filterActiveUsers(raw, activeComps);
+    const sanitized = active.map(sanitizeUserCredentials);
     saveToStorage('users', sanitized);
     return sanitized;
   });
   const setUsers: React.Dispatch<React.SetStateAction<User[]>> = useCallback((action) => {
     setUsersState((prev) => {
       const next = typeof action === 'function' ? action(prev) : action;
-      const sanitized = deduplicateById(next).map(sanitizeUserCredentials);
+      const active = filterActiveUsers(deduplicateById(next));
+      const sanitized = active.map(sanitizeUserCredentials);
       return sanitized;
     });
   }, []);
-  const users = useMemo(() => deduplicateById(usersState), [usersState]);
+  const users = useMemo(() => filterActiveUsers(deduplicateById(usersState), companies), [usersState, companies]);
 
   const [currentUser, setCurrentUser] = useState<User>(() => {
-    const raw = loadFromStorage('user', initialUsers[0] || initialUsers[1]);
-    const sanitized = sanitizeUserCredentials(raw);
+    const raw = loadFromStorage<User | null>('user', null);
+    if (raw && !isCompanyDeleted(raw.companyId)) {
+      const sanitized = sanitizeUserCredentials(raw);
+      saveToStorage('user', sanitized);
+      return sanitized;
+    }
+    const activeComps = filterActiveCompanies(loadFromStorage('companies', initialCompanies));
+    const activeUsers = filterActiveUsers(initialUsers, activeComps);
+    const fallback = activeUsers[0] || initialUsers[0];
+    const sanitized = sanitizeUserCredentials(fallback);
     saveToStorage('user', sanitized);
     return sanitized;
   });
@@ -2070,8 +2106,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             setCategories(res.data.categories);
           }
           if (res.data.sales && res.data.sales.length > 0) {
-            const compSales = res.data.sales.filter((s) => s.companyId === compId);
-            setSalesHistory((prev) => [...compSales, ...prev.filter((s) => s.companyId !== compId)]);
+            setSalesHistory((prev) => {
+              const map = new Map<string, Sale>();
+              prev.forEach((s) => map.set(String(s.id), s));
+              res.data.sales!.forEach((remoteSale) => {
+                const existing = map.get(String(remoteSale.id));
+                map.set(String(remoteSale.id), {
+                  ...(existing || {}),
+                  ...remoteSale,
+                });
+              });
+              const merged = Array.from(map.values());
+              saveToStorage('salesHistory', merged);
+              return merged;
+            });
+            setCustomers((prevCusts) => {
+              const reconciled = reconcileCustomerMetrics(prevCusts, res.data.sales!);
+              saveToStorage('customers', reconciled);
+              return reconciled;
+            });
           }
           if (res.data.users && res.data.users.length > 0) {
             const compUsers = res.data.users.filter((u) => u.companyId === compId);
@@ -2315,11 +2368,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
     if (res.data.categories && res.data.categories.length > 0) setCategories(res.data.categories);
     if (res.data.sales && res.data.sales.length > 0) {
-      const compSales = res.data.sales.filter((s) => targetCompId === 'ALL' || s.companyId === targetCompId);
+      const allRemoteSales = res.data.sales;
       setSalesHistory((prev) => {
         const mergedMap = new Map<string, Sale>();
         prev.forEach((s) => mergedMap.set(String(s.id), s));
-        compSales.forEach((remoteSale) => {
+        allRemoteSales.forEach((remoteSale) => {
           const existing = mergedMap.get(String(remoteSale.id));
           mergedMap.set(String(remoteSale.id), {
             ...(existing || {}),
@@ -2329,6 +2382,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         const merged = Array.from(mergedMap.values());
         saveToStorage('salesHistory', merged);
         return merged;
+      });
+      // Reconcile customer sales metrics with all sales
+      setCustomers((prevCusts) => {
+        const reconciled = reconcileCustomerMetrics(prevCusts, allRemoteSales);
+        saveToStorage('customers', reconciled);
+        return reconciled;
       });
     }
     if (res.data.users && res.data.users.length > 0) {
@@ -2494,6 +2553,67 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
     return res;
   };
+
+  /**
+   * Recovers all sales from the very first day to today across Supabase, IndexedDB,
+   * and local storage, ensuring client purchasing histories and totals are 100% restored.
+   */
+  const recoverAllSalesFromFirstDay = useCallback(
+    async (options?: { notifyUser?: boolean; targetCompanyId?: string }) => {
+      const notifyUser = options?.notifyUser !== false;
+      if (notifyUser) {
+        notify('A restaurar todas as vendas e histórico de clientes do Supabase (1º dia até hoje)...', 'info');
+      }
+      try {
+        const targetComp = options?.targetCompanyId || currentCompany?.id;
+        const res = await recoverAndReconcileAllSales(salesHistory, customers, targetComp);
+
+        setSalesHistory(res.allSales);
+        saveToStorage('salesHistory', res.allSales);
+
+        setCustomers(res.reconciledCustomers);
+        saveToStorage('customers', res.reconciledCustomers);
+
+        if (notifyUser) {
+          const revFormatted = new Intl.NumberFormat('pt-MZ', { style: 'currency', currency: 'MZN' }).format(
+            res.stats.totalRevenue
+          );
+          notify(
+            `Recuperação concluída com sucesso! ${res.stats.totalSalesCount} vendas restauradas (${revFormatted}) abrangendo ${res.stats.customersRestoredCount} clientes com métricas recompostas.`,
+            'success'
+          );
+          sound.playSuccessChime();
+        }
+        return { success: true, count: res.stats.totalSalesCount, totalRevenue: res.stats.totalRevenue };
+      } catch (err: any) {
+        console.error('Erro na recuperação de vendas:', err);
+        if (notifyUser) {
+          notify('Erro ao restaurar histórico de vendas: ' + (err.message || err), 'error');
+        }
+        return { success: false, count: 0, totalRevenue: 0 };
+      }
+    },
+    [salesHistory, customers, currentCompany?.id, notify]
+  );
+
+  // Auto-recovery pass on startup to ensure historical sales and customer metrics are never lost
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      recoverAndReconcileAllSales(salesHistory, customers, currentCompany?.id)
+        .then((res) => {
+          if (res.allSales.length > salesHistory.length || res.stats.customersRestoredCount > 0) {
+            setSalesHistory(res.allSales);
+            saveToStorage('salesHistory', res.allSales);
+            setCustomers(res.reconciledCustomers);
+            saveToStorage('customers', res.reconciledCustomers);
+          }
+        })
+        .catch((err) => {
+          console.warn('Aviso no ciclo automático de recuperação de vendas:', err);
+        });
+    }, 1200);
+    return () => clearTimeout(timer);
+  }, []);
 
   const pullUsersFromSupabase = async (options?: { companyId?: string }) => {
     const compId = options?.companyId || currentCompany?.id || 'ALL';
@@ -2941,29 +3061,52 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         return { success: false, error: 'Por favor introduza o seu Email, Utilizador ou Nome.' };
       }
 
-      // 1. Procurar na lista local de utilizadores
+      if (isCompanyDeleted(cleanIdent)) {
+        sound.playError();
+        return {
+          success: false,
+          error: 'Acesso recusado: A empresa vinculada a este identificador foi eliminada do sistema. As credenciais e os acessos foram revogados.',
+        };
+      }
+
+      // 1. Procurar na lista local de utilizadores (excluindo utilizadores de empresas eliminadas)
       let user = users.find(
         (u) =>
-          u.email?.toLowerCase() === cleanIdent ||
-          (u.username && u.username.toLowerCase() === cleanIdent) ||
-          u.name.toLowerCase() === cleanIdent ||
-          (cleanIdent === 'admin' && u.role === 'admin') ||
-          (cleanIdent === 'caixa' && u.role === 'caixa') ||
-          (cleanIdent === 'gerente' && u.role === 'gerente') ||
-          (cleanIdent === 'financeiro' && u.role === 'financeiro') ||
-          (cleanIdent === 'rh' && u.role === 'rh') ||
-          (cleanIdent === 'compras' && u.role === 'comprador')
+          !isCompanyDeleted(u.companyId) &&
+          (u.email?.toLowerCase() === cleanIdent ||
+            (u.username && u.username.toLowerCase() === cleanIdent) ||
+            u.name.toLowerCase() === cleanIdent ||
+            (cleanIdent === 'admin' && u.role === 'admin') ||
+            (cleanIdent === 'caixa' && u.role === 'caixa') ||
+            (cleanIdent === 'gerente' && u.role === 'gerente') ||
+            (cleanIdent === 'financeiro' && u.role === 'financeiro') ||
+            (cleanIdent === 'rh' && u.role === 'rh') ||
+            (cleanIdent === 'compras' && u.role === 'comprador'))
       );
 
       // 2. Se não encontrar localmente, consultar no Supabase (tabelas usuarios, profiles, empresas)
       if (!user) {
         try {
           const supabaseRes = await buscarEmpresaEUsuarioPorLogin(cleanIdent);
+          if (supabaseRes.error) {
+            sound.playError();
+            return {
+              success: false,
+              error: typeof supabaseRes.error === 'string' ? supabaseRes.error : 'Credenciais inválidas ou empresa eliminada.',
+            };
+          }
           if (supabaseRes.user) {
             const su = supabaseRes.user;
+            const compId = su.company_id || supabaseRes.company?.id;
+            if (!compId || isCompanyDeleted(compId) || (supabaseRes.company && isCompanyDeleted(supabaseRes.company.id, supabaseRes.company.name))) {
+              sound.playError();
+              return {
+                success: false,
+                error: 'Acesso recusado: A empresa vinculada a este utilizador foi eliminada do sistema.',
+              };
+            }
             const newUserId = su.id || `usr-${Date.now()}`;
             const userRole = (su.role || su.cargo?.toLowerCase() || 'admin') as Role;
-            const compId = su.company_id || supabaseRes.company?.id || 'comp-1';
 
             user = {
               id: newUserId,
@@ -3079,32 +3222,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       // === IDENTIFICAR E CARREGAR A EMPRESA VINCULADA AO UTILIZADOR ===
       const targetCompanyId = user.companyId || companyId || currentCompany.id;
-      let matchedCompany = companies.find((c) => c.id === targetCompanyId);
-
-      if (!matchedCompany && targetCompanyId) {
-        matchedCompany = {
-          id: targetCompanyId,
-          name: targetCompanyId.startsWith('empresa-') ? `Empresa ${user.name}` : `A Minha Empresa, Lda.`,
-          tradeName: targetCompanyId.startsWith('empresa-') ? `Empresa ${user.name}` : `A Minha Empresa`,
-          taxNumber: '400000000',
-          address: 'Avenida Principal, Sede',
-          city: 'Maputo',
-          postalCode: '1100',
-          country: 'Moçambique',
-          currency: 'MZN',
-          currencySymbol: 'Mt',
-          currencyPosition: 'suffix',
-          currencyDecimals: 2,
-          phone: user.phone || '+258 84 000 0000',
-          email: user.email || 'empresa@raffapower.mz',
-          softwareCertNumber: '0000/AT',
-          saftVersion: '1.04_01',
-          activeInvoiceTemplateId: 'tmpl-agro-vendus',
+      if (isCompanyDeleted(targetCompanyId)) {
+        sound.playError();
+        return {
+          success: false,
+          error: 'Acesso recusado: A empresa vinculada a este utilizador foi eliminada do sistema. Credenciais revogadas.',
         };
-        setCompanies((prev) => {
-          if (prev.some((c) => c.id === targetCompanyId)) return prev;
-          return deduplicateById([...prev, matchedCompany!]);
-        });
+      }
+
+      let matchedCompany = companies.find((c) => c.id === targetCompanyId && !isCompanyDeleted(c.id, c.name));
+
+      if (!matchedCompany) {
+        sound.playError();
+        return {
+          success: false,
+          error: 'Acesso recusado: A empresa vinculada a este utilizador não foi encontrada ou foi eliminada.',
+        };
       }
 
       if (matchedCompany) {
@@ -3180,6 +3313,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         return { success: false, error: 'PIN não reconhecido para nenhum operador ativo.' };
       }
 
+      if (isCompanyDeleted(user.companyId)) {
+        sound.playError();
+        return { success: false, error: 'Acesso recusado: A empresa deste operador foi eliminada do sistema. O PIN foi revogado.' };
+      }
+
       if (user.isActive === false) {
         sound.playError();
         return { success: false, error: 'Utilizador desativado. Contacte a supervisão.' };
@@ -3194,7 +3332,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       // Identificar automaticamente a empresa do colaborador
       const targetCompanyId = user.companyId || companyId || currentCompany.id;
-      const matchedCompany = companies.find((c) => c.id === targetCompanyId);
+      if (isCompanyDeleted(targetCompanyId)) {
+        sound.playError();
+        return { success: false, error: 'Acesso recusado: A empresa vinculada a esta conta foi eliminada.' };
+      }
+
+      const matchedCompany = companies.find((c) => c.id === targetCompanyId && !isCompanyDeleted(c.id, c.name));
+      if (!matchedCompany) {
+        sound.playError();
+        return { success: false, error: 'Acesso recusado: Empresa não encontrada ou eliminada.' };
+      }
+
       if (matchedCompany) {
         setCurrentCompany(matchedCompany);
         saveToStorage('company', matchedCompany);
@@ -3238,7 +3386,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const quickLogin = useCallback(
     (user: User, companyId?: string, storeId?: string) => {
       const targetCompanyId = user.companyId || companyId || currentCompany.id;
-      const matchedCompany = companies.find((c) => c.id === targetCompanyId);
+      if (isCompanyDeleted(targetCompanyId) || isCompanyDeleted(user.companyId)) {
+        sound.playError();
+        notify('Acesso negado: A empresa vinculada a este utilizador foi eliminada.', 'error');
+        return;
+      }
+      const matchedCompany = companies.find((c) => c.id === targetCompanyId && !isCompanyDeleted(c.id, c.name));
+      if (!matchedCompany) {
+        sound.playError();
+        notify('Acesso negado: Empresa não encontrada ou eliminada.', 'error');
+        return;
+      }
       if (matchedCompany) {
         setCurrentCompany(matchedCompany);
         saveToStorage('company', matchedCompany);
@@ -3526,14 +3684,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       notify(`A eliminar "${targetName}" e todas as informações vinculadas no Supabase...`, 'info');
 
-      // 1. Eliminar permanentemente todos os registos vinculados à empresa no Supabase
+      // 1. Registar imediatamente na blacklist local e limpar localStorage
+      markCompanyAsDeleted(id, targetName, target?.tradeName);
+      purgeDeletedCompanyFromLocalStorage(id, targetName);
+
+      // 2. Eliminar permanentemente todos os registos vinculados à empresa no Supabase e IndexedDB
       try {
         await purgeCompanyFromSupabase(id, targetName);
       } catch (err) {
         console.warn('Erro ao purgar dados da empresa no Supabase:', err);
       }
 
-      // 2. Limpar itens pendentes na fila de sincronização pertencentes a esta empresa
+      // 3. Limpar itens pendentes na fila de sincronização pertencentes a esta empresa
       setSyncQueue((prev) =>
         prev.filter((item: any) => {
           const rec = item?.record || {};
@@ -3541,62 +3703,71 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         })
       );
 
-      // 3. Identificar empresas remanescentes e atualizar listas
-      const remainingCompanies = companies.filter((c) => c.id !== id);
-      const nextCompanyList = remainingCompanies.length > 0 ? remainingCompanies : initialCompanies;
+      // 4. Identificar empresas remanescentes (estritamente ativas, sem empresa apagada)
+      const remainingCompanies = filterActiveCompanies(companies.filter((c) => c.id !== id));
+      const nextCompanyList = remainingCompanies.length > 0 ? remainingCompanies : [createFreshDefaultCompany()];
       const nextCompany = nextCompanyList[0];
 
-      const remainingStores = stores.filter((s) => s.companyId !== id);
-      const nextStoreList = remainingStores.length > 0 ? remainingStores : initialStores;
+      const remainingStores = stores.filter((s) => s.companyId !== id && !isCompanyDeleted(s.companyId));
+      const nextStoreList = remainingStores.length > 0 ? remainingStores : initialStores.filter((s) => s.companyId === nextCompany.id);
       const nextStore = nextStoreList.find((s) => s.companyId === nextCompany.id) || nextStoreList[0];
 
       const remainingTerminals = terminals.filter((t) =>
         nextStoreList.some((s) => s.id === t.storeId)
       );
       const nextTerminalList = remainingTerminals.length > 0 ? remainingTerminals : initialTerminals;
-      const nextTerminal = nextTerminalList.find((t) => t.storeId === nextStore.id) || nextTerminalList[0];
+      const nextTerminal = nextTerminalList.find((t) => t.storeId === nextStore?.id) || nextTerminalList[0];
 
-      const remainingWarehouses = warehouses.filter((w) => w.companyId !== id);
-      const nextWarehouseList = remainingWarehouses.length > 0 ? remainingWarehouses : initialWarehouses;
+      const remainingWarehouses = warehouses.filter((w) => w.companyId !== id && !isCompanyDeleted(w.companyId));
+      const nextWarehouseList = remainingWarehouses;
 
-      const remainingUsers = users.filter((u) => u.companyId !== id);
-      const nextUserList = remainingUsers.length > 0 ? remainingUsers : initialUsers;
-      const nextUser = nextUserList[0] || initialUsers[0];
+      const remainingUsers = filterActiveUsers(users.filter((u) => u.companyId !== id), nextCompanyList);
+      const nextUserList = remainingUsers.length > 0 ? remainingUsers : filterActiveUsers(initialUsers, nextCompanyList);
+      const nextUser = nextUserList[0] || null;
 
-      const remainingCategories = categories.filter((cat) => cat.companyId !== id);
-      const nextCategoryList = remainingCategories.length > 0 ? remainingCategories : initialCategories;
+      const remainingCategories = categories.filter((cat) => cat.companyId !== id && !isCompanyDeleted(cat.companyId));
+      const nextCategoryList = remainingCategories;
 
-      const remainingProducts = products.filter((p) => p.companyId !== id);
-      const nextProductList = remainingProducts.length > 0 ? remainingProducts : initialProducts;
+      const remainingProducts = products.filter((p) => p.companyId !== id && !isCompanyDeleted(p.companyId));
+      const nextProductList = remainingProducts;
 
-      const remainingStock = stock.filter((s) => s.companyId !== id);
-      const nextStockList = remainingStock.length > 0 ? remainingStock : initialStock;
+      const remainingStock = stock.filter((s) => s.companyId !== id && !isCompanyDeleted(s.companyId));
+      const nextStockList = remainingStock;
 
-      const remainingSales = salesHistory.filter((s) => s.companyId !== id);
-      const remainingCustomers = customers.filter((c) => c.companyId !== id);
-      const remainingSuppliers = suppliers.filter((s) => s.companyId !== id);
-      const remainingPayables = accountsPayable.filter((a) => a.companyId !== id);
-      const remainingReceivables = accountsReceivable.filter((a) => a.companyId !== id);
-      const remainingShifts = shiftsHistory.filter((s) => s.companyId !== id);
-      const remainingEmployees = employees.filter((e) => e.companyId !== id);
+      const remainingSales = salesHistory.filter((s) => s.companyId !== id && !isCompanyDeleted(s.companyId));
+      const remainingCustomers = customers.filter((c) => c.companyId !== id && !isCompanyDeleted(c.companyId));
+      const remainingSuppliers = suppliers.filter((s) => s.companyId !== id && !isCompanyDeleted(s.companyId));
+      const remainingPayables = accountsPayable.filter((a) => a.companyId !== id && !isCompanyDeleted(a.companyId));
+      const remainingReceivables = accountsReceivable.filter((a) => a.companyId !== id && !isCompanyDeleted(a.companyId));
+      const remainingShifts = shiftsHistory.filter((s) => s.companyId !== id && !isCompanyDeleted(s.companyId));
+      const remainingEmployees = employees.filter((e) => e.companyId !== id && !isCompanyDeleted(e.companyId));
 
-      // Atualizar estados locais
+      // Atualizar estados locais e persistência de forma garantida
       setCompanies(nextCompanyList);
+      saveToStorage('companies', nextCompanyList);
       setCurrentCompany(nextCompany);
       saveToStorage('company', nextCompany);
 
-      setStores(nextStoreList);
-      setCurrentStore(nextStore);
-      saveToStorage('store', nextStore);
+      if (nextStore) {
+        setStores(nextStoreList);
+        setCurrentStore(nextStore);
+        saveToStorage('store', nextStore);
+      }
 
-      setTerminals(nextTerminalList);
-      setCurrentTerminal(nextTerminal);
-      saveToStorage('terminal', nextTerminal);
+      if (nextTerminal) {
+        setTerminals(nextTerminalList);
+        setCurrentTerminal(nextTerminal);
+        saveToStorage('terminal', nextTerminal);
+      }
 
       setWarehouses(nextWarehouseList);
       setUsers(nextUserList);
-      setCurrentUser(nextUser);
-      saveToStorage('user', nextUser);
+      saveToStorage('users', nextUserList);
+
+      if (nextUser) {
+        setCurrentUser(nextUser);
+        saveToStorage('user', nextUser);
+      }
 
       setCategories(nextCategoryList);
       setProducts(nextProductList);
@@ -3719,6 +3890,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         const validDump = validation.dump;
         const comp = validDump.data.company;
         const compId = comp.id;
+
+        // Se a empresa estava previamente na blacklist de eliminadas, remover da blacklist para permitir restauro
+        unmarkCompanyAsDeleted(compId, comp.name, comp.tradeName);
 
         // 1. Atualizar estados locais e persistência
         setCompanies((prev) => deduplicateById([...prev.filter((c) => c.id !== compId), comp]));
@@ -4051,6 +4225,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         const initialStockItems: StockItem[] = [];
 
         // Reset active shift and transactional session to isolate the newly registered company
+        unmarkCompanyAsDeleted(companyId, newComp.name, newComp.tradeName);
         setActiveShift(null);
         saveToStorage('activeShift', null);
         setCart([]);
@@ -6528,9 +6703,28 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       pushRecordToSupabase('turnos_caixa', 'upsert', updatedShift);
     }
 
-    // 3. Update Customer loyalty
+    // 3. Update Customer loyalty and sales metrics
     if (selectedCustomer) {
       addLoyaltyPoints(selectedCustomer.id, Math.floor(finalTotal));
+      setCustomers((prevCusts) => {
+        const updated = prevCusts.map((c) => {
+          if (c.id === selectedCustomer.id) {
+            const nextSpent = (Number(c.totalSpent) || 0) + finalTotal;
+            const nextOrders = (Number(c.ordersCount) || 0) + 1;
+            const updatedCust = {
+              ...c,
+              totalSpent: nextSpent,
+              ordersCount: nextOrders,
+              lastPurchaseDate: dateStr,
+            };
+            pushRecordToSupabase('clientes', 'update', updatedCust);
+            return updatedCust;
+          }
+          return c;
+        });
+        saveToStorage('customers', updated);
+        return updated;
+      });
     }
 
     // 4. Save to Sales History immediately
@@ -6657,6 +6851,33 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const currentQueue = await offlineDB.getPendingSyncQueue();
       setSyncQueue(currentQueue);
       requestBackgroundSync();
+    }
+
+    // Update customer purchasing metrics if this document represents an effective sale
+    if (isEffectiveSale(fullDoc)) {
+      setCustomers((prevCusts) => {
+        let matched = false;
+        const updated = prevCusts.map((c) => {
+          if (matchSaleToCustomer(fullDoc, c)) {
+            matched = true;
+            const nextSpent = (Number(c.totalSpent) || 0) + (Number(fullDoc.total) || 0);
+            const nextOrders = (Number(c.ordersCount) || 0) + 1;
+            const updatedCust = {
+              ...c,
+              totalSpent: nextSpent,
+              ordersCount: nextOrders,
+              lastPurchaseDate: fullDoc.date,
+            };
+            pushRecordToSupabase('clientes', 'update', updatedCust);
+            return updatedCust;
+          }
+          return c;
+        });
+        if (matched) {
+          saveToStorage('customers', updated);
+        }
+        return updated;
+      });
     }
 
     // 5. Emit audit event
@@ -8156,8 +8377,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const scopedSalesHistory = useMemo(() => {
     const compId = currentCompany?.id || 'comp-1';
-    return salesHistory.filter((s) => s.companyId === compId);
-  }, [salesHistory, currentCompany?.id]);
+    const compName = currentCompany?.name?.toLowerCase().trim();
+    const compTrade = currentCompany?.tradeName?.toLowerCase().trim();
+    return salesHistory.filter((s) => {
+      if (!s.companyId) return true;
+      if (s.companyId === compId) return true;
+      if (compName && s.companyId.toLowerCase().trim() === compName) return true;
+      if (compTrade && s.companyId.toLowerCase().trim() === compTrade) return true;
+      if (companies.length <= 1) return true;
+      return false;
+    });
+  }, [salesHistory, currentCompany?.id, currentCompany?.name, currentCompany?.tradeName, companies.length]);
 
   const scopedStockMovements = useMemo(() => {
     const compId = currentCompany?.id || 'comp-1';
@@ -8177,8 +8407,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const scopedCustomers = useMemo(() => {
     const compId = currentCompany?.id || 'comp-1';
-    return customers.filter((c) => c.companyId === compId);
-  }, [customers, currentCompany?.id]);
+    const compName = currentCompany?.name?.toLowerCase().trim();
+    const compTrade = currentCompany?.tradeName?.toLowerCase().trim();
+    return customers.filter((c) => {
+      if (!c.companyId) return true;
+      if (c.companyId === compId) return true;
+      if (compName && c.companyId.toLowerCase().trim() === compName) return true;
+      if (compTrade && c.companyId.toLowerCase().trim() === compTrade) return true;
+      if (companies.length <= 1) return true;
+      return false;
+    });
+  }, [customers, currentCompany?.id, currentCompany?.name, currentCompany?.tradeName, companies.length]);
 
   const scopedSuppliers = useMemo(() => {
     const compId = currentCompany?.id || 'comp-1';
@@ -8459,7 +8698,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         completeSale,
         registerDocSaleInShift,
         salesHistory: scopedSalesHistory,
+        allSalesHistory: salesHistory,
         setSalesHistory,
+        recoverAllSalesFromFirstDay,
         addFiscalDocument,
         cancelInvoice,
         updateDocument,

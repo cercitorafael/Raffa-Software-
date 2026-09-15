@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { User, Role } from '../../types';
 import { sound } from '../../utils/audio';
+import { isCompanyDeleted } from '../../utils/companyDeletion';
 import { RegisterCompanyModal } from './RegisterCompanyModal';
 import { RestoreCompanyModal } from './RestoreCompanyModal';
 
@@ -61,36 +62,47 @@ export const LoginScreen: React.FC = () => {
     const seen = new Set<string>();
     return (users || []).filter((u) => {
       if (!u || !u.id || seen.has(u.id)) return false;
+      if (isCompanyDeleted(u.companyId)) return false;
+      const compExists = (companies || []).some(
+        (c) => c.id === u.companyId && !isCompanyDeleted(c.id, c.name)
+      );
+      if (!compExists) return false;
       seen.add(u.id);
       return true;
     });
-  }, [users]);
+  }, [users, companies]);
 
-  // Dynamic automatic identification of user and company
-  const detectedUser = users.find((u) => {
+  // Dynamic automatic identification of user and company (strictly active companies)
+  const detectedUser = useMemo(() => {
     const clean = identifier.trim().toLowerCase();
-    if (!clean) return false;
-    return (
-      u.email?.toLowerCase() === clean ||
-      (u.username && u.username.toLowerCase() === clean) ||
-      (u.name && u.name.toLowerCase() === clean) ||
-      (clean === 'admin' && u.role === 'admin') ||
-      (clean === 'caixa' && u.role === 'caixa') ||
-      (clean === 'gerente' && u.role === 'gerente') ||
-      (clean === 'financeiro' && u.role === 'financeiro') ||
-      (clean === 'rh' && u.role === 'rh') ||
-      (clean === 'compras' && u.role === 'comprador')
-    );
-  });
+    if (!clean) return null;
+    return (users || []).find((u) => {
+      if (isCompanyDeleted(u.companyId)) return false;
+      const compExists = (companies || []).some(
+        (c) => c.id === u.companyId && !isCompanyDeleted(c.id, c.name)
+      );
+      if (!compExists) return false;
+      return (
+        u.email?.toLowerCase() === clean ||
+        (u.username && u.username.toLowerCase() === clean) ||
+        (u.name && u.name.toLowerCase() === clean) ||
+        (clean === 'admin' && u.role === 'admin') ||
+        (clean === 'caixa' && u.role === 'caixa') ||
+        (clean === 'gerente' && u.role === 'gerente') ||
+        (clean === 'financeiro' && u.role === 'financeiro') ||
+        (clean === 'rh' && u.role === 'rh') ||
+        (clean === 'compras' && u.role === 'comprador')
+      );
+    }) || null;
+  }, [identifier, users, companies]);
 
-  const detectedCompany = detectedUser
-    ? companies.find((c) => c.id === detectedUser.companyId) || {
-        id: detectedUser.companyId || 'comp-1',
-        name: (detectedUser.name && detectedUser.name.includes(' ')) ? `Empresa ${detectedUser.name}` : `A Minha Empresa`,
-        tradeName: detectedUser.name || 'A Minha Empresa',
-        taxNumber: '400000000',
-      }
-    : null;
+  const detectedCompany = useMemo(() => {
+    if (!detectedUser || !detectedUser.companyId) return null;
+    if (isCompanyDeleted(detectedUser.companyId)) return null;
+    return (
+      (companies || []).find((c) => c.id === detectedUser.companyId && !isCompanyDeleted(c.id, c.name)) || null
+    );
+  }, [detectedUser, companies]);
 
   // Keyboard navigation for PIN mode
   useEffect(() => {
@@ -170,6 +182,12 @@ export const LoginScreen: React.FC = () => {
 
     if (!cleanIdent) {
       setCredentialsError(t('auth.usernameOrEmail'));
+      sound.playError();
+      return;
+    }
+
+    if (isCompanyDeleted(cleanIdent)) {
+      setCredentialsError('A empresa vinculada a este identificador foi eliminada do sistema. O acesso e as credenciais foram revogados permanentemente.');
       sound.playError();
       return;
     }

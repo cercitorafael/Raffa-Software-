@@ -54,6 +54,7 @@ import {
   ArrowLeft,
   Percent,
   Landmark,
+  RefreshCw,
 } from 'lucide-react';
 import { sound } from '../../utils/audio';
 import {
@@ -112,7 +113,10 @@ export const DocumentsModule: React.FC = () => {
     updateCompany,
     activeShift,
     registerDocSaleInShift,
+    recoverAllSalesFromFirstDay,
   } = useApp();
+
+  const [isRecoveringSales, setIsRecoveringSales] = useState(false);
 
   const currencySymbol = currentCompany?.currencySymbol || currencyDefinition?.symbol || 'Mt';
 
@@ -1161,6 +1165,23 @@ export const DocumentsModule: React.FC = () => {
           >
             <Truck className="w-3.5 h-3.5" />
             <span>Guias de Transporte (AT)</span>
+          </button>
+        </div>
+
+        <div className="flex items-center space-x-2 py-1 lg:py-0">
+          <button
+            id="recover-documents-sales-btn"
+            onClick={async () => {
+              setIsRecoveringSales(true);
+              await recoverAllSalesFromFirstDay({ notifyUser: true });
+              setIsRecoveringSales(false);
+            }}
+            disabled={isRecoveringSales}
+            className="flex items-center space-x-1.5 px-3 py-1.5 bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-300 border border-indigo-500/40 rounded-xl text-xs font-bold uppercase tracking-wider shadow-xs transition-all disabled:opacity-50 shrink-0"
+            title="Recuperar e sincronizar todas as faturas e vendas do Supabase desde o 1º dia"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${isRecoveringSales ? 'animate-spin' : ''}`} />
+            <span>{isRecoveringSales ? 'A Restaurar...' : 'Restaurar Vendas'}</span>
           </button>
         </div>
       </div>

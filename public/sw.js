@@ -3,7 +3,7 @@
  * Ensures offline resilience for the POS, assets caching, and background sync.
  */
 
-const CACHE_NAME = 'omnipos-cache-v1';
+const CACHE_NAME = 'omnipos-cache-v3';
 const STATIC_ASSETS = [
   '/',
   '/index.html',
@@ -41,8 +41,20 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
 
-  // Skip cross-origin chrome extensions, dev sockets, etc.
+  // Skip non-GET requests
   if (event.request.method !== 'GET') {
+    return;
+  }
+
+  // Never intercept Vite development modules, HMR, or local source files
+  if (
+    url.pathname.startsWith('/src/') ||
+    url.pathname.includes('@vite') ||
+    url.pathname.includes('@react') ||
+    url.pathname.includes('@fs') ||
+    url.pathname.includes('node_modules') ||
+    url.searchParams.has('t')
+  ) {
     return;
   }
 

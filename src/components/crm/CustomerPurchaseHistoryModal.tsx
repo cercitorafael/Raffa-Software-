@@ -16,10 +16,12 @@ import {
   Printer,
   Sparkles,
   MapPin,
+  RefreshCw,
 } from 'lucide-react';
 import { Customer, Sale } from '../../types';
 import { useApp } from '../../context/AppContext';
 import { formatCurrency, formatDate } from '../../utils/crypto';
+import { matchSaleToCustomer } from '../../utils/salesRecovery';
 
 interface CustomerPurchaseHistoryModalProps {
   customer: Customer | null;
@@ -34,19 +36,18 @@ export const CustomerPurchaseHistoryModal: React.FC<CustomerPurchaseHistoryModal
   onClose,
   onInitiateCall,
 }) => {
-  const { salesHistory } = useApp();
+  const { salesHistory, allSalesHistory, recoverAllSalesFromFirstDay } = useApp();
   const [expandedSaleId, setExpandedSaleId] = useState<string | null>(null);
   const [filterPeriod, setFilterPeriod] = useState<'all' | '30d' | '90d' | 'year'>('all');
+  const [isRecovering, setIsRecovering] = useState(false);
 
   if (!isOpen || !customer) return null;
 
-  // Filter sales matching this customer by ID or NIF or exact name match
-  const customerSales = salesHistory.filter((s) => {
-    if (s.customerId && s.customerId === customer.id) return true;
-    if (customer.taxNumber && (s.customerTaxNumber === customer.taxNumber || s.customerNif === customer.taxNumber)) return true;
-    if (customer.name && s.customerName && s.customerName.toLowerCase().trim() === customer.name.toLowerCase().trim()) return true;
-    return false;
-  });
+  // Use the full historical sales list to ensure sales from day 1 to today are never missed
+  const masterSales = allSalesHistory && allSalesHistory.length > 0 ? allSalesHistory : salesHistory;
+
+  // Filter sales matching this customer using resilient matching
+  const customerSales = masterSales.filter((s) => matchSaleToCustomer(s, customer));
 
   // Apply period filter
   const now = new Date();
@@ -115,6 +116,19 @@ export const CustomerPurchaseHistoryModal: React.FC<CustomerPurchaseHistoryModal
           </div>
 
           <div className="flex items-center gap-2">
+            <button
+              onClick={async () => {
+                setIsRecovering(true);
+                await recoverAllSalesFromFirstDay({ notifyUser: true });
+                setIsRecovering(false);
+              }}
+              disabled={isRecovering}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-300 border border-indigo-500/40 rounded-xl text-xs font-semibold shadow-sm transition-all disabled:opacity-50"
+              title="Restaurar e sincronizar todas as vendas deste cliente do Supabase desde o 1º dia"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isRecovering ? 'animate-spin' : ''}`} />
+              <span>{isRecovering ? 'A Restaurar...' : 'Restaurar Vendas'}</span>
+            </button>
             <button
               onClick={() => onInitiateCall(customer)}
               className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-semibold shadow-sm transition-colors"

@@ -35,11 +35,13 @@ import {
   Navigation,
   Compass,
   Loader2,
+  RefreshCw,
 } from 'lucide-react';
 import { Customer, CallLog } from '../../types';
 import { CustomerCallModal } from './CustomerCallModal';
 import { CustomerPurchaseHistoryModal } from './CustomerPurchaseHistoryModal';
 import { TopBuyersReport } from './TopBuyersReport';
+import { getCustomerTotalVolume } from '../../utils/salesRecovery';
 
 export const CRMModule: React.FC = () => {
   const {
@@ -52,11 +54,15 @@ export const CRMModule: React.FC = () => {
     updateCustomer,
     deleteCustomer,
     salesHistory,
+    allSalesHistory,
+    recoverAllSalesFromFirstDay,
     addLoyaltyPoints,
     callLogs,
     deleteCallLog,
     notify,
   } = useApp();
+
+  const [isRecoveringSales, setIsRecoveringSales] = useState(false);
 
   const canRead = hasPermission('crm', 'read') || currentUser?.role === 'admin';
 
@@ -322,7 +328,12 @@ export const CRMModule: React.FC = () => {
           <div>
             <span className="text-[10px] uppercase font-bold text-neutral-400 tracking-widest">Top Comprador</span>
             <p className="text-sm font-serif font-bold text-amber-400 truncate max-w-[140px]">
-              {[...customers].sort((a, b) => (b.totalSpent || 0) - (a.totalSpent || 0))[0]?.name || 'N/D'}
+              {[...customers].sort((a, b) => {
+                const salesList = allSalesHistory && allSalesHistory.length > 0 ? allSalesHistory : salesHistory;
+                const aSpent = Math.max(Number(a.totalSpent) || 0, getCustomerTotalVolume(a, salesList));
+                const bSpent = Math.max(Number(b.totalSpent) || 0, getCustomerTotalVolume(b, salesList));
+                return bSpent - aSpent;
+              })[0]?.name || 'N/D'}
             </p>
           </div>
         </div>
@@ -470,6 +481,21 @@ export const CRMModule: React.FC = () => {
               </div>
             )}
           </div>
+
+          <button
+            id="recover-all-sales-btn"
+            onClick={async () => {
+              setIsRecoveringSales(true);
+              await recoverAllSalesFromFirstDay({ notifyUser: true });
+              setIsRecoveringSales(false);
+            }}
+            disabled={isRecoveringSales}
+            className="flex items-center space-x-1.5 px-3 py-1.5 bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-300 border border-indigo-500/40 rounded-lg text-xs font-bold uppercase tracking-wider shadow-xs transition-all disabled:opacity-50 shrink-0"
+            title="Recuperar e sincronizar todas as vendas e histórico de clientes do Supabase desde o 1º dia"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${isRecoveringSales ? 'animate-spin' : ''}`} />
+            <span>{isRecoveringSales ? 'A Restaurar...' : 'Restaurar Vendas'}</span>
+          </button>
 
           <button
             id="register-new-customer-btn"
@@ -784,7 +810,12 @@ export const CRMModule: React.FC = () => {
                           {cust.loyaltyPoints || 0} pts
                         </td>
                         <td className="p-3 text-right font-mono font-bold text-emerald-400">
-                          {formatCurrency(cust.totalSpent || 0)}
+                          {formatCurrency(
+                            Math.max(
+                              Number(cust.totalSpent) || 0,
+                              getCustomerTotalVolume(cust, allSalesHistory && allSalesHistory.length > 0 ? allSalesHistory : salesHistory)
+                            )
+                          )}
                         </td>
 
                         {/* Action buttons including Call and Purchase History */}

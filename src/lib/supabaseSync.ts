@@ -20,6 +20,7 @@ import {
   OfflineSyncQueueItem,
 } from '../types';
 import { offlineDB } from '../utils/indexedDB';
+import { isCompanyDeleted } from '../utils/companyDeletion';
 
 export interface SalesGoalRecord {
   id: string;
@@ -2105,11 +2106,24 @@ export async function pullAllFromSupabase(options?: {
         if (table === 'produtos') {
           mappedData = mappedData.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'pt', { sensitivity: 'base', numeric: true }));
         }
+
+        // Descartar permanentemente registos de empresas eliminadas
+        if (table === 'empresas') {
+          mappedData = mappedData.filter((c: any) => c && c.id && !isCompanyDeleted(c.id, c.name));
+        } else if (table === 'usuarios') {
+          mappedData = mappedData.filter((u: any) => u && !isCompanyDeleted(u.companyId));
+        } else {
+          mappedData = mappedData.filter((item: any) => {
+            const cId = item?.companyId || item?.company_id;
+            return !cId || !isCompanyDeleted(cId);
+          });
+        }
+
         result.data[key] = mappedData;
-        result.counts[table] = data.length;
+        result.counts[table] = mappedData.length;
         result.tableResults[table] = {
-          count: data.length,
-          status: data.length > 0 ? 'ok' : 'empty',
+          count: mappedData.length,
+          status: mappedData.length > 0 ? 'ok' : 'empty',
         };
       }
     } catch (e: any) {
@@ -2445,10 +2459,30 @@ export async function purgeCompanyFromSupabase(
     } else if (count) {
       deletedCount += count;
     }
+
+    // Se companyName for fornecido, eliminar também por name e trade_name
+    if (companyName && companyName.trim() && companyName.trim() !== companyId) {
+      const cleanCompName = companyName.trim();
+      try {
+        const { count: c1 } = await supabase.from('empresas').delete({ count: 'exact' }).eq('name', cleanCompName);
+        if (c1) deletedCount += c1;
+      } catch {}
+      try {
+        const { count: c2 } = await supabase.from('empresas').delete({ count: 'exact' }).eq('trade_name', cleanCompName);
+        if (c2) deletedCount += c2;
+      } catch {}
+    }
   } catch (err: any) {
     if (!isTableMissingError(err)) {
       errors.push({ table: 'empresas', error: err?.message || String(err) });
     }
+  }
+
+  // Purgar dados locais em cache no IndexedDB
+  try {
+    await offlineDB.purgeCompanyData(companyId);
+  } catch (err) {
+    console.warn('[purgeCompanyFromSupabase] Aviso ao limpar dados no IndexedDB:', err);
   }
 
   addSyncLog({

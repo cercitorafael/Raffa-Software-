@@ -1,5 +1,6 @@
 /// <reference types="vite/client" />
 import { createClient } from '@supabase/supabase-js';
+import { isCompanyDeleted } from '../utils/companyDeletion';
 
 // Configuração do Supabase fornecida
 export const DEFAULT_SUPABASE_URL = 'https://qfreeubflnyqrwtnhzcm.supabase.co';
@@ -796,7 +797,17 @@ export async function buscarEmpresaEUsuarioPorLogin(identifier: string): Promise
       return { user: null, company: null, store: null };
     }
 
-    const companyId = foundUser.company_id || 'comp-1';
+    const companyId = foundUser.company_id;
+
+    // Se a empresa foi eliminada do sistema ou está na lista negra de exclusão
+    if (companyId && isCompanyDeleted(companyId)) {
+      return {
+        user: null,
+        company: null,
+        store: null,
+        error: 'A empresa deste utilizador foi eliminada do sistema. O acesso e as credenciais foram desativados.',
+      };
+    }
 
     // 3. Busca a Empresa na tabela 'empresas'
     let foundCompany: any = null;
@@ -808,6 +819,16 @@ export async function buscarEmpresaEUsuarioPorLogin(identifier: string): Promise
         .maybeSingle();
 
       foundCompany = compData || null;
+    }
+
+    // Se a empresa não existe na tabela empresas (foi apagada do Supabase) ou tem estado deleted
+    if (!foundCompany || foundCompany.status === 'deleted' || isCompanyDeleted(foundCompany.id, foundCompany.name)) {
+      return {
+        user: null,
+        company: null,
+        store: null,
+        error: 'A empresa vinculada a este utilizador foi eliminada do sistema.',
+      };
     }
 
     // 4. Busca a Loja na tabela 'lojas'

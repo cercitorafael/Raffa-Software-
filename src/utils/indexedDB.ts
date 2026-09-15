@@ -7,12 +7,64 @@
 import { Product, Customer, StockItem, Sale, CashShift, OfflineSyncQueueItem } from '../types';
 
 const DB_NAME = 'OmniPOS_OfflineDB';
-const DB_VERSION = 1;
+export const DB_VERSION = 3;
 
 export interface DBMetadata {
   key: string;
   value: any;
   updatedAt: string;
+}
+
+function setupStores(db: IDBDatabase) {
+  // 1. Products Store
+  if (!db.objectStoreNames.contains('products')) {
+    const productStore = db.createObjectStore('products', { keyPath: 'id' });
+    productStore.createIndex('sku', 'sku', { unique: false });
+    productStore.createIndex('barcode', 'barcode', { unique: false });
+    productStore.createIndex('category', 'category', { unique: false });
+  }
+
+  // 2. Customers Store
+  if (!db.objectStoreNames.contains('customers')) {
+    const customerStore = db.createObjectStore('customers', { keyPath: 'id' });
+    customerStore.createIndex('taxNumber', 'taxNumber', { unique: false });
+    customerStore.createIndex('name', 'name', { unique: false });
+  }
+
+  // 3. Stock Store
+  if (!db.objectStoreNames.contains('stock')) {
+    const stockStore = db.createObjectStore('stock', { keyPath: 'id' });
+    stockStore.createIndex('productId', 'productId', { unique: false });
+    stockStore.createIndex('warehouseId', 'warehouseId', { unique: false });
+  }
+
+  // 4. Sales Store (Offline Fiscal Archive)
+  if (!db.objectStoreNames.contains('sales')) {
+    const salesStore = db.createObjectStore('sales', { keyPath: 'id' });
+    salesStore.createIndex('invoiceNumber', 'invoiceNumber', { unique: true });
+    salesStore.createIndex('date', 'date', { unique: false });
+    salesStore.createIndex('isSynced', 'isSynced', { unique: false });
+  }
+
+  // 5. Sync Queue Store (Pending Backend Dispatch)
+  if (!db.objectStoreNames.contains('sync_queue')) {
+    const queueStore = db.createObjectStore('sync_queue', { keyPath: 'id' });
+    queueStore.createIndex('status', 'status', { unique: false });
+    queueStore.createIndex('timestamp', 'timestamp', { unique: false });
+    queueStore.createIndex('action', 'action', { unique: false });
+  }
+
+  // 6. Cash Shifts Store
+  if (!db.objectStoreNames.contains('cash_shifts')) {
+    const shiftStore = db.createObjectStore('cash_shifts', { keyPath: 'id' });
+    shiftStore.createIndex('status', 'status', { unique: false });
+    shiftStore.createIndex('terminalId', 'terminalId', { unique: false });
+  }
+
+  // 7. Metadata Store
+  if (!db.objectStoreNames.contains('metadata')) {
+    db.createObjectStore('metadata', { keyPath: 'key' });
+  }
 }
 
 export interface DBStats {
@@ -28,90 +80,134 @@ export interface DBStats {
 class IndexedDBEngine {
   private db: IDBDatabase | null = null;
   private isSupported: boolean = typeof window !== 'undefined' && 'indexedDB' in window;
+  private initPromise: Promise<IDBDatabase | null> | null = null;
 
   /**
    * Initializes the IndexedDB database and schema
    */
   public async init(): Promise<IDBDatabase | null> {
     if (!this.isSupported) {
-      console.warn('IndexedDB is not supported in this environment.');
       return null;
     }
 
     if (this.db) return this.db;
+    if (this.initPromise) return this.initPromise;
 
-    return new Promise((resolve, reject) => {
+    this.initPromise = new Promise(async (resolve) => {
+      const requiredStores = ['products', 'customers', 'stock', 'sales', 'sync_queue', 'cash_shifts', 'metadata'];
+
+      const checkAllStores = (database: IDBDatabase): boolean => {
+        return requiredStores.every((store) => database.objectStoreNames.contains(store));
+      };
+
+      const handleUpgrade = (existingDb: IDBDatabase): Promise<IDBDatabase | null> => {
+        return new Promise((upgradeResolve) => {
+          try {
+            const nextVersion = (existingDb.version || 1) + 1;
+            existingDb.close();
+
+            const upgradeReq = indexedDB.open(DB_NAME, nextVersion);
+
+            upgradeReq.onupgradeneeded = (ev: IDBVersionChangeEvent) => {
+              const upgradedDb = (ev.target as IDBOpenDBRequest).result;
+              setupStores(upgradedDb);
+            };
+
+            upgradeReq.onsuccess = (ev: Event) => {
+              const upgradedDb = (ev.target as IDBOpenDBRequest).result;
+              upgradedDb.onversionchange = () => {
+                upgradedDb.close();
+                this.db = null;
+                this.initPromise = null;
+              };
+              upgradeResolve(upgradedDb);
+            };
+
+            upgradeReq.onerror = (ev: Event) => {
+              ev.preventDefault();
+              upgradeResolve(null);
+            };
+
+            upgradeReq.onblocked = (ev: Event) => {
+              ev.preventDefault();
+              upgradeResolve(null);
+            };
+          } catch {
+            upgradeResolve(null);
+          }
+        });
+      };
+
       try {
-        const request = indexedDB.open(DB_NAME, DB_VERSION);
+        // Open without version first: this never fails with "requested version is less than existing version"
+        const request = indexedDB.open(DB_NAME);
 
         request.onupgradeneeded = (event: IDBVersionChangeEvent) => {
           const db = (event.target as IDBOpenDBRequest).result;
-
-          // 1. Products Store
-          if (!db.objectStoreNames.contains('products')) {
-            const productStore = db.createObjectStore('products', { keyPath: 'id' });
-            productStore.createIndex('sku', 'sku', { unique: false });
-            productStore.createIndex('barcode', 'barcode', { unique: false });
-            productStore.createIndex('category', 'category', { unique: false });
-          }
-
-          // 2. Customers Store
-          if (!db.objectStoreNames.contains('customers')) {
-            const customerStore = db.createObjectStore('customers', { keyPath: 'id' });
-            customerStore.createIndex('taxNumber', 'taxNumber', { unique: false });
-            customerStore.createIndex('name', 'name', { unique: false });
-          }
-
-          // 3. Stock Store
-          if (!db.objectStoreNames.contains('stock')) {
-            const stockStore = db.createObjectStore('stock', { keyPath: 'id' });
-            stockStore.createIndex('productId', 'productId', { unique: false });
-            stockStore.createIndex('warehouseId', 'warehouseId', { unique: false });
-          }
-
-          // 4. Sales Store (Offline Fiscal Archive)
-          if (!db.objectStoreNames.contains('sales')) {
-            const salesStore = db.createObjectStore('sales', { keyPath: 'id' });
-            salesStore.createIndex('invoiceNumber', 'invoiceNumber', { unique: true });
-            salesStore.createIndex('date', 'date', { unique: false });
-            salesStore.createIndex('isSynced', 'isSynced', { unique: false });
-          }
-
-          // 5. Sync Queue Store (Pending Backend Dispatch)
-          if (!db.objectStoreNames.contains('sync_queue')) {
-            const queueStore = db.createObjectStore('sync_queue', { keyPath: 'id' });
-            queueStore.createIndex('status', 'status', { unique: false });
-            queueStore.createIndex('timestamp', 'timestamp', { unique: false });
-            queueStore.createIndex('action', 'action', { unique: false });
-          }
-
-          // 6. Cash Shifts Store
-          if (!db.objectStoreNames.contains('cash_shifts')) {
-            const shiftStore = db.createObjectStore('cash_shifts', { keyPath: 'id' });
-            shiftStore.createIndex('status', 'status', { unique: false });
-            shiftStore.createIndex('terminalId', 'terminalId', { unique: false });
-          }
-
-          // 7. Metadata Store
-          if (!db.objectStoreNames.contains('metadata')) {
-            db.createObjectStore('metadata', { keyPath: 'key' });
-          }
+          setupStores(db);
         };
 
-        request.onsuccess = (event: Event) => {
-          this.db = (event.target as IDBOpenDBRequest).result;
+        request.onsuccess = async (event: Event) => {
+          const db = (event.target as IDBOpenDBRequest).result;
+
+          // Check if all needed stores exist in this version
+          if (!checkAllStores(db)) {
+            const upgradedDb = await handleUpgrade(db);
+            this.db = upgradedDb;
+            resolve(this.db);
+            return;
+          }
+
+          db.onversionchange = () => {
+            db.close();
+            this.db = null;
+            this.initPromise = null;
+          };
+
+          this.db = db;
           resolve(this.db);
         };
 
-        request.onerror = (event: Event) => {
-          console.error('IndexedDB open error:', (event.target as IDBOpenDBRequest).error);
+        request.onblocked = (event: Event) => {
+          event.preventDefault();
           resolve(null);
         };
-      } catch (err) {
-        console.error('IndexedDB initialization failed:', err);
+
+        request.onerror = (event: Event) => {
+          event.preventDefault();
+          // Fallback: in case the database is blocked or corrupted, try deleting and resetting cleanly
+          try {
+            const delReq = indexedDB.deleteDatabase(DB_NAME);
+            delReq.onsuccess = () => {
+              const freshReq = indexedDB.open(DB_NAME, 1);
+              freshReq.onupgradeneeded = (e) => setupStores((e.target as IDBOpenDBRequest).result);
+              freshReq.onsuccess = (e) => {
+                this.db = (e.target as IDBOpenDBRequest).result;
+                resolve(this.db);
+              };
+              freshReq.onerror = (e) => {
+                e.preventDefault();
+                this.initPromise = null;
+                resolve(null);
+              };
+            };
+            delReq.onerror = (e) => {
+              e.preventDefault();
+              this.initPromise = null;
+              resolve(null);
+            };
+          } catch {
+            this.initPromise = null;
+            resolve(null);
+          }
+        };
+      } catch {
+        this.initPromise = null;
         resolve(null);
       }
     });
+
+    return this.initPromise;
   }
 
   private async getStore(storeName: string, mode: IDBTransactionMode = 'readonly'): Promise<IDBObjectStore | null> {
@@ -469,6 +565,42 @@ class IndexedDBEngine {
         }
       } catch {
         // ignore
+      }
+    }
+  }
+
+  public async purgeCompanyData(companyId: string): Promise<void> {
+    const cleanId = String(companyId || '').trim().toLowerCase();
+    if (!cleanId) return;
+
+    const filterStores = ['products', 'customers', 'stock', 'sales', 'sync_queue', 'cash_shifts'];
+    for (const storeName of filterStores) {
+      try {
+        const store = await this.getStore(storeName, 'readwrite');
+        if (!store) continue;
+
+        const getAllReq = store.getAll();
+        getAllReq.onsuccess = () => {
+          const items = getAllReq.result || [];
+          for (const item of items) {
+            const itemCompId = String(
+              item.companyId ||
+              item.company_id ||
+              item.record?.companyId ||
+              item.record?.company_id ||
+              ''
+            ).trim().toLowerCase();
+
+            if (itemCompId === cleanId || item.id === cleanId) {
+              const key = item.id || item.barcode;
+              if (key) {
+                store.delete(key);
+              }
+            }
+          }
+        };
+      } catch (err) {
+        console.warn(`Erro ao purgar dados da empresa ${companyId} na store ${storeName}:`, err);
       }
     }
   }
