@@ -487,7 +487,7 @@ export async function criarUsuario(
       email,
       cargo,
       role: cargo.toLowerCase(),
-      pin: usuario.pin || '1234',
+      pin: usuario.pin || 'KEYZOM',
       telefone: usuario.telefone || usuario.phone || null,
       phone: usuario.telefone || usuario.phone || null,
       ativo: usuario.ativo !== undefined ? usuario.ativo : usuario.is_active !== undefined ? usuario.is_active : true,
@@ -628,7 +628,7 @@ export async function registrarEmpresaEUsuarioCliente(params: {
       email: params.adminUser.email,
       cargo: 'Administrador',
       role: 'admin',
-      pin: params.adminUser.pin || '1234',
+      pin: params.adminUser.pin || 'KEYZOM',
       telefone: params.adminUser.phone || null,
       phone: params.adminUser.phone || null,
       ativo: true,
@@ -787,7 +787,7 @@ export async function buscarEmpresaEUsuarioPorLogin(identifier: string): Promise
           role: profData[0].role || 'admin',
           cargo: profData[0].role || 'Administrador',
           ativo: true,
-          pin: '1234',
+          pin: 'KEYZOM',
         };
       }
     }
@@ -1111,7 +1111,7 @@ ALTER TABLE public.lojas ADD COLUMN IF NOT EXISTS company_id TEXT DEFAULT 'comp-
 ALTER TABLE public.usuarios ADD COLUMN IF NOT EXISTS company_id TEXT DEFAULT 'comp-1';
 ALTER TABLE public.usuarios ADD COLUMN IF NOT EXISTS store_id TEXT DEFAULT 'store-1';
 ALTER TABLE public.usuarios ADD COLUMN IF NOT EXISTS role TEXT DEFAULT 'caixa';
-ALTER TABLE public.usuarios ADD COLUMN IF NOT EXISTS pin TEXT DEFAULT '1234';
+ALTER TABLE public.usuarios ADD COLUMN IF NOT EXISTS pin TEXT DEFAULT 'KEYZOM';
 ALTER TABLE public.usuarios ADD COLUMN IF NOT EXISTS permissions JSONB;
 
 ALTER TABLE public.categorias ADD COLUMN IF NOT EXISTS company_id TEXT DEFAULT 'comp-1';
@@ -1172,9 +1172,9 @@ CREATE TABLE IF NOT EXISTS public.usuarios (
     email TEXT,
     cargo TEXT DEFAULT 'caixa',
     role TEXT DEFAULT 'caixa',
-    pin TEXT DEFAULT '1234',
-    password TEXT DEFAULT '1234',
-    senha TEXT DEFAULT '1234',
+    pin TEXT DEFAULT 'KEYZOM',
+    password TEXT DEFAULT 'KEYZOM',
+    senha TEXT DEFAULT 'KEYZOM',
     telefone TEXT,
     phone TEXT,
     ativo BOOLEAN DEFAULT true,
@@ -1548,17 +1548,32 @@ ALTER TABLE public.metas_vendas REPLICA IDENTITY FULL;
 DO $$
 DECLARE
     t text;
+    pol record;
     tables text[] := ARRAY[
         'profiles', 'empresas', 'lojas', 'usuarios', 'categorias', 'produtos', 
-        'clientes', 'fornecedores', 'armazens', 'stock', 'vendas', 
+        'clientes', 'fornecedores', 'armazens', 'stock', 'estoque_atual', 'movimentos_estoque', 'vendas', 
         'contas_pagar', 'contas_receber', 'turnos_caixa',
         'colaboradores', 'registos_ponto', 'recibos_salario', 'escalas_trabalho', 'metas_vendas'
     ];
 BEGIN
     FOREACH t IN ARRAY tables LOOP
-        EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY;', t);
-        EXECUTE format('DROP POLICY IF EXISTS "Acesso total publico %s" ON public.%I;', t, t);
-        EXECUTE format('CREATE POLICY "Acesso total publico %s" ON public.%I FOR ALL USING (true) WITH CHECK (true);', t, t);
+        BEGIN
+            -- Remover quaisquer políticas antigas existentes na tabela
+            FOR pol IN 
+                SELECT policyname 
+                FROM pg_policies 
+                WHERE tablename = t AND schemaname = 'public'
+            LOOP
+                EXECUTE format('DROP POLICY IF EXISTS %I ON public.%I;', pol.policyname, t);
+            END LOOP;
+
+            -- Habilitar RLS e criar política irrestrita para anon e authenticated
+            EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY;', t);
+            EXECUTE format('CREATE POLICY "Acesso total publico %s" ON public.%I FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);', t, t);
+            EXECUTE format('ALTER TABLE public.%I REPLICA IDENTITY FULL;', t);
+        EXCEPTION WHEN OTHERS THEN
+            NULL;
+        END;
     END LOOP;
 END $$;
 
@@ -1623,5 +1638,85 @@ export async function obterExtratoInventarioArmazemClient(params: {
   }
   return response.json();
 }
+
+/**
+ * Script SQL para desbloqueio imediato da política RLS na tabela "clientes".
+ * Pode ser executado diretamente no SQL Editor do Supabase para corrigir o erro 42501.
+ */
+export const SQL_RLS_FIX_CLIENTES = `-- ==============================================================================
+-- CORREÇÃO DE POLÍTICA RLS PARA TABELA "clientes" NO SUPABASE
+-- Execute este script no SQL Editor do Supabase para corrigir o erro 42501
+-- ==============================================================================
+
+-- 1. Eliminar quaisquer políticas antigas ou conflituantes na tabela clientes
+DO $$
+DECLARE
+    pol record;
+BEGIN
+    FOR pol IN 
+        SELECT policyname 
+        FROM pg_policies 
+        WHERE tablename = 'clientes' AND schemaname = 'public'
+    LOOP
+        EXECUTE format('DROP POLICY IF EXISTS %I ON public.clientes;', pol.policyname);
+    END LOOP;
+END $$;
+
+-- 2. Habilitar RLS e criar política de acesso total (leitura e escrita) para anon e authenticated
+ALTER TABLE public.clientes ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Acesso total publico clientes" ON public.clientes 
+    FOR ALL 
+    TO anon, authenticated 
+    USING (true) 
+    WITH CHECK (true);
+
+-- 3. Habilitar réplica total para suporte a Realtime
+ALTER TABLE public.clientes REPLICA IDENTITY FULL;
+
+-- (Alternativa rápida) Se preferir desativar o RLS nesta tabela para escrita irrestrita:
+-- ALTER TABLE public.clientes DISABLE ROW LEVEL SECURITY;
+`;
+
+/**
+ * Script SQL para desbloqueio de RLS em todas as tabelas do sistema no Supabase.
+ */
+export const SQL_RLS_FIX_ALL = `-- ==============================================================================
+-- CORREÇÃO DE POLÍTICAS RLS PARA TODAS AS TABELAS DO OMNIERP & POS NO SUPABASE
+-- Concede permissão de leitura e escrita para chaves anônimas (anon) e autenticadas
+-- ==============================================================================
+
+DO $$
+DECLARE
+    t text;
+    pol record;
+    tables text[] := ARRAY[
+        'profiles', 'empresas', 'lojas', 'usuarios', 'categorias', 'produtos', 
+        'clientes', 'fornecedores', 'armazens', 'stock', 'estoque_atual', 'movimentos_estoque', 'vendas', 
+        'contas_pagar', 'contas_receber', 'turnos_caixa',
+        'colaboradores', 'registos_ponto', 'recibos_salario', 'escalas_trabalho', 'metas_vendas'
+    ];
+BEGIN
+    FOREACH t IN ARRAY tables LOOP
+        BEGIN
+            -- Remover políticas antigas
+            FOR pol IN 
+                SELECT policyname 
+                FROM pg_policies 
+                WHERE tablename = t AND schemaname = 'public'
+            LOOP
+                EXECUTE format('DROP POLICY IF EXISTS %I ON public.%I;', pol.policyname, t);
+            END LOOP;
+
+            -- Habilitar RLS e criar política irrestrita
+            EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY;', t);
+            EXECUTE format('CREATE POLICY "Acesso total publico %s" ON public.%I FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);', t, t);
+            EXECUTE format('ALTER TABLE public.%I REPLICA IDENTITY FULL;', t);
+        EXCEPTION WHEN OTHERS THEN
+            NULL;
+        END;
+    END LOOP;
+END $$;
+`;
+
 
 

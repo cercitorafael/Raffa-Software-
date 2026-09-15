@@ -17,7 +17,9 @@ import {
   EmployeeShift,
   TimeClockEntry,
   PayrollSlip,
+  OfflineSyncQueueItem,
 } from '../types';
+import { offlineDB } from '../utils/indexedDB';
 
 export interface SalesGoalRecord {
   id: string;
@@ -111,6 +113,25 @@ const MAX_LOGS = 150;
 // Local pending sync queue for offline / retry support
 const PENDING_SYNC_STORAGE_KEY = 'erp_pending_supabase_queue';
 
+// Exponential backoff configuration
+export const BASE_RETRY_DELAY_MS = 2000; // 2 seconds initial delay
+export const MAX_RETRY_DELAY_MS = 60000; // 60 seconds maximum delay
+
+/**
+ * Calculates exponential backoff with random jitter:
+ * delay = min(maxMs, baseMs * 2^(min(retryCount, 7))) + jitter(0-1000ms)
+ */
+export function calculateExponentialBackoff(
+  retryCount: number,
+  baseMs = BASE_RETRY_DELAY_MS,
+  maxMs = MAX_RETRY_DELAY_MS
+): number {
+  const exponent = Math.min(Math.max(0, retryCount), 7);
+  const backoff = baseMs * Math.pow(2, exponent);
+  const jitter = Math.floor(Math.random() * 1000);
+  return Math.min(backoff + jitter, maxMs);
+}
+
 export function isTableMissingError(error: any): boolean {
   if (!error) return false;
   const code = String(error.code || '');
@@ -123,6 +144,43 @@ export function isTableMissingError(error: any): boolean {
     msg.includes('could not find the table') ||
     (msg.includes('relation') && msg.includes('does not exist'))
   );
+}
+
+/**
+ * Verifica se um erro retornado pelo Supabase decorre de restrições de Row-Level Security (RLS)
+ * Código Postgres 42501 ou mensagem de violação de política de segurança.
+ */
+export function isRlsError(error: any): boolean {
+  if (!error) return false;
+  const code = String(error.code || '');
+  const msg = String(error.message || '').toLowerCase();
+  const details = String(error.details || '').toLowerCase();
+  return (
+    code === '42501' ||
+    error.status === 403 ||
+    msg.includes('row-level security') ||
+    msg.includes('violates row-level security policy') ||
+    msg.includes('permission denied') ||
+    msg.includes('security policy') ||
+    details.includes('row-level security') ||
+    details.includes('policy')
+  );
+}
+
+// Throttle idênticos avisos de erro para prevenir spam no terminal e na interface
+const lastLoggedWarnings = new Map<string, number>();
+
+export function throttledWarn(key: string, message: string, detail?: any, throttleMs = 90000): void {
+  const now = Date.now();
+  const lastTime = lastLoggedWarnings.get(key) || 0;
+  if (now - lastTime >= throttleMs) {
+    lastLoggedWarnings.set(key, now);
+    if (detail !== undefined) {
+      console.warn(message, detail);
+    } else {
+      console.warn(message);
+    }
+  }
 }
 
 interface PendingSyncQueueItem {
@@ -148,56 +206,258 @@ function savePendingQueue(queue: PendingSyncQueueItem[]) {
   } catch {}
 }
 
-export function enqueuePendingSync(table: TableSyncName, action: 'insert' | 'update' | 'upsert' | 'delete', record: any) {
+let isSyncingQueue = false;
+
+/**
+ * Enfileira uma operação na fila do IndexedDB para sincronização offline resiliente.
+ */
+export async function enqueuePendingSync(
+  table: TableSyncName,
+  action: 'insert' | 'update' | 'upsert' | 'delete',
+  record: any,
+  initialNextRetryTime?: number
+): Promise<void> {
   try {
-    const queue = getPendingQueue();
-    const id = record?.id || `item-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
-    // Avoid duplicate queue items for the same id and table
-    const filtered = queue.filter((q) => !(q.table === table && (q.record?.id || q.record) === id));
-    filtered.push({
-      id,
+    const rawId = record?.id || `item-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+    const syncId = `sync-${table}-${rawId}`;
+
+    let posAction = `${action}_${table}`;
+    if (table === 'vendas' && (action === 'insert' || action === 'upsert')) {
+      posAction = 'create_sale';
+    } else if (table === 'clientes' && (action === 'insert' || action === 'upsert')) {
+      posAction = 'create_customer';
+    } else if (table === 'stock') {
+      posAction = 'update_stock';
+    } else if (table === 'turnos_caixa') {
+      posAction = record?.status === 'fechado' ? 'close_shift' : 'update_shift';
+    }
+
+    const syncItem: OfflineSyncQueueItem = {
+      id: syncId,
+      timestamp: new Date().toISOString(),
+      action: posAction,
       table,
-      action,
-      record,
-      timestamp: Date.now(),
-    });
-    savePendingQueue(filtered);
-  } catch {}
+      entity: table,
+      data: record,
+      status: 'pending',
+      retryCount: 0,
+      nextRetryTime: initialNextRetryTime !== undefined ? initialNextRetryTime : Date.now(),
+    };
+
+    // Armazenamento principal no IndexedDB
+    await offlineDB.enqueueSyncItem(syncItem);
+
+    // Backup em localStorage para compatibilidade
+    try {
+      const q = getPendingQueue();
+      const filtered = q.filter((item) => item.id !== syncId);
+      filtered.push({
+        id: syncId,
+        table,
+        action,
+        record,
+        timestamp: Date.now(),
+      });
+      savePendingQueue(filtered);
+    } catch {}
+
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(
+        new CustomEvent('offline_sync_queue_changed', {
+          detail: { action: 'enqueue', table, syncId },
+        })
+      );
+    }
+  } catch (err) {
+    console.error('[IndexedDB] Erro ao enfileirar operação pendente:', err);
+  }
 }
 
-export async function flushPendingSyncQueue(): Promise<number> {
-  const queue = getPendingQueue();
-  let successCount = 0;
-  const remaining: PendingSyncQueueItem[] = [];
-
-  if (queue.length > 0) {
+/**
+ * Reseta os contadores de tempo para retry imediato de toda a fila
+ * quando a conectividade é restabelecida.
+ */
+export async function resetQueueRetryTimers(): Promise<void> {
+  try {
+    const queue = await offlineDB.getPendingSyncQueue();
+    const now = Date.now();
     for (const item of queue) {
+      if (item.nextRetryTime && item.nextRetryTime > now) {
+        item.nextRetryTime = now;
+        await offlineDB.enqueueSyncItem(item);
+      }
+    }
+  } catch (err) {
+    console.warn('[resetQueueRetryTimers] Erro ao resetar temporizadores:', err);
+  }
+}
+
+/**
+ * Processa a fila de sincronização do IndexedDB com mecanismo de Retry Exponencial.
+ * @param forceAll Se true, ignora o tempo de espera do backoff e tenta sincronizar imediatamente todos os itens pendentes.
+ */
+export async function flushPendingSyncQueue(forceAll = false): Promise<number> {
+  if (isSyncingQueue) {
+    return 0;
+  }
+  isSyncingQueue = true;
+
+  let successCount = 0;
+
+  try {
+    // 1. Migração transparente: itens antigos no localStorage migram para IndexedDB
+    try {
+      const legacyQueue = getPendingQueue();
+      if (legacyQueue && legacyQueue.length > 0) {
+        for (const leg of legacyQueue) {
+          const syncId = leg.id || `sync-${leg.table}-${leg.record?.id || Date.now()}`;
+          await offlineDB.enqueueSyncItem({
+            id: syncId,
+            timestamp: new Date(leg.timestamp || Date.now()).toISOString(),
+            action: leg.table === 'vendas' ? 'create_sale' : `${leg.action}_${leg.table}`,
+            table: leg.table,
+            entity: leg.table,
+            data: leg.record,
+            status: 'pending',
+            retryCount: 0,
+            nextRetryTime: Date.now(),
+          });
+        }
+        localStorage.removeItem(PENDING_SYNC_STORAGE_KEY);
+      }
+    } catch {}
+
+    // 2. Consulta fila principal no IndexedDB
+    const queue = await offlineDB.getPendingSyncQueue();
+    if (!queue || queue.length === 0) {
+      return 0;
+    }
+
+    const now = Date.now();
+
+    for (const item of queue) {
+      // Se não for forçado, respeitar o temporizador de backoff exponencial
+      if (!forceAll && item.nextRetryTime && now < item.nextRetryTime) {
+        continue;
+      }
+
+      // Marcar item como sincronizando
+      item.status = 'syncing';
+      await offlineDB.enqueueSyncItem(item);
+
+      let success = false;
+      let syncError: any = null;
+
       try {
-        const res = await pushRecordToSupabaseDirect(item.table, item.action, item.record, false);
-        if (res.success) {
-          successCount++;
+        let table: TableSyncName | undefined;
+        if (item.table) {
+          table = item.table as TableSyncName;
+        } else if (item.action === 'create_sale' || item.entity === 'Sale' || item.entity === 'vendas') {
+          table = 'vendas';
+        } else if (item.action === 'create_customer' || item.entity === 'Customer' || item.entity === 'clientes') {
+          table = 'clientes';
+        } else if (item.action === 'update_stock' || item.entity === 'Stock' || item.entity === 'stock') {
+          table = 'stock';
+        } else if (item.action === 'close_shift' || item.action === 'update_shift' || item.entity === 'CashShift' || item.entity === 'turnos_caixa') {
+          table = 'turnos_caixa';
+        }
+
+        let targetAction: 'insert' | 'update' | 'upsert' | 'delete' = 'upsert';
+        if (item.action?.startsWith('delete')) {
+          targetAction = 'delete';
+        } else if (item.action === 'create_sale' || item.action?.startsWith('create')) {
+          targetAction = 'insert';
+        } else if (item.action?.startsWith('update')) {
+          targetAction = 'update';
+        }
+
+        if (table) {
+          const res = await pushRecordToSupabaseDirect(table, targetAction, item.data, false);
+          if (res.success) {
+            success = true;
+          } else {
+            syncError = res.error;
+          }
         } else {
-          // Keep all pending offline items safely queued, never drop user data
-          remaining.push(item);
+          syncError = 'Tabela de destino não identificada';
+        }
+
+        if (success) {
+          successCount++;
+          // Se for venda, marcar arquivamento local como sincronizado
+          if ((item.action === 'create_sale' || table === 'vendas') && item.data?.id) {
+            await offlineDB.markSaleSynced(item.data.id);
+          }
+          // Remover com sucesso do IndexedDB
+          await offlineDB.removeSyncQueueItem(item.id);
+        } else {
+          // Falha: Aplicar Retry com Backoff Exponencial inteligente
+          const isRls = isRlsError(syncError);
+          const nextRetry = (item.retryCount || 0) + 1;
+          // Se for bloqueio de segurança RLS (42501), pausar reenvio automático por 10 minutos
+          const delayMs = isRls ? 10 * 60 * 1000 : calculateExponentialBackoff(nextRetry);
+          const nextRetryTimestamp = Date.now() + delayMs;
+          const errorMsg = isRls
+            ? `Bloqueado por política RLS na tabela "${table}" (código 42501). Execute o script SQL no Supabase.`
+            : (typeof syncError === 'string' ? syncError : syncError?.message || 'Falha ao sincronizar com Supabase');
+
+          await offlineDB.updateSyncItemRetry(item.id, nextRetry, nextRetryTimestamp, errorMsg);
+
+          // Não inundar o log com erros idênticos de RLS se já foram registrados
+          if (!isRls || (item.retryCount || 0) === 0) {
+            addSyncLog({
+              table: (table as string) || 'POS',
+              action: 'PUSH',
+              origin: 'LOCAL_APP',
+              description: isRls
+                ? `🛡️ Tabela "${table}" bloqueada por RLS no Supabase (42501). Reenvio automático pausado. Execute o script SQL de permissões.`
+                : `⚠️ Tentativa #${nextRetry} falhou (${errorMsg}). Próxima tentativa em ${(delayMs / 1000).toFixed(1)}s (Backoff Exponencial).`,
+              status: 'error',
+            });
+          }
         }
       } catch (err: any) {
-        // Keep pending item on failure
-        remaining.push(item);
+        const isRls = isRlsError(err);
+        const nextRetry = (item.retryCount || 0) + 1;
+        const delayMs = isRls ? 10 * 60 * 1000 : calculateExponentialBackoff(nextRetry);
+        const nextRetryTimestamp = Date.now() + delayMs;
+        const errorMsg = err?.message || String(err);
+
+        await offlineDB.updateSyncItemRetry(item.id, nextRetry, nextRetryTimestamp, errorMsg);
+
+        if (!isRls || (item.retryCount || 0) === 0) {
+          addSyncLog({
+            table: (item.table as string) || 'POS',
+            action: 'PUSH',
+            origin: 'LOCAL_APP',
+            description: `⚠️ Erro de rede na tentativa #${nextRetry}. Próxima tentativa em ${(delayMs / 1000).toFixed(1)}s (Backoff Exponencial).`,
+            status: 'error',
+          });
+        }
       }
     }
 
-    savePendingQueue(remaining);
+    if (successCount > 0) {
+      addSyncLog({
+        table: 'ALL',
+        action: 'PUSH',
+        origin: 'LOCAL_APP',
+        description: `🔄 Fila IndexedDB: ${successCount} operações pendentes sincronizadas com sucesso no Supabase!`,
+        status: 'success',
+      });
+    }
+
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(
+        new CustomEvent('offline_sync_queue_changed', {
+          detail: { action: 'flush', count: successCount },
+        })
+      );
+    }
+  } finally {
+    isSyncingQueue = false;
   }
 
-  if (successCount > 0) {
-    addSyncLog({
-      table: 'ALL',
-      action: 'PUSH',
-      origin: 'LOCAL_APP',
-      description: `🔄 Fila Offline: ${successCount} registos sincronizados com sucesso no Supabase!`,
-      status: 'success',
-    });
-  }
   return successCount;
 }
 
@@ -587,6 +847,11 @@ export function mapSupabaseToSale(row: any): Sale {
 }
 
 export function mapUserToSupabase(u: Partial<User>) {
+  const safePin = (!u.pin || u.pin === '1234') ? 'KEYZOM' : u.pin;
+  const safePass = (!u.password || u.password === '1234' || u.password === '123456')
+    ? (u.role === 'admin' && u.username === 'admin' ? 'admin' : safePin)
+    : u.password;
+
   return {
     id: u.id,
     company_id: u.companyId || 'comp-1',
@@ -596,9 +861,9 @@ export function mapUserToSupabase(u: Partial<User>) {
     email: u.email || '',
     cargo: u.role || 'caixa',
     role: u.role || 'caixa',
-    pin: u.pin || '1234',
-    password: u.password || u.pin || '1234',
-    senha: u.password || u.pin || '1234',
+    pin: safePin,
+    password: safePass,
+    senha: safePass,
     telefone: u.phone || null,
     phone: u.phone || null,
     ativo: u.isActive !== undefined ? u.isActive : true,
@@ -610,6 +875,11 @@ export function mapUserToSupabase(u: Partial<User>) {
 }
 
 export function mapSupabaseToUser(row: any): User {
+  const rawPin = row.pin ? String(row.pin).trim() : '';
+  const safePin = (!rawPin || rawPin === '1234') ? 'KEYZOM' : rawPin;
+  const rawPass = row.password || row.senha || '';
+  const safePass = (!rawPass || rawPass === '1234' || rawPass === '123456') ? safePin : String(rawPass).trim();
+
   return {
     id: String(row.id),
     companyId: row.company_id || 'comp-1',
@@ -617,9 +887,9 @@ export function mapSupabaseToUser(row: any): User {
     name: row.name || row.nome || 'Utilizador',
     username: row.username || (row.email ? row.email.split('@')[0] : 'user'),
     email: row.email || '',
-    password: row.password || row.senha || row.pin || '1234',
+    password: safePass,
     role: (row.role || row.cargo || 'caixa').toLowerCase(),
-    pin: row.pin || '1234',
+    pin: safePin,
     phone: row.phone || row.telefone || '',
     isActive: row.is_active !== undefined ? !!row.is_active : row.ativo !== undefined ? !!row.ativo : true,
     avatarUrl: row.avatar_url || '',
@@ -1128,16 +1398,17 @@ export function startSupabaseRealtimeSync(callbacks: RealtimeSyncCallbacks) {
 
   // Listen to browser online event to restore connection & flush queue
   if (typeof window !== 'undefined') {
-    const handleOnline = () => {
+    const handleOnline = async () => {
       addSyncLog({
         table: 'ALL',
         action: 'PULL',
         origin: 'LOCAL_APP',
-        description: '🌐 Ligação à Internet restabelecida. A reconectar ao Supabase...',
+        description: '🌐 Ligação à Internet restabelecida. A restabelecer canal Supabase e reprocessar fila do IndexedDB...',
         status: 'info',
       });
       startSupabaseRealtimeSync(callbacks);
-      flushPendingSyncQueue().catch(() => {});
+      await resetQueueRetryTimers();
+      flushPendingSyncQueue(true).catch(() => {});
     };
     window.removeEventListener('online', handleOnline);
     window.addEventListener('online', handleOnline);
@@ -1162,11 +1433,13 @@ export function stopSupabaseRealtimeSync() {
   }
 }
 
-// Inicialização de sincronizador automático periódico em segundo plano (a cada 15 segundos)
+// Inicialização de sincronizador automático periódico em segundo plano para retries exponenciais
 if (typeof window !== 'undefined') {
   setInterval(() => {
-    flushPendingSyncQueue().catch(() => {});
-  }, 15000);
+    if (typeof navigator !== 'undefined' && navigator.onLine) {
+      flushPendingSyncQueue(false).catch(() => {});
+    }
+  }, 8000);
 }
 
 function handleRealtimeEvent(tableName: TableSyncName, payload: any) {
@@ -1437,15 +1710,25 @@ export async function pushRecordToSupabaseDirect(
     if (isTableMissingError(error)) {
       return { success: false, error: `Tabela "${table}" ainda não configurada no Supabase (PGRST205/42P01)` };
     }
+    const isRls = isRlsError(error);
     if (shouldQueueOnFailure) {
-      enqueuePendingSync(table, action, record);
+      // Se for erro de RLS (42501), agendar retry para daqui a 10 min para não poluir
+      enqueuePendingSync(table, action, record, isRls ? Date.now() + 10 * 60 * 1000 : undefined);
     }
-    console.warn(`Erro ao sincronizar com Supabase na tabela ${table}:`, error);
+    throttledWarn(
+      `sync-err-${table}`,
+      isRls
+        ? `[Supabase RLS 42501] Permissão negada pela política de segurança (Row-Level Security) na tabela "${table}". Execute o script SQL no Supabase para conceder acesso à chave pública anon.`
+        : `Erro ao sincronizar com Supabase na tabela ${table}:`,
+      isRls ? error?.message || error : error
+    );
     addSyncLog({
       table,
       action: action.toUpperCase() as any,
       origin: 'LOCAL_APP',
-      description: `Erro ao enviar para o Supabase (enfileirado para reenvio automático): ${error?.message || error}`,
+      description: isRls
+        ? `🛡️ Bloqueio RLS na tabela "${table}" (42501). Aplique o script SQL no Supabase para conceder permissões à chave anon.`
+        : `Erro ao enviar para o Supabase (enfileirado para reenvio automático): ${error?.message || error}`,
       status: 'error',
     });
     return { success: false, error };
@@ -1489,14 +1772,23 @@ export async function pushBatchRecordsToSupabase(
     if (isTableMissingError(error)) {
       return { success: false, error: `Tabela "${table}" ainda não configurada no Supabase (PGRST205/42P01)` };
     }
+    const isRls = isRlsError(error);
     // Queue individual items for retry
-    records.forEach((r) => enqueuePendingSync(table, action, r));
-    console.warn(`Erro ao sincronizar lote na tabela ${table}:`, error);
+    records.forEach((r) => enqueuePendingSync(table, action, r, isRls ? Date.now() + 10 * 60 * 1000 : undefined));
+    throttledWarn(
+      `batch-err-${table}`,
+      isRls
+        ? `[Supabase RLS 42501] Envio em lote na tabela "${table}" bloqueado por segurança RLS.`
+        : `Erro ao sincronizar lote na tabela ${table}:`,
+      isRls ? error?.message || error : error
+    );
     addSyncLog({
       table,
       action: action.toUpperCase() as any,
       origin: 'LOCAL_APP',
-      description: `Erro no envio em lote (${records.length} registos guardados na fila de reenvio): ${error?.message || error}`,
+      description: isRls
+        ? `🛡️ Envio de lote bloqueado por política RLS na tabela "${table}" (42501).`
+        : `Erro no envio em lote (${records.length} registos guardados na fila de reenvio): ${error?.message || error}`,
       status: 'error',
     });
     return { success: false, error };
@@ -2070,3 +2362,164 @@ export async function fetchLatestShiftFromSupabase(companyId: string): Promise<C
     return null;
   }
 }
+
+/**
+ * Elimina completamente todos os dados e informações de uma empresa no Supabase:
+ * Remove em cascata registos em todas as tabelas multi-tenant associadas à empresa (company_id)
+ * e por fim elimina o registo da empresa na tabela 'empresas'.
+ */
+export async function purgeCompanyFromSupabase(
+  companyId: string,
+  companyName?: string
+): Promise<{ success: boolean; deletedCount: number; errors: any[] }> {
+  const errors: any[] = [];
+  let deletedCount = 0;
+
+  // Lista de todas as tabelas multi-tenant vinculadas por company_id
+  const childTables: TableSyncName[] = [
+    'metas_vendas',
+    'escalas_trabalho',
+    'recibos_salario',
+    'registos_ponto',
+    'colaboradores',
+    'turnos_caixa',
+    'contas_receber',
+    'contas_pagar',
+    'vendas',
+    'stock',
+    'armazens',
+    'produtos',
+    'categorias',
+    'clientes',
+    'fornecedores',
+    'usuarios',
+    'lojas',
+    'profiles',
+  ];
+
+  for (const table of childTables) {
+    try {
+      const { error, count } = await supabase
+        .from(table)
+        .delete({ count: 'exact' })
+        .eq('company_id', companyId);
+
+      if (error) {
+        if (!isTableMissingError(error)) {
+          console.warn(`[purgeCompanyFromSupabase] Aviso ao eliminar registos de ${table}:`, error.message);
+          errors.push({ table, error: error.message });
+        }
+      } else if (count) {
+        deletedCount += count;
+      }
+
+      // Se profiles ou usuarios tiverem sido salvos com o nome da empresa como company_id
+      if (companyName && companyName.trim() && companyName !== companyId && (table === 'profiles' || table === 'usuarios')) {
+        try {
+          const { count: nameCount } = await supabase
+            .from(table)
+            .delete({ count: 'exact' })
+            .eq('company_id', companyName.trim());
+          if (nameCount) deletedCount += nameCount;
+        } catch {}
+      }
+    } catch (err: any) {
+      if (!isTableMissingError(err)) {
+        errors.push({ table, error: err?.message || String(err) });
+      }
+    }
+  }
+
+  // Eliminar na tabela principal 'empresas'
+  try {
+    const { error, count } = await supabase
+      .from('empresas')
+      .delete({ count: 'exact' })
+      .eq('id', companyId);
+
+    if (error) {
+      if (!isTableMissingError(error)) {
+        console.warn('[purgeCompanyFromSupabase] Aviso ao eliminar da tabela empresas:', error.message);
+        errors.push({ table: 'empresas', error: error.message });
+      }
+    } else if (count) {
+      deletedCount += count;
+    }
+  } catch (err: any) {
+    if (!isTableMissingError(err)) {
+      errors.push({ table: 'empresas', error: err?.message || String(err) });
+    }
+  }
+
+  addSyncLog({
+    table: 'empresas',
+    action: 'DELETE',
+    origin: 'LOCAL_APP',
+    description: `Empresa "${companyId}" e todos os seus registos foram eliminados no Supabase (${deletedCount} registos eliminados).`,
+    status: errors.length === 0 ? 'success' : 'info',
+  });
+
+  return { success: errors.length === 0, deletedCount, errors };
+}
+
+/**
+ * Remove todos os itens bloqueados por erro de RLS (42501) da fila de sincronização IndexedDB.
+ */
+export async function clearRlsItemsFromSyncQueue(): Promise<number> {
+  try {
+    const queue = await offlineDB.getPendingSyncQueue();
+    let removedCount = 0;
+    for (const item of queue) {
+      const isRls =
+        item.table === 'clientes' ||
+        (item.lastError &&
+          (item.lastError.includes('row-level security') ||
+            item.lastError.includes('42501') ||
+            item.lastError.includes('RLS')));
+      if (isRls) {
+        await offlineDB.removeSyncQueueItem(item.id);
+        removedCount++;
+      }
+    }
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(
+        new CustomEvent('offline_sync_queue_changed', { detail: { action: 'clear_rls', removedCount } })
+      );
+    }
+    addSyncLog({
+      table: 'clientes',
+      action: 'DELETE',
+      origin: 'LOCAL_APP',
+      description: `🧹 Limpeza da fila: ${removedCount} operações bloqueadas por RLS foram removidas da fila local.`,
+      status: 'info',
+    });
+    return removedCount;
+  } catch (err) {
+    console.error('Erro ao limpar itens de RLS da fila:', err);
+    return 0;
+  }
+}
+
+/**
+ * Limpa completamente a fila de sincronização pendente no IndexedDB e localStorage.
+ */
+export async function clearAllPendingSyncQueue(): Promise<void> {
+  try {
+    await offlineDB.clearSyncQueue();
+    localStorage.removeItem(PENDING_SYNC_STORAGE_KEY);
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('offline_sync_queue_changed', { detail: { action: 'clear_all' } }));
+    }
+    addSyncLog({
+      table: 'ALL',
+      action: 'DELETE',
+      origin: 'LOCAL_APP',
+      description: '🧹 Fila de sincronização offline limpa com sucesso.',
+      status: 'info',
+    });
+  } catch (err) {
+    console.error('Erro ao limpar fila de sincronização offline:', err);
+  }
+}
+
+

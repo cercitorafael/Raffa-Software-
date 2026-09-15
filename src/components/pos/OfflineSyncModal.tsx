@@ -229,8 +229,8 @@ export const OfflineSyncModal: React.FC<OfflineSyncModalProps> = ({ isOpen, onCl
                       <tr>
                         <th className="p-2.5">ID / Documento</th>
                         <th className="p-2.5">Data/Hora</th>
-                        <th className="p-2.5">Ação</th>
-                        <th className="p-2.5">Cliente / Detalhes</th>
+                        <th className="p-2.5">Ação / Tabela</th>
+                        <th className="p-2.5">Tentativas & Backoff Exponencial</th>
                         <th className="p-2.5 text-right">Valor</th>
                         <th className="p-2.5 text-center">Estado</th>
                       </tr>
@@ -238,27 +238,60 @@ export const OfflineSyncModal: React.FC<OfflineSyncModalProps> = ({ isOpen, onCl
                     <tbody className="divide-y divide-[#262626] font-mono">
                       {syncQueue.map((item) => {
                         const sale = item.action === 'create_sale' ? (item.data as any) : null;
+                        const retryCount = item.retryCount || 0;
+                        const msUntilRetry = (item.nextRetryTime || 0) - Date.now();
+                        const secondsUntilRetry = msUntilRetry > 0 ? Math.ceil(msUntilRetry / 1000) : 0;
+                        
                         return (
                           <tr key={item.id} className="hover:bg-[#1a1a1a]/60 text-neutral-300">
                             <td className="p-2.5 font-bold text-[#c5a47e]">
-                              {sale ? sale.invoiceNumber : item.id.slice(0, 12)}
+                              <div>{sale ? sale.invoiceNumber : item.id.slice(0, 16)}</div>
+                              {sale && (
+                                <div className="text-[10px] text-neutral-400 font-normal">
+                                  {sale.customerName || 'Consumidor Final'}
+                                </div>
+                              )}
                             </td>
                             <td className="p-2.5 text-neutral-400">{formatDate(item.timestamp)}</td>
                             <td className="p-2.5">
                               <span className="px-1.5 py-0.5 rounded-sm bg-neutral-800 text-[10px] text-neutral-300">
-                                {item.action}
+                                {item.table ? `${item.action} (${item.table})` : item.action}
                               </span>
                             </td>
-                            <td className="p-2.5 text-[#e5e5e5]">
-                              {sale ? `${sale.customerName} (${sale.customerTaxNumber})` : 'Operação de Sistema'}
+                            <td className="p-2.5">
+                              <div className="flex flex-col text-[11px]">
+                                <span className={retryCount > 0 ? 'text-amber-400 font-semibold' : 'text-neutral-400'}>
+                                  {retryCount === 0 ? '0 tentativas (pronto)' : `${retryCount}ª tentativa`}
+                                </span>
+                                {secondsUntilRetry > 0 ? (
+                                  <span className="text-[10px] text-cyan-400">
+                                    Próximo retry em {secondsUntilRetry}s (backoff)
+                                  </span>
+                                ) : retryCount > 0 ? (
+                                  <span className="text-[10px] text-emerald-400">
+                                    Pronto para re-tentar
+                                  </span>
+                                ) : null}
+                                {item.lastError && (
+                                  <span className="text-[9px] text-rose-400/80 truncate max-w-xs" title={item.lastError}>
+                                    Erro: {item.lastError}
+                                  </span>
+                                )}
+                              </div>
                             </td>
                             <td className="p-2.5 text-right font-bold text-emerald-400">
                               {sale ? formatCurrency(sale.total) : '—'}
                             </td>
                             <td className="p-2.5 text-center">
-                              <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                                PENDENTE
-                              </span>
+                              {retryCount > 0 ? (
+                                <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                                  RETRY ({retryCount})
+                                </span>
+                              ) : (
+                                <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
+                                  PENDENTE
+                                </span>
+                              )}
                             </td>
                           </tr>
                         );

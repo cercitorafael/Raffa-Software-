@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Database,
   UserPlus,
@@ -44,6 +44,7 @@ import {
   Building,
   UserCheck,
   Globe,
+  ShieldAlert,
 } from 'lucide-react';
 import {
   supabase,
@@ -58,6 +59,8 @@ import {
   diagnosticarTodasTabelasSupabase,
   TableDiagnosticResult,
   SUPABASE_SQL_SCHEMA,
+  SQL_RLS_FIX_CLIENTES,
+  SQL_RLS_FIX_ALL,
   extractProjectRef,
   getSupabaseCredentials,
   saveSupabaseCredentials,
@@ -69,6 +72,8 @@ import {
   TableSyncName,
   pushTableToSupabase,
   pullTableFromSupabase,
+  clearRlsItemsFromSyncQueue,
+  clearAllPendingSyncQueue,
 } from '../../lib/supabaseSync';
 
 export const SupabaseUserManager: React.FC = () => {
@@ -109,6 +114,15 @@ export const SupabaseUserManager: React.FC = () => {
   // Multi-Tenant Scoping Filters for Import / Export
   const [selectedCompanyId, setSelectedCompanyId] = useState<string>(currentCompany?.id || 'ALL');
   const [selectedProfileId, setSelectedProfileId] = useState<string>('ALL');
+
+  const uniqueCompanies = useMemo(() => {
+    const seen = new Set<string>();
+    return (companies || []).filter((c) => {
+      if (!c || !c.id || seen.has(c.id)) return false;
+      seen.add(c.id);
+      return true;
+    });
+  }, [companies]);
 
   const [connStatus, setConnStatus] = useState<{
     tested: boolean;
@@ -154,6 +168,10 @@ export const SupabaseUserManager: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [logFilter, setLogFilter] = useState<'ALL' | 'INSERT' | 'UPDATE' | 'DELETE' | 'ERROR'>('ALL');
   const [copiedSql, setCopiedSql] = useState(false);
+  const [copiedClientesSql, setCopiedClientesSql] = useState(false);
+  const [copiedAllRlsSql, setCopiedAllRlsSql] = useState(false);
+  const [clearingQueue, setClearingQueue] = useState(false);
+  const [selectedSqlSnippet, setSelectedSqlSnippet] = useState<'full' | 'clientes' | 'all_rls'>('full');
   const [copiedCode, setCopiedCode] = useState(false);
 
   // Password visibility and copying states for users table
@@ -178,7 +196,7 @@ export const SupabaseUserManager: React.FC = () => {
     email: '',
     telefone: '',
     cargo: 'Operador',
-    pin: '1234',
+    pin: 'KEYZOM',
     password: '',
     senha: '',
     ativo: true,
@@ -390,9 +408,9 @@ export const SupabaseUserManager: React.FC = () => {
       email: '',
       telefone: '',
       cargo: 'Operador',
-      pin: '1234',
-      password: '1234',
-      senha: '1234',
+      pin: 'KEYZOM',
+      password: 'KEYZOM',
+      senha: 'KEYZOM',
       ativo: true,
       nif: '',
       avatar_url: '',
@@ -407,9 +425,9 @@ export const SupabaseUserManager: React.FC = () => {
       email: u.email,
       telefone: u.telefone || '',
       cargo: u.cargo || 'Operador',
-      pin: u.pin || '1234',
-      password: u.password || u.senha || u.pin || '1234',
-      senha: u.senha || u.password || u.pin || '1234',
+      pin: u.pin || 'KEYZOM',
+      password: u.password || u.senha || u.pin || 'KEYZOM',
+      senha: u.senha || u.password || u.pin || 'KEYZOM',
       ativo: u.ativo !== undefined ? u.ativo : true,
       nif: u.nif || '',
       avatar_url: u.avatar_url || '',
@@ -468,6 +486,43 @@ export const SupabaseUserManager: React.FC = () => {
     notify('Script SQL completo copiado para a área de transferência!', 'success');
     setTimeout(() => setCopiedSql(false), 2500);
   };
+
+  const handleCopyClientesRlsSql = () => {
+    navigator.clipboard.writeText(SQL_RLS_FIX_CLIENTES);
+    setCopiedClientesSql(true);
+    notify('SQL de correção para tabela "clientes" copiado para a área de transferência!', 'success');
+    setTimeout(() => setCopiedClientesSql(false), 3000);
+  };
+
+  const handleCopyAllRlsSql = () => {
+    navigator.clipboard.writeText(SQL_RLS_FIX_ALL);
+    setCopiedAllRlsSql(true);
+    notify('SQL de correção RLS para todas as tabelas copiado!', 'success');
+    setTimeout(() => setCopiedAllRlsSql(false), 3000);
+  };
+
+  const handleClearRlsQueue = async () => {
+    setClearingQueue(true);
+    try {
+      const removed = await clearRlsItemsFromSyncQueue();
+      notify(`Fila limpa: ${removed} operações bloqueadas por RLS foram removidas.`, 'info');
+    } catch (e: any) {
+      notify(`Erro ao limpar fila: ${e?.message || e}`, 'error');
+    } finally {
+      setClearingQueue(false);
+    }
+  };
+
+  const hasRlsError = useMemo(() => {
+    return supabaseSyncLogs.some(
+      (l) =>
+        l.status === 'error' &&
+        (l.description.includes('42501') ||
+          l.description.includes('RLS') ||
+          l.description.includes('row-level security') ||
+          l.description.includes('segurança'))
+    );
+  }, [supabaseSyncLogs]);
 
   const nodeSnippet = `// Instalação: npm install @supabase/supabase-js
 import { createClient } from '@supabase/supabase-js';
@@ -654,6 +709,61 @@ const { data, error } = await supabase.from('produtos').upsert([
         </div>
       )}
 
+      {/* Banner de Aviso e Correção de Bloqueio RLS (Erro 42501 na tabela "clientes") */}
+      {hasRlsError && (
+        <div className="mx-4 mt-3 p-4 bg-rose-950/40 border border-rose-500/50 rounded-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-3 text-xs text-rose-200">
+          <div className="flex items-start space-x-3">
+            <ShieldAlert className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
+            <div>
+              <div className="font-bold text-sm text-white flex items-center gap-2">
+                <span>🛡️ Bloqueio de Segurança RLS Detectado (Erro 42501 na tabela "clientes")</span>
+                <span className="px-2 py-0.5 bg-rose-500/20 text-rose-300 rounded text-[10px] uppercase font-mono">
+                  Postgres 42501
+                </span>
+              </div>
+              <p className="text-rose-300/90 mt-1 leading-relaxed">
+                O Supabase está a rejeitar sincronizações na tabela <strong className="text-white">clientes</strong> porque as políticas de Row-Level Security requerem permissão de escrita para a chave pública anônima (<code className="text-white bg-black/40 px-1 py-0.5 rounded">anon</code>). Copie e execute o script SQL de desbloqueio no Supabase.
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center flex-wrap gap-2 shrink-0">
+            <button
+              onClick={handleCopyClientesRlsSql}
+              className="px-3 py-1.5 bg-rose-500 hover:bg-rose-400 text-black font-bold rounded-lg flex items-center space-x-1.5 cursor-pointer shadow-md transition-all"
+            >
+              {copiedClientesSql ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+              <span>{copiedClientesSql ? 'SQL Clientes Copiado!' : 'Copiar SQL Clientes (3 Linhas)'}</span>
+            </button>
+            <button
+              onClick={handleCopyAllRlsSql}
+              className="px-3 py-1.5 bg-[#1c1c1c] hover:bg-[#252525] text-rose-200 border border-rose-800/40 rounded-lg flex items-center space-x-1.5 cursor-pointer"
+              title="Copiar script para habilitar escrita em todas as tabelas"
+            >
+              {copiedAllRlsSql ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+              <span>{copiedAllRlsSql ? 'SQL Geral Copiado!' : 'Copiar Todas Tabelas'}</span>
+            </button>
+            <a
+              href={sqlEditorUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="px-3 py-1.5 bg-[#171717] hover:bg-[#222222] text-white border border-[#333] rounded-lg flex items-center space-x-1"
+            >
+              <span>Abrir SQL Editor</span>
+              <ExternalLink className="w-3 h-3" />
+            </a>
+            <button
+              onClick={handleClearRlsQueue}
+              disabled={clearingQueue}
+              className="px-3 py-1.5 bg-[#201010] hover:bg-[#301515] text-rose-300 border border-rose-800/40 rounded-lg flex items-center space-x-1 cursor-pointer"
+              title="Limpar operações da fila offline que falharam com erro 42501"
+            >
+              <Trash2 className="w-3 h-3" />
+              <span>{clearingQueue ? 'A Limpar...' : 'Limpar Fila'}</span>
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Navigation Tabs */}
       <div className="px-4 bg-[#0e0e0e] border-b border-[#262626] flex space-x-4 overflow-x-auto shrink-0 mt-2">
         <button
@@ -782,7 +892,7 @@ const { data, error } = await supabase.from('produtos').upsert([
                     className="w-full bg-[#0d0d0d] border border-[#2a2a2a] rounded-lg px-3 py-2 text-xs text-neutral-200 focus:outline-hidden focus:border-[#c5a47e]"
                   >
                     <option value="ALL">🌐 Todas as Empresas (Global / Multi-Empresas)</option>
-                    {(companies || []).map((c) => (
+                    {uniqueCompanies.map((c) => (
                       <option key={c.id} value={c.id}>
                         🏢 {c.name || c.tradeName} ({c.id})
                       </option>
@@ -1209,7 +1319,7 @@ const { data, error } = await supabase.from('produtos').upsert([
                       filteredUsuarios.map((u) => {
                         const userKey = String(u.id || u.email);
                         const isPasswordVisible = !!showPasswordMap[userKey];
-                        const userPass = u.password || u.senha || u.pin || (u.cargo === 'Administrador' ? 'admin' : '1234');
+                        const userPass = u.password || u.senha || u.pin || (u.cargo === 'Administrador' ? 'admin' : 'KEYZOM');
                         const isCopied = copiedPasswordUserId === (u.id || u.email);
 
                         return (
@@ -1321,16 +1431,16 @@ const { data, error } = await supabase.from('produtos').upsert([
             </div>
         )}
 
-        {/* TAB: SQL SCHEMA */}
+        {/* TAB: SQL SCHEMA & RLS SCRIPTS */}
         {activeTab === 'sql' && (
           <div className="space-y-4">
-            <div className="p-4 bg-[#141414] border border-[#262626] rounded-xl space-y-2">
-              <div className="flex items-center justify-between">
+            <div className="p-4 bg-[#141414] border border-[#262626] rounded-xl space-y-3">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div className="flex items-center space-x-2">
                   <Server className="w-5 h-5 text-[#c5a47e]" />
-                  <h3 className="text-sm font-bold text-white">Script SQL Completo para o Supabase</h3>
+                  <h3 className="text-sm font-bold text-white">Scripts SQL & Políticas RLS para Supabase</h3>
                 </div>
-                <div className="flex items-center space-x-2">
+                <div className="flex items-center flex-wrap gap-2">
                   <a
                     href={sqlEditorUrl}
                     target="_blank"
@@ -1341,21 +1451,101 @@ const { data, error } = await supabase.from('produtos').upsert([
                     <ExternalLink className="w-3.5 h-3.5" />
                   </a>
                   <button
-                    onClick={handleCopySql}
-                    className="px-3 py-1.5 bg-[#c5a47e] text-black font-bold text-xs rounded-lg flex items-center space-x-1.5 hover:bg-[#b5946e] cursor-pointer"
+                    onClick={() => {
+                      if (selectedSqlSnippet === 'clientes') {
+                        handleCopyClientesRlsSql();
+                      } else if (selectedSqlSnippet === 'all_rls') {
+                        handleCopyAllRlsSql();
+                      } else {
+                        handleCopySql();
+                      }
+                    }}
+                    className="px-3 py-1.5 bg-[#c5a47e] text-black font-bold text-xs rounded-lg flex items-center space-x-1.5 hover:bg-[#b5946e] cursor-pointer shadow-md"
                   >
-                    {copiedSql ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                    <span>{copiedSql ? 'Copiado!' : 'Copiar SQL'}</span>
+                    {((selectedSqlSnippet === 'clientes' && copiedClientesSql) ||
+                      (selectedSqlSnippet === 'all_rls' && copiedAllRlsSql) ||
+                      (selectedSqlSnippet === 'full' && copiedSql)) ? (
+                      <Check className="w-3.5 h-3.5" />
+                    ) : (
+                      <Copy className="w-3.5 h-3.5" />
+                    )}
+                    <span>
+                      {selectedSqlSnippet === 'clientes' && copiedClientesSql
+                        ? 'SQL Clientes Copiado!'
+                        : selectedSqlSnippet === 'all_rls' && copiedAllRlsSql
+                        ? 'SQL RLS Copiado!'
+                        : copiedSql
+                        ? 'Copiado!'
+                        : 'Copiar SQL Selecionado'}
+                    </span>
                   </button>
                 </div>
               </div>
+
+              {/* Sub-Tabs for SQL Snippets */}
+              <div className="flex items-center gap-2 pt-1 border-t border-[#222]">
+                <button
+                  onClick={() => setSelectedSqlSnippet('clientes')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center space-x-1.5 transition-all cursor-pointer ${
+                    selectedSqlSnippet === 'clientes'
+                      ? 'bg-rose-500/20 text-rose-300 border border-rose-500/50'
+                      : 'bg-[#181818] text-neutral-400 hover:text-neutral-200 border border-transparent'
+                  }`}
+                >
+                  <ShieldAlert className="w-3.5 h-3.5 text-rose-400" />
+                  <span>⚡ Desbloqueio RLS: Tabela Clientes (Erro 42501)</span>
+                </button>
+
+                <button
+                  onClick={() => setSelectedSqlSnippet('all_rls')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center space-x-1.5 transition-all cursor-pointer ${
+                    selectedSqlSnippet === 'all_rls'
+                      ? 'bg-amber-500/20 text-amber-300 border border-amber-500/50'
+                      : 'bg-[#181818] text-neutral-400 hover:text-neutral-200 border border-transparent'
+                  }`}
+                >
+                  <ShieldCheck className="w-3.5 h-3.5 text-amber-400" />
+                  <span>🛡️ Desbloqueio RLS: Todas as Tabelas</span>
+                </button>
+
+                <button
+                  onClick={() => setSelectedSqlSnippet('full')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center space-x-1.5 transition-all cursor-pointer ${
+                    selectedSqlSnippet === 'full'
+                      ? 'bg-[#c5a47e]/20 text-[#c5a47e] border border-[#c5a47e]/50'
+                      : 'bg-[#181818] text-neutral-400 hover:text-neutral-200 border border-transparent'
+                  }`}
+                >
+                  <Server className="w-3.5 h-3.5" />
+                  <span>Script Completo (19 Tabelas & Estrutura)</span>
+                </button>
+              </div>
+
               <p className="text-xs text-neutral-400">
-                Execute o script abaixo diretamente no <strong>SQL Editor</strong> do Supabase. Inclui tabelas completas, chaves primárias e <strong>REPLICA IDENTITY FULL</strong> para suporte total à sincronização de eliminações (DELETE).
+                {selectedSqlSnippet === 'clientes'
+                  ? 'Este script remove políticas restritivas antigas e concede acesso total de leitura e escrita para chaves anon/authenticated na tabela "clientes".'
+                  : selectedSqlSnippet === 'all_rls'
+                  ? 'Este script redefine as políticas RLS para todas as 19 tabelas do sistema, garantindo permissão irrestrita para as chaves públicas da aplicação.'
+                  : 'Script DDL completo para criar todas as 19 tabelas do sistema, chaves estrangeiras, réplica em tempo real e políticas RLS.'}
               </p>
             </div>
 
-            <div className="relative bg-[#0d0d0d] border border-[#262626] rounded-xl p-4 font-mono text-xs text-emerald-400 overflow-x-auto max-h-[500px]">
-              <pre>{SUPABASE_SQL_SCHEMA}</pre>
+            <div className="relative bg-[#0d0d0d] border border-[#262626] rounded-xl p-4 font-mono text-xs overflow-x-auto max-h-[500px]">
+              <pre
+                className={
+                  selectedSqlSnippet === 'clientes'
+                    ? 'text-rose-300'
+                    : selectedSqlSnippet === 'all_rls'
+                    ? 'text-amber-300'
+                    : 'text-emerald-400'
+                }
+              >
+                {selectedSqlSnippet === 'clientes'
+                  ? SQL_RLS_FIX_CLIENTES
+                  : selectedSqlSnippet === 'all_rls'
+                  ? SQL_RLS_FIX_ALL
+                  : SUPABASE_SQL_SCHEMA}
+              </pre>
             </div>
           </div>
         )}
@@ -1619,7 +1809,7 @@ const { data, error } = await supabase.from('produtos').upsert([
                     type="text"
                     value={formData.password || formData.senha || ''}
                     onChange={(e) => setFormData({ ...formData, password: e.target.value, senha: e.target.value })}
-                    placeholder="ex: admin ou 1234"
+                    placeholder="ex: admin ou KEYZOM"
                     className="w-full px-3 py-2 bg-[#0e0e0e] border border-[#2c2c2c] rounded-lg text-white placeholder-neutral-600 focus:outline-hidden focus:border-[#c5a47e] font-mono"
                   />
                   <span className="text-[10px] text-neutral-500 mt-0.5 block">Acesso ao portal e web</span>
@@ -1627,14 +1817,14 @@ const { data, error } = await supabase.from('produtos').upsert([
                 <div>
                   <label className="text-neutral-300 block mb-1 font-semibold flex items-center space-x-1.5">
                     <Lock className="w-3.5 h-3.5 text-[#c5a47e]" />
-                    <span>PIN POS (4 dígitos)</span>
+                    <span>PIN POS</span>
                   </label>
                   <input
                     type="text"
-                    maxLength={6}
+                    maxLength={10}
                     value={formData.pin || ''}
                     onChange={(e) => setFormData({ ...formData, pin: e.target.value })}
-                    placeholder="ex: 1234"
+                    placeholder="ex: KEYZOM"
                     className="w-full px-3 py-2 bg-[#0e0e0e] border border-[#2c2c2c] rounded-lg text-white placeholder-neutral-600 focus:outline-hidden focus:border-[#c5a47e] font-mono"
                   />
                   <span className="text-[10px] text-neutral-500 mt-0.5 block">Código de desbloqueio rápido no POS</span>

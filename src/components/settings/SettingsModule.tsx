@@ -26,6 +26,7 @@ import {
   Plus,
   Edit2,
   Trash2,
+  AlertTriangle,
   X,
   Download,
   Upload,
@@ -57,6 +58,8 @@ import { VatSettingsSection } from './VatSettingsSection';
 import { ShiftManagementSection } from './ShiftManagementSection';
 import { CompanyDocumentButton } from './CompanyDocumentButton';
 import { RegisterCompanyModal } from '../auth/RegisterCompanyModal';
+import { DeleteCompanyBackupModal } from './DeleteCompanyBackupModal';
+import { CompanySafetyDump } from '../../utils/companyBackup';
 import { calculateSubscription, WHATSAPP_CONTACTS, getWhatsAppRenewalUrl } from '../../utils/subscription';
 import {
   downloadAttachedDocument,
@@ -71,9 +74,14 @@ interface SettingsModuleProps {
 
 export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'company' }) => {
   const [showRegisterCompanyModal, setShowRegisterCompanyModal] = useState(false);
+  const [deleteBackupModalOpen, setDeleteBackupModalOpen] = useState(false);
+  const [companySafetyDump, setCompanySafetyDump] = useState<CompanySafetyDump | null>(null);
   const {
+    companies,
     currentCompany,
     updateCompany,
+    deleteCompany,
+    createCompanySafetyDump,
     currentStore,
     currentTerminal,
     stores,
@@ -268,7 +276,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
     password: '',
     roleId: roles?.[0]?.id || 'admin',
     storeIds: [currentStore?.id || 'store-lis-1'],
-    pin: '1234',
+    pin: 'KEYZOM',
     isActive: true,
   });
   const [isSyncingUsers, setIsSyncingUsers] = useState(false);
@@ -343,6 +351,13 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
     e.preventDefault();
     updateCompany(companyForm);
     notify('Definições da Empresa atualizadas com sucesso!', 'success');
+  };
+
+  const handleDeleteCurrentCompany = () => {
+    if (!currentCompany?.id) return;
+    const dump = createCompanySafetyDump(currentCompany.id);
+    setCompanySafetyDump(dump);
+    setDeleteBackupModalOpen(true);
   };
 
   // ================= COMPANY DOCUMENT HANDLERS =================
@@ -434,12 +449,12 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
         name: userForm.name,
         username: userForm.username,
         email: userForm.email,
-        password: userForm.password || editingUser.password || '123456',
+        password: userForm.password || editingUser.password || 'KEYZOM',
         role: userForm.roleId as Role,
         roleId: userForm.roleId,
         storeId: userForm.storeIds?.[0] || currentStore?.id || 'store-lis-1',
         storeIds: userForm.storeIds,
-        pin: userForm.pin,
+        pin: userForm.pin || 'KEYZOM',
         isActive: userForm.isActive,
       });
       setEditingUser(null);
@@ -450,12 +465,12 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
         name: userForm.name,
         username: userForm.username,
         email: userForm.email || `${userForm.username}@empresa.pt`,
-        password: userForm.password || '123456',
+        password: userForm.password || 'KEYZOM',
         role: userForm.roleId as Role,
         roleId: userForm.roleId,
         storeId: userForm.storeIds?.[0] || currentStore?.id || 'store-lis-1',
         storeIds: userForm.storeIds,
-        pin: userForm.pin || '1234',
+        pin: userForm.pin || 'KEYZOM',
         isActive: userForm.isActive,
       } as any);
       setShowNewUserModal(false);
@@ -791,22 +806,41 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
             </div>
 
             <div className="bg-[#141414] rounded-xl border border-[#262626] p-6 shadow-sm">
-              <div className="flex items-center justify-between pb-4 border-b border-[#262626]">
-                <div className="flex items-center space-x-2">
-                  <Building className="w-5 h-5 text-[#c5a47e]" />
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 border-b border-[#262626] gap-3">
+                <div className="flex items-center space-x-2.5">
+                  <div className="w-9 h-9 rounded-lg bg-[#c5a47e]/15 border border-[#c5a47e]/30 flex items-center justify-center text-[#c5a47e]">
+                    <Building className="w-5 h-5 text-[#c5a47e]" />
+                  </div>
                   <div>
-                    <h4 className="text-sm font-serif font-bold text-[#e5e5e5]">Identificação da Entidade Fiscal</h4>
-                    <p className="text-xs text-neutral-400">Dados legais impressos nos documentos fiscais e exportação SAF-T</p>
+                    <div className="flex items-center space-x-2">
+                      <h4 className="text-sm font-serif font-bold text-[#e5e5e5]">Identificação da Entidade Fiscal</h4>
+                      <span className="text-[10px] px-2 py-0.5 rounded-full font-mono font-bold bg-[#c5a47e]/15 text-[#c5a47e] border border-[#c5a47e]/30">
+                        Empresa Conectada
+                      </span>
+                    </div>
+                    <p className="text-xs text-neutral-400">Dados legais da empresa em sessão impressos nos documentos fiscais e exportação SAF-T</p>
                   </div>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setShowRegisterCompanyModal(true)}
-                  className="px-3.5 py-1.5 bg-[#c5a47e]/15 hover:bg-[#c5a47e]/25 text-[#c5a47e] border border-[#c5a47e]/40 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center space-x-1.5 shadow-sm"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>+ Cadastrar Nova Empresa Cliente</span>
-                </button>
+                <div className="flex items-center flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowRegisterCompanyModal(true)}
+                    className="px-3.5 py-1.5 bg-[#c5a47e]/15 hover:bg-[#c5a47e]/25 text-[#c5a47e] border border-[#c5a47e]/40 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center space-x-1.5 shadow-sm"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>+ Cadastrar Nova Empresa</span>
+                  </button>
+                  <button
+                    type="button"
+                    id="btn-delete-company-header"
+                    onClick={handleDeleteCurrentCompany}
+                    className="px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center space-x-1.5 shadow-sm bg-rose-500/10 hover:bg-rose-600 text-rose-400 hover:text-white border border-rose-500/30"
+                    title={`Eliminar permanentemente a empresa logada "${currentCompany?.name}" e todos os seus dados no Supabase`}
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Deletar Empresa</span>
+                  </button>
+                </div>
               </div>
 
               <form onSubmit={handleSaveCompany} className="mt-6 space-y-4">
@@ -940,8 +974,18 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
                     />
                   </div>
 
-                  {/* Extrema Direita: Guardar Alterações Fiscais */}
-                  <div className="flex items-center justify-end">
+                  {/* Extrema Direita: Botões de Ação Fiscais */}
+                  <div className="flex items-center justify-end space-x-2.5">
+                    <button
+                      type="button"
+                      id="btn-delete-company-footer"
+                      onClick={handleDeleteCurrentCompany}
+                      className="px-4 py-2.5 rounded-lg font-bold text-xs transition-all flex items-center space-x-1.5 cursor-pointer shadow-sm bg-rose-500/10 hover:bg-rose-600 text-rose-400 hover:text-white border border-rose-500/30"
+                      title={`Eliminar permanentemente a empresa logada "${currentCompany?.name}" e todos os seus dados no Supabase`}
+                    >
+                      <Trash2 className="w-4 h-4" />
+                      <span>Deletar Empresa</span>
+                    </button>
                     <button
                       type="submit"
                       id="btn-save-company-fiscal"
@@ -1263,6 +1307,37 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
                     </button>
                   );
                 })}
+              </div>
+            </div>
+
+            {/* Danger Zone: Eliminar Empresa Logada e Dados no Supabase */}
+            <div className="bg-[#141414] rounded-xl border border-rose-500/20 p-6 shadow-sm">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div className="flex items-start space-x-3.5">
+                  <div className="w-10 h-10 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400 flex items-center justify-center shrink-0 mt-0.5">
+                    <AlertTriangle className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-bold text-rose-400">Zona de Perigo &mdash; Eliminar Empresa e Dados do Supabase</h4>
+                    <p className="text-xs text-neutral-300 mt-1 max-w-xl">
+                      Elimina permanentemente a empresa atualmente logada <strong className="text-white">{currentCompany?.name}</strong> (NIF: {currentCompany?.taxNumber || 'Sem NIF'}) e <strong>todos os seus dados vinculados no Supabase</strong> (vendas, produtos, stock, lojas, categorias, clientes e utilizadores).
+                    </p>
+                    <p className="text-[11px] text-neutral-400 mt-2">
+                      Após a conclusão da eliminação em nuvem e local, o sistema encerra a sessão e retorna diretamente à tela de login.
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  id="btn-delete-company-danger-zone"
+                  onClick={handleDeleteCurrentCompany}
+                  className="px-4 py-2.5 rounded-xl font-bold text-xs flex items-center space-x-2 transition-all shrink-0 cursor-pointer shadow-sm bg-rose-600 hover:bg-rose-500 text-white shadow-rose-900/30"
+                  title={`Eliminar permanentemente a empresa logada "${currentCompany?.name}" e dados no Supabase`}
+                >
+                  <Trash2 className="w-4 h-4" />
+                  <span>Deletar Empresa e Dados</span>
+                </button>
               </div>
             </div>
           </div>
@@ -1853,7 +1928,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
                         password: '',
                         roleId: roles?.[0]?.id || 'admin',
                         storeIds: [currentStore?.id || 'store-lis-1'],
-                        pin: '1234',
+                        pin: 'KEYZOM',
                         isActive: true,
                       });
                       setShowNewUserModal(true);
@@ -1890,7 +1965,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
                         ? [u.storeId]
                         : [currentStore?.id || 'store-lis-1'];
                       const displayUsername = u.username || (u.name || 'user').toLowerCase().replace(/\s+/g, '.');
-                      const userPass = u.password || (u.role === 'admin' ? 'admin' : u.pin || '1234');
+                      const userPass = u.password || (u.role === 'admin' ? 'admin' : u.pin || 'KEYZOM');
                       const isPasswordVisible = !!showPasswordMap[u.id];
 
                       return (
@@ -1989,10 +2064,10 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
                                     name: u.name,
                                     username: displayUsername,
                                     email: u.email,
-                                    password: u.password || (u.role === 'admin' ? 'admin' : u.pin || '1234'),
+                                    password: u.password || (u.role === 'admin' ? 'admin' : u.pin || 'KEYZOM'),
                                     roleId: u.roleId || u.role || 'caixa',
                                     storeIds: userStores,
-                                    pin: u.pin || '1234',
+                                    pin: u.pin || 'KEYZOM',
                                     isActive: u.isActive,
                                   });
                                 }}
@@ -2314,10 +2389,10 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
                   </div>
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-neutral-300 mb-1">PIN POS (4 dígitos)</label>
+                  <label className="block text-xs font-medium text-neutral-300 mb-1">PIN POS</label>
                   <input
                     type="password"
-                    maxLength={6}
+                    maxLength={10}
                     value={userForm.pin || ''}
                     onChange={(e) => setUserForm({ ...userForm, pin: e.target.value })}
                     className="w-full bg-[#0d0d0d] border border-[#262626] rounded-md px-3 py-2 text-xs text-neutral-200 font-mono focus:outline-hidden"
@@ -2571,6 +2646,19 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
         isOpen={showRegisterCompanyModal}
         onClose={() => setShowRegisterCompanyModal(false)}
       />
+
+      {deleteBackupModalOpen && companySafetyDump && (
+        <DeleteCompanyBackupModal
+          isOpen={deleteBackupModalOpen}
+          onClose={() => setDeleteBackupModalOpen(false)}
+          company={currentCompany}
+          dump={companySafetyDump}
+          onConfirmDelete={async () => {
+            await deleteCompany(currentCompany.id, companySafetyDump);
+            setDeleteBackupModalOpen(false);
+          }}
+        />
+      )}
     </div>
   );
 };

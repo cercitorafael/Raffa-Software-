@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useApp } from '../../context/AppContext';
 import {
   KeyRound,
@@ -13,10 +13,12 @@ import {
   Building2,
   Sparkles,
   PlusCircle,
+  ArchiveRestore,
 } from 'lucide-react';
 import { User, Role } from '../../types';
 import { sound } from '../../utils/audio';
 import { RegisterCompanyModal } from './RegisterCompanyModal';
+import { RestoreCompanyModal } from './RestoreCompanyModal';
 
 export const LoginScreen: React.FC = () => {
   const {
@@ -40,6 +42,7 @@ export const LoginScreen: React.FC = () => {
   // - 'pin': POS Touch Numeric Keypad
   const [authMode, setAuthMode] = useState<'credentials' | 'pin'>('credentials');
   const [showRegisterModal, setShowRegisterModal] = useState<boolean>(false);
+  const [showRestoreModal, setShowRestoreModal] = useState<boolean>(false);
 
   // Credentials Mode State
   const [identifier, setIdentifier] = useState<string>('');
@@ -53,6 +56,15 @@ export const LoginScreen: React.FC = () => {
   const [pinError, setPinError] = useState<string | null>(null);
 
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+
+  const uniqueUsers = useMemo(() => {
+    const seen = new Set<string>();
+    return (users || []).filter((u) => {
+      if (!u || !u.id || seen.has(u.id)) return false;
+      seen.add(u.id);
+      return true;
+    });
+  }, [users]);
 
   // Dynamic automatic identification of user and company
   const detectedUser = users.find((u) => {
@@ -85,10 +97,10 @@ export const LoginScreen: React.FC = () => {
     if (authMode !== 'pin') return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key >= '0' && e.key <= '9') {
-        if (pinInput.length < 8) {
+      if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
+        if (pinInput.length < 10) {
           sound.playBeep();
-          setPinInput((prev) => prev + e.key);
+          setPinInput((prev) => prev + e.key.toUpperCase());
           setPinError(null);
         }
       } else if (e.key === 'Backspace' || e.key === 'Delete') {
@@ -483,7 +495,7 @@ export const LoginScreen: React.FC = () => {
                   1. Selecione o Colaborador
                 </label>
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-[160px] overflow-y-auto pr-1">
-                  {users.map((u) => {
+                  {uniqueUsers.map((u) => {
                     const isSelected = selectedUser?.id === u.id;
                     const roleInfo = (roleBadges && roleBadges[u.role]) || roleBadges?.caixa || {
                       name: u.role || 'Operador',
@@ -546,13 +558,13 @@ export const LoginScreen: React.FC = () => {
 
                 {/* Masked PIN Display */}
                 <div className="bg-[#121212] border border-[#262626] rounded-xl p-3 flex flex-col items-center justify-center min-h-[50px]">
-                  <div className="flex items-center space-x-3">
-                    {[0, 1, 2, 3].map((idx) => {
+                  <div className="flex items-center space-x-2.5">
+                    {Array.from({ length: Math.max(6, pinInput.length) }).map((_, idx) => {
                       const isFilled = pinInput.length > idx;
                       return (
                         <div
                           key={idx}
-                          className={`w-3.5 h-3.5 rounded-full transition-all duration-150 ${
+                          className={`w-3 h-3 rounded-full transition-all duration-150 ${
                             isFilled
                               ? 'bg-[#c5a47e] scale-110 shadow-xs ring-4 ring-[#c5a47e]/20'
                               : 'bg-[#222222] border border-[#333333]'
@@ -602,6 +614,19 @@ export const LoginScreen: React.FC = () => {
                   </button>
                 </div>
 
+                {/* Quick Insert KEYZOM Button */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    sound.playBeep();
+                    setPinInput('KEYZOM');
+                    setPinError(null);
+                  }}
+                  className="w-full py-1.5 px-3 bg-[#161616] hover:bg-[#222222] border border-[#2a2a2a] hover:border-[#c5a47e]/50 rounded-lg text-xs font-mono text-neutral-300 hover:text-[#c5a47e] transition-all cursor-pointer flex items-center justify-center space-x-2"
+                >
+                  <span>Inserir PIN padrão: <strong>KEYZOM</strong></span>
+                </button>
+
                 {/* Submit PIN */}
                 <button
                   type="button"
@@ -638,6 +663,23 @@ export const LoginScreen: React.FC = () => {
             </div>
           )}
         </div>
+
+        {/* Botão de Restauração de Dados (Inferior / Em Baixo da Tela de Login) */}
+        <div className="w-full mt-4 flex items-center justify-center">
+          <button
+            id="login-restore-company-btn"
+            type="button"
+            onClick={() => {
+              setShowRestoreModal(true);
+              sound.playBeep();
+            }}
+            className="px-4 py-2 rounded-xl text-xs font-semibold bg-[#121212] hover:bg-[#1a1a1a] text-neutral-400 hover:text-sky-400 border border-[#242424] hover:border-sky-500/40 transition-all cursor-pointer flex items-center space-x-2 shadow-sm active:scale-98"
+            title="Restaurar dados para o sistema a partir de um dump JSON de segurança"
+          >
+            <ArchiveRestore className="w-3.5 h-3.5 text-sky-400" />
+            <span>Restaurar Dados</span>
+          </button>
+        </div>
       </main>
 
       <RegisterCompanyModal
@@ -646,6 +688,17 @@ export const LoginScreen: React.FC = () => {
         onSuccess={(data) => {
           setIdentifier(data.userEmail);
           setAuthMode('credentials');
+        }}
+      />
+
+      <RestoreCompanyModal
+        isOpen={showRestoreModal}
+        onClose={() => setShowRestoreModal(false)}
+        onSuccessRestore={(company, adminUser) => {
+          if (adminUser) {
+            setIdentifier(adminUser.email || adminUser.username || '');
+            setAuthMode('credentials');
+          }
         }}
       />
     </div>

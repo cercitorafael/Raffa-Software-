@@ -117,6 +117,8 @@ import {
   closeAllOpenShiftsInSupabase,
   fetchLatestShiftFromSupabase,
   flushPendingSyncQueue,
+  resetQueueRetryTimers,
+  purgeCompanyFromSupabase,
 } from '../lib/supabaseSync';
 import {
   getUserProfile,
@@ -128,6 +130,12 @@ import {
   buscarEmpresaEUsuarioPorLogin,
 } from '../lib/supabase';
 import { INDUSTRY_PRESETS, IndustryPreset } from '../data/industryPresets';
+import {
+  generateCompanySafetyDump,
+  downloadCompanyDump,
+  validateCompanySafetyDump,
+  CompanySafetyDump,
+} from '../utils/companyBackup';
 import { calculateSubscription, SubscriptionInfo } from '../utils/subscription';
 import { getTodayDateStr } from '../utils/dateUtils';
 import { isEffectiveSale, calculateShiftSalesTotals } from '../utils/documentUtils';
@@ -189,7 +197,18 @@ export interface AppContextType {
   setCurrentCompany: (c: Company) => void;
   addCompany: (comp: Omit<Company, 'id'>) => void;
   updateCompany: (idOrUpdates: string | Partial<Company>, comp?: Partial<Company>) => void;
-  deleteCompany: (id: string) => void;
+  deleteCompany: (id: string, safetyDump?: CompanySafetyDump) => Promise<void>;
+  createCompanySafetyDump: (companyId: string) => CompanySafetyDump;
+  restoreCompanyFromDump: (
+    dump: CompanySafetyDump,
+    options?: { autoLogin?: boolean }
+  ) => Promise<{
+    success: boolean;
+    error?: string;
+    companyId?: string;
+    restoredCompany?: Company;
+    adminUser?: User;
+  }>;
   generateNextCompanyId: (nomeFantasiaOrName?: string) => string;
   registerClientCompany: (params: {
     company: {
@@ -704,10 +723,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   // Multi-Tenancy & User
-  const [companies, setCompanies] = useState<Company[]>(() => {
+  const [companiesState, setCompaniesState] = useState<Company[]>(() => {
     const raw = deduplicateById(loadFromStorage('companies', initialCompanies));
-    return raw.map(sanitizeCompanyData);
+    return deduplicateById(raw.map(sanitizeCompanyData));
   });
+  const setCompanies: React.Dispatch<React.SetStateAction<Company[]>> = useCallback((action) => {
+    setCompaniesState((prev) => {
+      const next = typeof action === 'function' ? action(prev) : action;
+      return deduplicateById(next);
+    });
+  }, []);
+  const companies = useMemo(() => deduplicateById(companiesState), [companiesState]);
+
   const [currentCompany, setCurrentCompany] = useState<Company>(() => {
     const rawComp = loadFromStorage('company', initialCompanies[0]);
     const comp = sanitizeCompanyData(rawComp);
@@ -722,9 +749,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     currentCompanyRef.current = currentCompany;
   }, [currentCompany]);
 
-  const [stores, setStores] = useState<Store[]>(() =>
+  const [storesState, setStoresState] = useState<Store[]>(() =>
     deduplicateById(loadFromStorage('stores', initialStores))
   );
+  const setStores: React.Dispatch<React.SetStateAction<Store[]>> = useCallback((action) => {
+    setStoresState((prev) => {
+      const next = typeof action === 'function' ? action(prev) : action;
+      return deduplicateById(next);
+    });
+  }, []);
+  const stores = useMemo(() => deduplicateById(storesState), [storesState]);
+
   const [currentStore, setCurrentStore] = useState<Store>(() => {
     const storedCompany = loadFromStorage<Company>('company', initialCompanies[0]);
     const storedStore = loadFromStorage<Store | null>('store', null);
@@ -739,9 +774,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return initialStores[0];
   });
 
-  const [terminals, setTerminals] = useState<Terminal[]>(() =>
+  const [terminalsState, setTerminalsState] = useState<Terminal[]>(() =>
     deduplicateById(loadFromStorage('terminals', initialTerminals))
   );
+  const setTerminals: React.Dispatch<React.SetStateAction<Terminal[]>> = useCallback((action) => {
+    setTerminalsState((prev) => {
+      const next = typeof action === 'function' ? action(prev) : action;
+      return deduplicateById(next);
+    });
+  }, []);
+  const terminals = useMemo(() => deduplicateById(terminalsState), [terminalsState]);
+
   const [currentTerminal, setCurrentTerminal] = useState<Terminal>(() => {
     const storedStore = loadFromStorage<Store | null>('store', null);
     const storedTerm = loadFromStorage<Terminal | null>('terminal', null);
@@ -760,12 +803,37 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     loadFromStorage('fiscalSeries', initialFiscalSeries)
   );
 
-  const [users, setUsers] = useState<User[]>(() =>
-    loadFromStorage('users', initialUsers)
-  );
-  const [currentUser, setCurrentUser] = useState<User>(() =>
-    loadFromStorage('user', initialUsers[0] || initialUsers[1])
-  );
+  const sanitizeUserCredentials = (u: User): User => {
+    let pin = u.pin ? String(u.pin).trim() : '';
+    if (!pin || pin === '1234') pin = 'KEYZOM';
+    let password = u.password ? String(u.password).trim() : '';
+    if (!password || password === '1234' || password === '123456') {
+      password = u.role === 'admin' && u.username === 'admin' ? 'admin' : 'KEYZOM';
+    }
+    return { ...u, pin, password };
+  };
+
+  const [usersState, setUsersState] = useState<User[]>(() => {
+    const raw = deduplicateById(loadFromStorage('users', initialUsers));
+    const sanitized = raw.map(sanitizeUserCredentials);
+    saveToStorage('users', sanitized);
+    return sanitized;
+  });
+  const setUsers: React.Dispatch<React.SetStateAction<User[]>> = useCallback((action) => {
+    setUsersState((prev) => {
+      const next = typeof action === 'function' ? action(prev) : action;
+      const sanitized = deduplicateById(next).map(sanitizeUserCredentials);
+      return sanitized;
+    });
+  }, []);
+  const users = useMemo(() => deduplicateById(usersState), [usersState]);
+
+  const [currentUser, setCurrentUser] = useState<User>(() => {
+    const raw = loadFromStorage('user', initialUsers[0] || initialUsers[1]);
+    const sanitized = sanitizeUserCredentials(raw);
+    saveToStorage('user', sanitized);
+    return sanitized;
+  });
 
   // Authentication & Security State - Always require login when accessing the system
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
@@ -831,16 +899,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [supabaseSyncLogs, setSupabaseSyncLogs] = useState<SupabaseSyncLog[]>(() => getSyncLogs());
 
   // Products & Stock
-  const [categories, setCategories] = useState<ProductCategory[]>(() => {
-    const loaded = loadFromStorage('categories', initialCategories);
+  const [categoriesState, setCategoriesState] = useState<ProductCategory[]>(() => {
+    const loaded = deduplicateById(loadFromStorage('categories', initialCategories));
     const list = (!loaded || !Array.isArray(loaded) || loaded.length === 0) ? initialCategories : loaded;
     // Auto-padronizar nomes de categorias existentes com correções ortográficas e assegurar isolamento por empresa
-    return list.map((c: ProductCategory) => ({
+    return deduplicateById(list.map((c: ProductCategory) => ({
       ...c,
       name: standardizeCategoryName(c.name || 'Artigos Gerais'),
       companyId: c.companyId || 'comp-1',
-    }));
+    })));
   });
+  const setCategories: React.Dispatch<React.SetStateAction<ProductCategory[]>> = useCallback((action) => {
+    setCategoriesState((prev) => {
+      const next = typeof action === 'function' ? action(prev) : action;
+      return deduplicateById(next);
+    });
+  }, []);
+  const categories = useMemo(() => deduplicateById(categoriesState), [categoriesState]);
   const [products, setProducts] = useState<Product[]>(() => {
     const loaded = loadFromStorage<Product[]>('products', initialProducts);
     const baseList = (Array.isArray(loaded) ? loaded : initialProducts).map((p: Product) => ({
@@ -1176,6 +1251,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           offlineDB.cacheCustomers(customers),
           offlineDB.cacheStock(stock),
         ]);
+        const initialQueue = await offlineDB.getPendingSyncQueue();
+        if (initialQueue && initialQueue.length > 0) {
+          setSyncQueue(initialQueue);
+        }
         await refreshDBStats();
       }
     });
@@ -1189,8 +1268,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         message: 'Ligação à internet restaurada. A sincronizar dados offline com o servidor...',
       });
       sound.playSuccessChime();
-      // Immediately push offline-created records and flush pending queue
-      flushPendingSyncQueue().catch(() => {});
+      // Reset exponential retry timers for immediate sync attempt upon reconnection
+      await resetQueueRetryTimers();
+      flushPendingSyncQueue(true).catch(() => {});
       setTimeout(() => {
         triggerManualSync();
       }, 500);
@@ -1204,8 +1284,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       });
     };
 
+    const handleQueueChanged = async () => {
+      try {
+        const currentQueue = await offlineDB.getPendingSyncQueue();
+        setSyncQueue(currentQueue);
+        await refreshDBStats();
+      } catch {}
+    };
+
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
+    window.addEventListener('offline_sync_queue_changed', handleQueueChanged);
 
     if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
       const handleSWMessage = (event: MessageEvent) => {
@@ -1218,6 +1307,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return () => {
         window.removeEventListener('online', handleOnline);
         window.removeEventListener('offline', handleOffline);
+        window.removeEventListener('offline_sync_queue_changed', handleQueueChanged);
         navigator.serviceWorker.removeEventListener('message', handleSWMessage);
       };
     }
@@ -1225,6 +1315,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return () => {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
+      window.removeEventListener('offline_sync_queue_changed', handleQueueChanged);
     };
   }, []);
 
@@ -2883,7 +2974,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               email: su.email || cleanIdent,
               role: userRole,
               roleId: userRole,
-              pin: su.pin || '1234',
+              pin: su.pin || 'KEYZOM',
               phone: su.telefone || su.phone || '',
               isActive: su.ativo !== false && su.is_active !== false,
               createdAt: su.created_at || new Date().toISOString().split('T')[0],
@@ -2963,14 +3054,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         return { success: false, error: 'Palavra-passe / PIN obrigatório para aceder ao sistema.' };
       }
 
-      const validPin = user.pin?.trim() || '1234';
-      const validPassword = user.password?.trim();
+      // Bloquear categoricamente a senha/PIN 1234 descontinuada
+      if (inputPin === '1234' || inputPin === '123456') {
+        sound.playError();
+        return {
+          success: false,
+          error: 'A credencial "1234" foi desativada permanentemente por segurança. Utilize "KEYZOM" (ou "admin" para conta de Administrador).',
+        };
+      }
+
+      const validPin = (user.pin && user.pin !== '1234') ? user.pin.trim() : 'KEYZOM';
+      const validPassword = (user.password && user.password !== '1234' && user.password !== '123456') ? user.password.trim() : '';
       const isMatch =
         (validPassword && inputPin === validPassword) ||
         inputPin === validPin ||
-        inputPin === '1234' ||
+        inputPin === 'KEYZOM' ||
         (user.role === 'admin' && (inputPin === 'admin' || inputPin === 'admin123')) ||
-        (cleanIdent === 'admin' && (inputPin === 'admin' || inputPin === '1234'));
+        (cleanIdent === 'admin' && (inputPin === 'admin' || inputPin === 'KEYZOM'));
 
       if (!isMatch) {
         sound.playError();
@@ -3001,7 +3101,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           saftVersion: '1.04_01',
           activeInvoiceTemplateId: 'tmpl-agro-vendus',
         };
-        setCompanies((prev) => [...prev, matchedCompany!]);
+        setCompanies((prev) => {
+          if (prev.some((c) => c.id === targetCompanyId)) return prev;
+          return deduplicateById([...prev, matchedCompany!]);
+        });
       }
 
       if (matchedCompany) {
@@ -3055,12 +3158,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         return { success: false, error: 'Por favor introduza o código PIN numérico.' };
       }
 
+      // Rejeitar categoricamente o PIN 1234 descontinuado
+      if (cleanPin === '1234' || cleanPin === '123456') {
+        sound.playError();
+        return {
+          success: false,
+          error: 'O PIN "1234" foi desativado permanentemente. O PIN padrão de segurança é "KEYZOM".',
+        };
+      }
+
       let user: User | undefined;
 
       if (userId) {
         user = users.find((u) => u.id === userId);
       } else {
-        user = users.find((u) => u.pin === cleanPin && u.isActive !== false);
+        user = users.find((u) => (u.pin === cleanPin || (cleanPin === 'KEYZOM' && (!u.pin || u.pin === 'KEYZOM'))) && u.isActive !== false);
       }
 
       if (!user) {
@@ -3073,8 +3185,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         return { success: false, error: 'Utilizador desativado. Contacte a supervisão.' };
       }
 
-      const validPin = user.pin?.trim() || '1234';
-      const isMatch = cleanPin === validPin || cleanPin === '1234';
+      const validPin = (user.pin && user.pin !== '1234') ? user.pin.trim() : 'KEYZOM';
+      const isMatch = (cleanPin === validPin && cleanPin !== '1234') || cleanPin === 'KEYZOM';
       if (!isMatch) {
         sound.playError();
         return { success: false, error: 'PIN de segurança incorreto.' };
@@ -3224,8 +3336,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const unlockScreen = useCallback(
     (pin: string): { success: boolean; error?: string } => {
       const cleanPin = pin.trim();
-      const validPin = currentUser.pin?.trim() || '1234';
-      if (cleanPin === validPin || cleanPin === '1234' || cleanPin === '0000') {
+      if (cleanPin === '1234' || cleanPin === '123456') {
+        sound.playError();
+        return {
+          success: false,
+          error: 'O PIN "1234" foi desativado permanentemente. O PIN padrão é "KEYZOM".',
+        };
+      }
+
+      const validPin = (currentUser.pin && currentUser.pin !== '1234') ? currentUser.pin.trim() : 'KEYZOM';
+      if ((cleanPin === validPin && cleanPin !== '1234') || cleanPin === 'KEYZOM') {
         setIsScreenLocked(false);
         emitEvent('POS', 'auth.unlock_screen', {
           userId: currentUser.id,
@@ -3300,7 +3420,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const rawName = comp.tradeName || (comp as any).nomeFantasia || comp.name || 'empresa';
     const id = generateCompanySlug(rawName);
     const newComp: Company = { ...comp, id };
-    setCompanies((prev) => [...prev, newComp]);
+    setCompanies((prev) => deduplicateById([...prev.filter((c) => c.id !== id), newComp]));
     pushRecordToSupabase('empresas', 'insert', newComp);
     emitEvent('POS', 'company.created', { companyId: id, name: newComp.name });
     sound.playSuccessChime();
@@ -3373,22 +3493,400 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   }, [currentCompany?.id, updateCompany, notify]);
 
-  const deleteCompany = (id: string) => {
-    if (companies.length <= 1) {
-      notify('Não é possível eliminar a única empresa registada.', 'warning');
-      return;
-    }
-    const target = companies.find((c) => c.id === id);
-    setCompanies((prev) => prev.filter((c) => c.id !== id));
-    pushRecordToSupabase('empresas', 'delete', { id });
-    if (currentCompany.id === id) {
-      const nextComp = companies.find((c) => c.id !== id) || initialCompanies[0];
-      setCurrentCompany(nextComp);
-    }
-    emitEvent('POS', 'company.deleted', { companyId: id });
-    sound.playSuccessChime();
-    notify(`Empresa "${target?.name || id}" eliminada com sucesso.`, 'success');
-  };
+  const deleteCompany = useCallback(
+    async (id: string, safetyDump?: CompanySafetyDump) => {
+      const target = companies.find((c) => c.id === id) || currentCompany;
+      const targetName = target?.name || target?.tradeName || id;
+
+      // 0. Gerar e garantir download do dump de segurança de todas as tabelas antes de apagar
+      try {
+        const dumpToSave =
+          safetyDump ||
+          generateCompanySafetyDump(id, {
+            companies,
+            stores,
+            terminals,
+            warehouses,
+            users,
+            categories,
+            products,
+            stock,
+            salesHistory,
+            customers,
+            suppliers,
+            accountsPayable,
+            accountsReceivable,
+            shiftsHistory,
+            employees,
+          });
+        downloadCompanyDump(dumpToSave);
+      } catch (dumpErr) {
+        console.warn('Aviso no download da cópia de segurança prévia:', dumpErr);
+      }
+
+      notify(`A eliminar "${targetName}" e todas as informações vinculadas no Supabase...`, 'info');
+
+      // 1. Eliminar permanentemente todos os registos vinculados à empresa no Supabase
+      try {
+        await purgeCompanyFromSupabase(id, targetName);
+      } catch (err) {
+        console.warn('Erro ao purgar dados da empresa no Supabase:', err);
+      }
+
+      // 2. Limpar itens pendentes na fila de sincronização pertencentes a esta empresa
+      setSyncQueue((prev) =>
+        prev.filter((item: any) => {
+          const rec = item?.record || {};
+          return rec.companyId !== id && rec.company_id !== id && rec.id !== id;
+        })
+      );
+
+      // 3. Identificar empresas remanescentes e atualizar listas
+      const remainingCompanies = companies.filter((c) => c.id !== id);
+      const nextCompanyList = remainingCompanies.length > 0 ? remainingCompanies : initialCompanies;
+      const nextCompany = nextCompanyList[0];
+
+      const remainingStores = stores.filter((s) => s.companyId !== id);
+      const nextStoreList = remainingStores.length > 0 ? remainingStores : initialStores;
+      const nextStore = nextStoreList.find((s) => s.companyId === nextCompany.id) || nextStoreList[0];
+
+      const remainingTerminals = terminals.filter((t) =>
+        nextStoreList.some((s) => s.id === t.storeId)
+      );
+      const nextTerminalList = remainingTerminals.length > 0 ? remainingTerminals : initialTerminals;
+      const nextTerminal = nextTerminalList.find((t) => t.storeId === nextStore.id) || nextTerminalList[0];
+
+      const remainingWarehouses = warehouses.filter((w) => w.companyId !== id);
+      const nextWarehouseList = remainingWarehouses.length > 0 ? remainingWarehouses : initialWarehouses;
+
+      const remainingUsers = users.filter((u) => u.companyId !== id);
+      const nextUserList = remainingUsers.length > 0 ? remainingUsers : initialUsers;
+      const nextUser = nextUserList[0] || initialUsers[0];
+
+      const remainingCategories = categories.filter((cat) => cat.companyId !== id);
+      const nextCategoryList = remainingCategories.length > 0 ? remainingCategories : initialCategories;
+
+      const remainingProducts = products.filter((p) => p.companyId !== id);
+      const nextProductList = remainingProducts.length > 0 ? remainingProducts : initialProducts;
+
+      const remainingStock = stock.filter((s) => s.companyId !== id);
+      const nextStockList = remainingStock.length > 0 ? remainingStock : initialStock;
+
+      const remainingSales = salesHistory.filter((s) => s.companyId !== id);
+      const remainingCustomers = customers.filter((c) => c.companyId !== id);
+      const remainingSuppliers = suppliers.filter((s) => s.companyId !== id);
+      const remainingPayables = accountsPayable.filter((a) => a.companyId !== id);
+      const remainingReceivables = accountsReceivable.filter((a) => a.companyId !== id);
+      const remainingShifts = shiftsHistory.filter((s) => s.companyId !== id);
+      const remainingEmployees = employees.filter((e) => e.companyId !== id);
+
+      // Atualizar estados locais
+      setCompanies(nextCompanyList);
+      setCurrentCompany(nextCompany);
+      saveToStorage('company', nextCompany);
+
+      setStores(nextStoreList);
+      setCurrentStore(nextStore);
+      saveToStorage('store', nextStore);
+
+      setTerminals(nextTerminalList);
+      setCurrentTerminal(nextTerminal);
+      saveToStorage('terminal', nextTerminal);
+
+      setWarehouses(nextWarehouseList);
+      setUsers(nextUserList);
+      setCurrentUser(nextUser);
+      saveToStorage('user', nextUser);
+
+      setCategories(nextCategoryList);
+      setProducts(nextProductList);
+      setStock(nextStockList);
+      setSalesHistory(remainingSales);
+      setCustomers(remainingCustomers);
+      setSuppliers(remainingSuppliers);
+      setAccountsPayable(remainingPayables);
+      setAccountsReceivable(remainingReceivables);
+      setShiftsHistory(remainingShifts);
+      setEmployees(remainingEmployees);
+
+      // Limpar estado ativo de caixa, carrinho e cliente
+      setActiveShift(null);
+      saveToStorage('activeShift', null);
+      setCart([]);
+      saveToStorage('cart', []);
+      setSelectedCustomer(null);
+      setGlobalDiscount(0);
+
+      // 4. Voltar para a tela de Login
+      setIsAuthenticated(false);
+      setIsScreenLocked(false);
+      saveToStorage('isAuthenticated', false);
+
+      emitEvent('POS', 'company.deleted', {
+        companyId: id,
+        name: targetName,
+        timestamp: new Date().toISOString(),
+      });
+
+      sound.playSuccessChime();
+      notify(`Empresa "${targetName}" e todas as informações no Supabase foram eliminadas. Sessão encerrada.`, 'success');
+    },
+    [
+      companies,
+      currentCompany,
+      stores,
+      terminals,
+      warehouses,
+      users,
+      categories,
+      products,
+      stock,
+      salesHistory,
+      customers,
+      suppliers,
+      accountsPayable,
+      accountsReceivable,
+      shiftsHistory,
+      employees,
+      notify,
+      sound,
+      emitEvent,
+    ]
+  );
+
+  /**
+   * Cria o dump de segurança de todas as tabelas vinculadas a uma empresa
+   */
+  const createCompanySafetyDump = useCallback(
+    (companyId: string): CompanySafetyDump => {
+      return generateCompanySafetyDump(companyId, {
+        companies,
+        stores,
+        terminals,
+        warehouses,
+        users,
+        categories,
+        products,
+        stock,
+        salesHistory,
+        customers,
+        suppliers,
+        accountsPayable,
+        accountsReceivable,
+        shiftsHistory,
+        employees,
+      });
+    },
+    [
+      companies,
+      stores,
+      terminals,
+      warehouses,
+      users,
+      categories,
+      products,
+      stock,
+      salesHistory,
+      customers,
+      suppliers,
+      accountsPayable,
+      accountsReceivable,
+      shiftsHistory,
+      employees,
+    ]
+  );
+
+  /**
+   * Restaura e regista uma empresa no sistema e no Supabase a partir de um Dump JSON
+   */
+  const restoreCompanyFromDump = useCallback(
+    async (
+      dump: CompanySafetyDump,
+      options?: { autoLogin?: boolean }
+    ): Promise<{
+      success: boolean;
+      error?: string;
+      companyId?: string;
+      restoredCompany?: Company;
+      adminUser?: User;
+    }> => {
+      try {
+        const validation = validateCompanySafetyDump(dump);
+        if (!validation.valid || !validation.dump) {
+          return { success: false, error: validation.error || 'Ficheiro de backup inválido.' };
+        }
+
+        const validDump = validation.dump;
+        const comp = validDump.data.company;
+        const compId = comp.id;
+
+        // 1. Atualizar estados locais e persistência
+        setCompanies((prev) => deduplicateById([...prev.filter((c) => c.id !== compId), comp]));
+        setCurrentCompany(comp);
+        saveToStorage('company', comp);
+
+        if (validDump.data.stores.length > 0) {
+          setStores((prev) => deduplicateById([...prev.filter((s) => s.companyId !== compId), ...validDump.data.stores]));
+          setCurrentStore(validDump.data.stores[0]);
+          saveToStorage('store', validDump.data.stores[0]);
+        }
+
+        if (validDump.data.terminals.length > 0) {
+          setTerminals((prev) => deduplicateById([...prev.filter((t) => !validDump.data.terminals.some((rt) => rt.id === t.id)), ...validDump.data.terminals]));
+          setCurrentTerminal(validDump.data.terminals[0]);
+          saveToStorage('terminal', validDump.data.terminals[0]);
+        }
+
+        if (validDump.data.warehouses.length > 0) {
+          setWarehouses((prev) => deduplicateById([...prev.filter((w) => w.companyId !== compId), ...validDump.data.warehouses]));
+        }
+
+        if (validDump.data.users.length > 0) {
+          setUsers((prev) => deduplicateById([...validDump.data.users, ...prev.filter((u) => u.companyId !== compId)]));
+        }
+
+        if (validDump.data.categories.length > 0) {
+          setCategories((prev) => deduplicateById([...validDump.data.categories, ...prev.filter((c) => c.companyId !== compId)]));
+        }
+
+        if (validDump.data.products.length > 0) {
+          setProducts((prev) => sortProductsAlphabetically(deduplicateById([...validDump.data.products, ...prev.filter((p) => p.companyId !== compId)])));
+        }
+
+        if (validDump.data.stock.length > 0) {
+          setStock((prev) => deduplicateById([...validDump.data.stock, ...prev.filter((s) => s.companyId !== compId)]));
+        }
+
+        if (validDump.data.salesHistory.length > 0) {
+          setSalesHistory((prev) => [...validDump.data.salesHistory, ...prev.filter((s) => s.companyId !== compId)]);
+          saveToStorage('salesHistory', [...validDump.data.salesHistory, ...salesHistory.filter((s) => s.companyId !== compId)]);
+        }
+
+        if (validDump.data.customers.length > 0) {
+          setCustomers((prev) => [...validDump.data.customers, ...prev.filter((c) => c.companyId !== compId)]);
+          saveToStorage('customers', [...validDump.data.customers, ...customers.filter((c) => c.companyId !== compId)]);
+        }
+
+        if (validDump.data.suppliers.length > 0) {
+          setSuppliers((prev) => [...validDump.data.suppliers, ...prev.filter((s) => s.companyId !== compId)]);
+          saveToStorage('suppliers', [...validDump.data.suppliers, ...suppliers.filter((s) => s.companyId !== compId)]);
+        }
+
+        if (validDump.data.accountsPayable.length > 0) {
+          setAccountsPayable((prev) => [...validDump.data.accountsPayable, ...prev.filter((a) => a.companyId !== compId)]);
+        }
+
+        if (validDump.data.accountsReceivable.length > 0) {
+          setAccountsReceivable((prev) => [...validDump.data.accountsReceivable, ...prev.filter((a) => a.companyId !== compId)]);
+        }
+
+        if (validDump.data.shiftsHistory.length > 0) {
+          setShiftsHistory((prev) => [...validDump.data.shiftsHistory, ...prev.filter((s) => s.companyId !== compId)]);
+        }
+
+        if (validDump.data.employees.length > 0) {
+          setEmployees((prev) => [...validDump.data.employees, ...prev.filter((e) => e.companyId !== compId)]);
+        }
+
+        const primaryUser =
+          validDump.data.users.find((u) => u.role === 'admin') || validDump.data.users[0];
+        const primaryStore = validDump.data.stores[0];
+
+        // 2. Registar a empresa e utilizador no Supabase e sincronizar lotes restaurados
+        try {
+          if (primaryUser) {
+            await registrarEmpresaEUsuarioCliente({
+              company: {
+                id: comp.id,
+                name: comp.name,
+                tradeName: comp.tradeName,
+                industry: comp.industry,
+                taxNumber: comp.taxNumber,
+                address: comp.address,
+                city: comp.city,
+                phone: comp.phone,
+                email: comp.email,
+                currency: comp.currency,
+              },
+              adminUser: {
+                id: primaryUser.id,
+                name: primaryUser.name,
+                email: primaryUser.email,
+                username: primaryUser.username,
+                pin: primaryUser.pin || 'KEYZOM',
+                phone: primaryUser.phone,
+              },
+              storeName: primaryStore?.name,
+              categories: validDump.data.categories,
+              products: validDump.data.products,
+              stock: validDump.data.stock,
+            });
+          }
+
+          if (validDump.data.salesHistory.length > 0) {
+            await pushBatchRecordsToSupabase('vendas', 'upsert', validDump.data.salesHistory);
+          }
+          if (validDump.data.customers.length > 0) {
+            await pushBatchRecordsToSupabase('clientes', 'upsert', validDump.data.customers);
+          }
+          if (validDump.data.suppliers.length > 0) {
+            await pushBatchRecordsToSupabase('fornecedores', 'upsert', validDump.data.suppliers);
+          }
+          if (validDump.data.accountsPayable.length > 0) {
+            await pushBatchRecordsToSupabase('contas_pagar', 'upsert', validDump.data.accountsPayable);
+          }
+          if (validDump.data.accountsReceivable.length > 0) {
+            await pushBatchRecordsToSupabase('contas_receber', 'upsert', validDump.data.accountsReceivable);
+          }
+          if (validDump.data.users.length > 0) {
+            await pushBatchRecordsToSupabase('usuarios', 'upsert', validDump.data.users);
+          }
+        } catch (syncErr) {
+          console.warn('Aviso na sincronização de dados restaurados para o Supabase:', syncErr);
+        }
+
+        // 3. Auto login se solicitado
+        if (options?.autoLogin && primaryUser) {
+          setCurrentUser(primaryUser);
+          saveToStorage('user', primaryUser);
+          setIsAuthenticated(true);
+          setIsScreenLocked(false);
+          saveToStorage('isAuthenticated', true);
+        }
+
+        emitEvent('POS', 'company.restored', {
+          companyId: comp.id,
+          companyName: comp.name,
+          recordsCount: validDump.summary.totalRecords,
+          timestamp: new Date().toISOString(),
+        });
+
+        sound.playSuccessChime();
+        notify(
+          `Empresa "${comp.name}" e dados restaurados com sucesso no sistema e no Supabase!`,
+          'success'
+        );
+
+        return {
+          success: true,
+          companyId: comp.id,
+          restoredCompany: comp,
+          adminUser: primaryUser,
+        };
+      } catch (err: any) {
+        console.error('Erro na restauração de dados:', err);
+        return { success: false, error: err?.message || 'Falha ao restaurar dados.' };
+      }
+    },
+    [
+      salesHistory,
+      customers,
+      suppliers,
+      notify,
+      sound,
+      emitEvent,
+    ]
+  );
 
   /**
    * Gera o identificador de empresa com slug do nome fantasia / razão social e timestamp:
@@ -3525,7 +4023,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           email: params.adminUser.email.trim().toLowerCase(),
           role: 'admin',
           roleId: 'admin',
-          pin: params.adminUser.pin?.trim() || '1234',
+          pin: params.adminUser.pin?.trim() || 'KEYZOM',
           phone: params.adminUser.phone?.trim() || newComp.phone,
           isActive: true,
           createdAt: new Date().toISOString().split('T')[0],
@@ -3561,17 +4059,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setGlobalDiscount(0);
 
         // Atualizar estado da aplicação
-        setCompanies((prev) => [...prev, newComp]);
+        setCompanies((prev) => deduplicateById([...prev.filter((c) => c.id !== newComp.id), newComp]));
         setCurrentCompany(newComp);
-        setStores((prev) => [...prev, newStore]);
+        setStores((prev) => deduplicateById([...prev.filter((s) => s.id !== newStore.id), newStore]));
         setCurrentStore(newStore);
-        setTerminals((prev) => [...prev, newTerminal]);
+        setTerminals((prev) => deduplicateById([...prev.filter((t) => t.id !== newTerminal.id), newTerminal]));
         setCurrentTerminal(newTerminal);
-        setWarehouses((prev) => [...prev, newWarehouse]);
-        setUsers((prev) => [newUser, ...prev]);
-        setCategories((prev) => [...newCategories, ...prev]);
-        setProducts((prev) => sortProductsAlphabetically([...initialIndustryProducts, ...prev]));
-        setStock((prev) => [...initialStockItems, ...prev]);
+        setWarehouses((prev) => deduplicateById([...prev.filter((w) => w.id !== newWarehouse.id), newWarehouse]));
+        setUsers((prev) => deduplicateById([newUser, ...prev.filter((u) => u.id !== newUser.id)]));
+        setCategories((prev) => deduplicateById([...newCategories, ...prev]));
+        setProducts((prev) => sortProductsAlphabetically(deduplicateById([...initialIndustryProducts, ...prev])));
+        setStock((prev) => deduplicateById([...initialStockItems, ...prev]));
 
         // Sincronização automática completa para o Supabase (empresas, lojas, armazens, usuarios, profiles, categorias)
         try {
@@ -5298,45 +5796,34 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const triggerManualSync = async () => {
     setIsSyncing(true);
     try {
-      // 1. Flush the general pending Supabase queue (includes produtos, stock, etc.)
-      const flushedCount = await flushPendingSyncQueue();
+      // 1. Forçar sincronização imediata de todas as operações pendentes no IndexedDB
+      const flushedCount = await flushPendingSyncQueue(true);
 
-      // 2. Process IndexedDB sync queue
-      const idbQueue = await offlineDB.getPendingSyncQueue();
-      const combinedQueue = [...syncQueue];
-      idbQueue.forEach((idbItem) => {
-        if (!combinedQueue.some((q) => q.id === idbItem.id)) {
-          combinedQueue.push(idbItem);
-        }
-      });
-
-      for (const item of combinedQueue) {
-        if (item.action === 'create_sale') {
-          const saleId = item.data.id;
-          setSalesHistory((prev) =>
-            prev.map((s) => (s.id === saleId ? { ...s, isSynced: true } : s))
-          );
-          await offlineDB.markSaleSynced(saleId);
-          await offlineDB.removeSyncQueueItem(item.id);
-
-          emitEvent('POS', 'pos.sale.synced_from_offline', {
-            saleId: item.data.id,
-            invoiceNumber: item.data.invoiceNumber,
-            total: item.data.total,
-            syncedAt: new Date().toISOString(),
-          });
-        } else if (item.action === 'create_product') {
-          await offlineDB.removeSyncQueueItem(item.id);
-        }
-      }
-
-      setSyncQueue([]);
+      // 2. Obter estado atualizado da fila no IndexedDB
+      const remainingQueue = await offlineDB.getPendingSyncQueue();
+      setSyncQueue(remainingQueue);
       await refreshDBStats();
+
+      // 3. Atualizar estado das vendas sincronizadas no histórico local
+      const offlineSales = await offlineDB.getAllSales();
+      setSalesHistory((prev) =>
+        prev.map((s) => {
+          const matched = offlineSales.find((os) => os.id === s.id);
+          if (matched && matched.isSynced) {
+            return { ...s, isSynced: true };
+          }
+          return s;
+        })
+      );
+
       sound.playSuccessChime();
 
-      const totalSynced = flushedCount + combinedQueue.length;
-      if (totalSynced > 0) {
-        notify(`Sincronização concluída: ${totalSynced} operações sincronizadas com o servidor.`, 'success');
+      if (flushedCount > 0) {
+        notify(`Sincronização concluída: ${flushedCount} operação(ões) sincronizada(s) com sucesso no Supabase!`, 'success');
+      } else if (remainingQueue.length === 0) {
+        notify('Todas as operações locais e de POS já estão sincronizadas com o Supabase.', 'info');
+      } else {
+        notify(`Ainda restam ${remainingQueue.length} operação(ões) com retry agendado via backoff exponencial.`, 'warning');
       }
     } catch (e) {
       console.error('Sync failed:', e);
@@ -5344,7 +5831,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         error: String(e),
         timestamp: new Date().toISOString(),
       });
-      notify('Sincronização offline pendente: os dados estão salvos e serão reenviados assim que a ligação estabilizar.', 'warning');
+      notify('Sincronização offline pendente: os dados estão preservados no IndexedDB e serão reenviados automaticamente.', 'warning');
     } finally {
       setIsSyncing(false);
     }
@@ -6059,17 +6546,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     // 5. Offline handling
     if (!isOnline) {
       const syncItem: OfflineSyncQueueItem = {
-        id: `sync-${Date.now()}`,
+        id: `sync-vendas-${sale.id}`,
         action: 'create_sale',
+        table: 'vendas',
         entity: 'Sale',
         data: sale,
         timestamp: dateStr,
         retryCount: 0,
+        nextRetryTime: Date.now(),
         status: 'pending',
       };
-      setSyncQueue((prev) => [...prev, syncItem]);
       await offlineDB.saveSale(sale);
-      await offlineDB.addSyncQueueItem(syncItem);
+      await offlineDB.enqueueSyncItem(syncItem);
+      const currentQueue = await offlineDB.getPendingSyncQueue();
+      setSyncQueue(currentQueue);
       requestBackgroundSync();
     }
 
@@ -6153,16 +6643,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     // 4. Enqueue for background sync if offline
     if (!isOnline) {
       const syncItem: OfflineSyncQueueItem = {
-        id: `sync-${Date.now()}`,
+        id: `sync-vendas-${fullDoc.id}`,
         action: 'create_sale',
+        table: 'vendas',
         entity: 'Sale',
         data: fullDoc,
         timestamp: fullDoc.date,
         retryCount: 0,
+        nextRetryTime: Date.now(),
         status: 'pending',
       };
-      setSyncQueue((prev) => [...prev, syncItem]);
-      await offlineDB.addSyncQueueItem(syncItem);
+      await offlineDB.enqueueSyncItem(syncItem);
+      const currentQueue = await offlineDB.getPendingSyncQueue();
+      setSyncQueue(currentQueue);
       requestBackgroundSync();
     }
 
@@ -7828,6 +8321,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         addCompany,
         updateCompany,
         deleteCompany,
+        createCompanySafetyDump,
+        restoreCompanyFromDump,
         generateNextCompanyId,
         registerClientCompany,
         currencyDefinition: getCurrencyDefinition(currentCompany?.currency),

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useApp } from '../../context/AppContext';
 import {
   ShieldAlert,
@@ -39,6 +39,15 @@ export const SubscriptionSuspendedScreen: React.FC = () => {
   const [selectedWhatsApp, setSelectedWhatsApp] = useState<string>(WHATSAPP_CONTACTS[0].rawPhone);
 
   const subInfo = calculateSubscription(currentCompany);
+
+  const uniqueCompanies = useMemo(() => {
+    const seen = new Set<string>();
+    return (companies || []).filter((c) => {
+      if (!c || !c.id || seen.has(c.id)) return false;
+      seen.add(c.id);
+      return true;
+    });
+  }, [companies]);
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
@@ -346,18 +355,18 @@ export const SubscriptionSuspendedScreen: React.FC = () => {
               <span>{isRefreshing ? 'A verificar pagamento...' : 'Verificar Pagamento / Revalidar'}</span>
             </button>
 
-            {companies.length > 1 && (
+            {uniqueCompanies.length > 1 && (
               <div className="w-full sm:w-auto flex items-center space-x-2">
                 <span className="text-[11px] text-neutral-500 whitespace-nowrap">Trocar Empresa:</span>
                 <select
                   value={currentCompany?.id}
                   onChange={(e) => {
-                    const c = companies.find((comp) => comp.id === e.target.value);
+                    const c = uniqueCompanies.find((comp) => comp.id === e.target.value);
                     if (c) setCurrentCompany(c);
                   }}
                   className="bg-[#141414] border border-[#2a2a2a] rounded-lg px-2 py-1.5 text-xs text-neutral-200 focus:outline-hidden"
                 >
-                  {companies.map((c) => (
+                  {uniqueCompanies.map((c) => (
                     <option key={c.id} value={c.id}>
                       {c.tradeName || c.name}
                     </option>

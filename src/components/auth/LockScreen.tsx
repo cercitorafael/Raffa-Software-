@@ -65,13 +65,13 @@ export const LockScreen: React.FC = () => {
     return () => clearInterval(timer);
   }, [language]);
 
-  // Keyboard navigation
+  // Keyboard navigation (supports numbers and letters for KEYZOM)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key >= '0' && e.key <= '9') {
-        if (pinInput.length < 8) {
+      if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
+        if (pinInput.length < 10) {
           sound.playBeep();
-          setPinInput((prev) => prev + e.key);
+          setPinInput((prev) => prev + e.key.toUpperCase());
           setErrorMsg(null);
         }
       } else if (e.key === 'Backspace' || e.key === 'Delete') {
@@ -243,13 +243,13 @@ export const LockScreen: React.FC = () => {
 
         {/* Masked PIN Display */}
         <div className="w-full bg-[#0d0d0d] border border-[#262626] rounded-xl p-3.5 flex flex-col items-center justify-center mb-4">
-          <div className="flex items-center space-x-3">
-            {[0, 1, 2, 3].map((idx) => {
+          <div className="flex items-center space-x-2.5">
+            {Array.from({ length: Math.max(6, pinInput.length) }).map((_, idx) => {
               const isFilled = pinInput.length > idx;
               return (
                 <div
                   key={idx}
-                  className={`w-3.5 h-3.5 rounded-full transition-all duration-150 ${
+                  className={`w-3 h-3 rounded-full transition-all duration-150 ${
                     isFilled
                       ? 'bg-[#c5a47e] scale-110 shadow-xs ring-4 ring-[#c5a47e]/20'
                       : 'bg-[#262626] border border-[#3a3a3a]'
@@ -266,8 +266,8 @@ export const LockScreen: React.FC = () => {
           )}
         </div>
 
-        {/* Compact Numeric Keypad */}
-        <div className="grid grid-cols-3 gap-2 w-full mb-4">
+        {/* Compact Keypad with Fast KEYZOM Option */}
+        <div className="grid grid-cols-3 gap-2 w-full mb-3">
           {['1', '2', '3', '4', '5', '6', '7', '8', '9'].map((digit) => (
             <button
               key={digit}
@@ -299,8 +299,24 @@ export const LockScreen: React.FC = () => {
             type="button"
             onClick={handleKeypadBackspace}
             className="h-11 bg-[#181818] hover:bg-amber-950/30 text-amber-400 border border-[#2a2a2a] rounded-xl text-sm font-bold transition-all cursor-pointer flex items-center justify-center"
+            title="Apagar dígito"
           >
             ⌫
+          </button>
+        </div>
+
+        {/* Quick KEYZOM button */}
+        <div className="w-full mb-3">
+          <button
+            type="button"
+            onClick={() => {
+              sound.playBeep();
+              setPinInput('KEYZOM');
+              setErrorMsg(null);
+            }}
+            className="w-full py-1.5 px-3 bg-[#151515] hover:bg-[#202020] border border-[#2e2e2e] hover:border-[#c5a47e]/50 rounded-lg text-xs font-mono text-neutral-300 hover:text-[#c5a47e] transition-all cursor-pointer flex items-center justify-center space-x-2"
+          >
+            <span>Inserir PIN padrão: <strong>KEYZOM</strong></span>
           </button>
         </div>
 

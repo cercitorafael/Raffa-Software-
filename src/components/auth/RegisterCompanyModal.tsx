@@ -100,7 +100,7 @@ export const RegisterCompanyModal: React.FC<RegisterCompanyModalProps> = ({
   const [adminName, setAdminName] = useState<string>('');
   const [adminEmail, setAdminEmail] = useState<string>('');
   const [adminUsername, setAdminUsername] = useState<string>('');
-  const [adminPin, setAdminPin] = useState<string>('1234');
+  const [adminPin, setAdminPin] = useState<string>('KEYZOM');
   const [adminPhone, setAdminPhone] = useState<string>('');
   const [adminNif, setAdminNif] = useState<string>('');
 
@@ -633,17 +633,17 @@ export const RegisterCompanyModal: React.FC<RegisterCompanyModalProps> = ({
 
                 <div>
                   <label className="text-neutral-300 font-semibold block mb-1">
-                    Código PIN Numérico de Acesso Rápido POS (4-8 dígitos) *
+                    Código PIN de Acesso Rápido POS *
                   </label>
                   <div className="relative">
                     <KeyRound className="w-4 h-4 text-neutral-500 absolute left-3 top-2.5" />
                     <input
                       type="password"
-                      maxLength={8}
+                      maxLength={10}
                       required
                       value={adminPin}
-                      onChange={(e) => setAdminPin(e.target.value.replace(/\D/g, ''))}
-                      placeholder="ex: 1234"
+                      onChange={(e) => setAdminPin(e.target.value)}
+                      placeholder="ex: KEYZOM"
                       className="w-full pl-9 pr-3 py-2 bg-[#090909] border border-[#262626] rounded-xl text-neutral-100 font-mono tracking-widest focus:outline-hidden focus:border-[#c5a47e]"
                     />
                   </div>

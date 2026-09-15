@@ -935,9 +935,13 @@ export interface OfflineSyncQueueItem {
   timestamp: string;
   action: 'create_sale' | 'update_stock' | 'close_shift' | 'create_customer' | string;
   data: any;
+  table?: string;
   entity?: string;
-  status: 'pending' | 'syncing' | 'synced' | 'conflict';
+  status: 'pending' | 'syncing' | 'synced' | 'conflict' | 'failed';
   retryCount: number;
+  lastAttempt?: number;
+  nextRetryTime?: number;
+  lastError?: string;
 }
 
 export type OmnichannelOrderStatus =

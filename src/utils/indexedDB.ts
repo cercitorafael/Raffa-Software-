@@ -300,6 +300,10 @@ class IndexedDBEngine {
     });
   }
 
+  public async getAllSales(): Promise<Sale[]> {
+    return this.getSales();
+  }
+
   public async markSaleSynced(saleId: string): Promise<void> {
     const store = await this.getStore('sales', 'readwrite');
     if (!store) return;
@@ -329,6 +333,39 @@ class IndexedDBEngine {
       req.onsuccess = () => resolve();
       req.onerror = () => resolve();
     });
+  }
+
+  public async updateSyncQueueItem(item: OfflineSyncQueueItem): Promise<void> {
+    return this.enqueueSyncItem(item);
+  }
+
+  public async getSyncQueueItem(id: string): Promise<OfflineSyncQueueItem | null> {
+    const store = await this.getStore('sync_queue', 'readonly');
+    if (!store) return null;
+
+    return new Promise((resolve) => {
+      const req = store.get(id);
+      req.onsuccess = () => resolve(req.result || null);
+      req.onerror = () => resolve(null);
+    });
+  }
+
+  public async updateSyncItemRetry(
+    id: string,
+    retryCount: number,
+    nextRetryTime: number,
+    lastError?: string
+  ): Promise<void> {
+    const item = await this.getSyncQueueItem(id);
+    if (!item) return;
+
+    item.retryCount = retryCount;
+    item.lastAttempt = Date.now();
+    item.nextRetryTime = nextRetryTime;
+    item.status = 'failed';
+    if (lastError) item.lastError = lastError;
+
+    await this.enqueueSyncItem(item);
   }
 
   public async getPendingSyncQueue(): Promise<OfflineSyncQueueItem[]> {
