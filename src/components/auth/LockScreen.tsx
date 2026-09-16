@@ -305,21 +305,6 @@ export const LockScreen: React.FC = () => {
           </button>
         </div>
 
-        {/* Quick KEYZOM button */}
-        <div className="w-full mb-3">
-          <button
-            type="button"
-            onClick={() => {
-              sound.playBeep();
-              setPinInput('KEYZOM');
-              setErrorMsg(null);
-            }}
-            className="w-full py-1.5 px-3 bg-[#151515] hover:bg-[#202020] border border-[#2e2e2e] hover:border-[#c5a47e]/50 rounded-lg text-xs font-mono text-neutral-300 hover:text-[#c5a47e] transition-all cursor-pointer flex items-center justify-center space-x-2"
-          >
-            <span>Inserir PIN padrão: <strong>KEYZOM</strong></span>
-          </button>
-        </div>
-
         {/* Unlock and Switch User Actions */}
         <div className="w-full space-y-2">
           <button

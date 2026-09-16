@@ -632,19 +632,6 @@ export const LoginScreen: React.FC = () => {
                   </button>
                 </div>
 
-                {/* Quick Insert KEYZOM Button */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    sound.playBeep();
-                    setPinInput('KEYZOM');
-                    setPinError(null);
-                  }}
-                  className="w-full py-1.5 px-3 bg-[#161616] hover:bg-[#222222] border border-[#2a2a2a] hover:border-[#c5a47e]/50 rounded-lg text-xs font-mono text-neutral-300 hover:text-[#c5a47e] transition-all cursor-pointer flex items-center justify-center space-x-2"
-                >
-                  <span>Inserir PIN padrão: <strong>KEYZOM</strong></span>
-                </button>
-
                 {/* Submit PIN */}
                 <button
                   type="button"

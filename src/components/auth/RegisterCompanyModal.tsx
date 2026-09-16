@@ -100,7 +100,7 @@ export const RegisterCompanyModal: React.FC<RegisterCompanyModalProps> = ({
   const [adminName, setAdminName] = useState<string>('');
   const [adminEmail, setAdminEmail] = useState<string>('');
   const [adminUsername, setAdminUsername] = useState<string>('');
-  const [adminPin, setAdminPin] = useState<string>('KEYZOM');
+  const [adminPin, setAdminPin] = useState<string>('');
   const [adminPhone, setAdminPhone] = useState<string>('');
   const [adminNif, setAdminNif] = useState<string>('');
 
@@ -643,7 +643,7 @@ export const RegisterCompanyModal: React.FC<RegisterCompanyModalProps> = ({
                       required
                       value={adminPin}
                       onChange={(e) => setAdminPin(e.target.value)}
-                      placeholder="ex: KEYZOM"
+                      placeholder="••••••••"
                       className="w-full pl-9 pr-3 py-2 bg-[#090909] border border-[#262626] rounded-xl text-neutral-100 font-mono tracking-widest focus:outline-hidden focus:border-[#c5a47e]"
                     />
                   </div>

@@ -355,25 +355,31 @@ export const SubscriptionSuspendedScreen: React.FC = () => {
               <span>{isRefreshing ? 'A verificar pagamento...' : 'Verificar Pagamento / Revalidar'}</span>
             </button>
 
-            {uniqueCompanies.length > 1 && (
-              <div className="w-full sm:w-auto flex items-center space-x-2">
-                <span className="text-[11px] text-neutral-500 whitespace-nowrap">Trocar Empresa:</span>
+            {/* Empresa Logada Display (Bloqueada / Não permite trocar) */}
+            <div className="w-full sm:w-auto flex items-center space-x-2 bg-[#141414] border border-[#262626] rounded-xl px-3 py-1.5 shadow-xs">
+              <Building2 className="w-4 h-4 text-[#c5a47e] shrink-0" />
+              <div className="flex items-center space-x-2">
+                <span className="text-[11px] font-semibold text-neutral-400 whitespace-nowrap">
+                  Empresa Logada:
+                </span>
                 <select
-                  value={currentCompany?.id}
-                  onChange={(e) => {
-                    const c = uniqueCompanies.find((comp) => comp.id === e.target.value);
-                    if (c) setCurrentCompany(c);
-                  }}
-                  className="bg-[#141414] border border-[#2a2a2a] rounded-lg px-2 py-1.5 text-xs text-neutral-200 focus:outline-hidden"
+                  id="suspended-logged-company-select"
+                  value={currentCompany?.id || 'default'}
+                  disabled
+                  className="bg-[#0a0a0a] border border-[#2c2c2c] rounded-lg px-2.5 py-1 text-xs font-semibold text-neutral-200 focus:outline-hidden cursor-not-allowed opacity-90 select-none appearance-none"
+                  title={`Empresa Ativa e Bloqueada: ${currentCompany?.tradeName || currentCompany?.name || 'A Minha Empresa'}`}
                 >
-                  {uniqueCompanies.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.tradeName || c.name}
-                    </option>
-                  ))}
+                  <option value={currentCompany?.id || 'default'} className="bg-[#141414] text-neutral-200 font-semibold">
+                    {currentCompany?.tradeName || currentCompany?.name || 'A Minha Empresa'}
+                  </option>
                 </select>
               </div>
-            )}
+              {currentCompany?.taxNumber && (
+                <span className="hidden md:inline-block text-[10px] px-1.5 py-0.5 rounded bg-[#c5a47e]/15 text-[#c5a47e] font-mono font-medium">
+                  NUIT: {currentCompany.taxNumber}
+                </span>
+              )}
+            </div>
 
             <button
               type="button"

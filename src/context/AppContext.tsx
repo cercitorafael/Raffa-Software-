@@ -119,7 +119,9 @@ import {
   flushPendingSyncQueue,
   resetQueueRetryTimers,
   purgeCompanyFromSupabase,
+  finalizarVendaAtomicaNoSupabase,
 } from '../lib/supabaseSync';
+import { openCashDrawer, printThermalReceipt } from '../utils/hardwareBridge';
 import {
   getUserProfile,
   getUserFullProfile,
@@ -3202,7 +3204,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         sound.playError();
         return {
           success: false,
-          error: 'A credencial "1234" foi desativada permanentemente por segurança. Utilize "KEYZOM" (ou "admin" para conta de Administrador).',
+          error: 'A credencial "1234" é inválida por motivos de segurança. Por favor utilize as suas credenciais autorizadas.',
         };
       }
 
@@ -3296,7 +3298,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         sound.playError();
         return {
           success: false,
-          error: 'O PIN "1234" foi desativado permanentemente. O PIN padrão de segurança é "KEYZOM".',
+          error: 'PIN de segurança inválido. Por favor introduza o seu PIN de acesso.',
         };
       }
 
@@ -3498,7 +3500,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         sound.playError();
         return {
           success: false,
-          error: 'O PIN "1234" foi desativado permanentemente. O PIN padrão é "KEYZOM".',
+          error: 'PIN de segurança incorreto. Acesso não autorizado.',
         };
       }
 
@@ -6735,7 +6737,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
     setLastCompletedSale(sale);
     saveToStorage('lastCompletedSale', sale);
-    pushRecordToSupabase('vendas', 'insert', sale);
+
+    // 4.1. Atomic execution in Supabase (with pessimistic FOR UPDATE stock lock and fallback)
+    if (isOnline) {
+      finalizarVendaAtomicaNoSupabase(sale, cart).catch((err) => {
+        console.warn('[completeSale] Erro no push atómico para Supabase:', err);
+      });
+    }
 
     // 5. Offline handling
     if (!isOnline) {
@@ -6755,6 +6763,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const currentQueue = await offlineDB.getPendingSyncQueue();
       setSyncQueue(currentQueue);
       requestBackgroundSync();
+    }
+
+    // 6. Native Hardware Integration (Abertura de Gaveta de Dinheiro se houver pagamento em numerário)
+    const hasCashPayment = paymentMethods.some(
+      (p) => (p.method as string) === 'dinheiro' || (p.method as string) === 'numerario'
+    );
+    if (hasCashPayment) {
+      openCashDrawer().catch(() => {});
     }
 
     // 6. Emit Events

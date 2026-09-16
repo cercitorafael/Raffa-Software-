@@ -2556,4 +2556,57 @@ export async function clearAllPendingSyncQueue(): Promise<void> {
   }
 }
 
+/**
+ * Executa a finalização atómica da venda no Supabase utilizando a Stored Procedure
+ * "finalizar_venda_atomica" com bloqueio pessimista (FOR UPDATE) no stock para prevenir concorrência.
+ * Se a função RPC ainda não estiver criada no banco de dados, executa fallback transparente
+ * para o fluxo padrão e enfileira na fila offline caso a conexão falhe.
+ */
+export async function finalizarVendaAtomicaNoSupabase(
+  sale: Sale,
+  cartItems: any[]
+): Promise<{ success: boolean; idempotent?: boolean; usedRpc: boolean; error?: any }> {
+  try {
+    const p_venda = mapSaleToSupabase(sale);
+    const p_itens = (cartItems || []).map((item) => ({
+      productId: item.productId || item.id,
+      productName: item.productName || item.name,
+      quantity: Number(item.quantity) || 1,
+      unitPrice: Number(item.unitPrice) || 0,
+      subtotal: Number(item.subtotal || item.total) || 0,
+      warehouseId: item.warehouseId || undefined,
+    }));
+
+    // Executar RPC atómica no PostgreSQL via Supabase
+    const { data, error } = await supabase.rpc('finalizar_venda_atomica', {
+      p_venda,
+      p_itens,
+    });
+
+    if (!error && data) {
+      addSyncLog({
+        table: 'vendas',
+        action: 'INSERT',
+        origin: 'LOCAL_APP',
+        description: `⚡ Venda "${sale.invoiceNumber}" e baixa de stock processadas com atomicidade e bloqueio pessimista (RPC)`,
+        status: 'success',
+      });
+      return { success: true, usedRpc: true, idempotent: (data as any)?.idempotent };
+    }
+
+    // Se a RPC não estiver disponível (42883 = função não existe, PGRST202), executar fallback
+    if (error && (error.code === '42883' || error.code === 'PGRST202' || error.message?.includes('does not exist'))) {
+      const fallbackSale = await pushRecordToSupabaseDirect('vendas', 'insert', sale, true);
+      return { success: fallbackSale.success, usedRpc: false, error: fallbackSale.error };
+    }
+
+    throw error;
+  } catch (err: any) {
+    console.warn('[finalizarVendaAtomicaNoSupabase] Fallback ativado:', err);
+    const fallbackSale = await pushRecordToSupabaseDirect('vendas', 'insert', sale, true);
+    return { success: fallbackSale.success, usedRpc: false, error: err };
+  }
+}
+
+
 

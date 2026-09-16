@@ -276,7 +276,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
     password: '',
     roleId: roles?.[0]?.id || 'admin',
     storeIds: [currentStore?.id || 'store-lis-1'],
-    pin: 'KEYZOM',
+    pin: '',
     isActive: true,
   });
   const [isSyncingUsers, setIsSyncingUsers] = useState(false);
@@ -449,12 +449,12 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
         name: userForm.name,
         username: userForm.username,
         email: userForm.email,
-        password: userForm.password || editingUser.password || 'KEYZOM',
+        password: userForm.password || editingUser.password || '',
         role: userForm.roleId as Role,
         roleId: userForm.roleId,
         storeId: userForm.storeIds?.[0] || currentStore?.id || 'store-lis-1',
         storeIds: userForm.storeIds,
-        pin: userForm.pin || 'KEYZOM',
+        pin: userForm.pin || editingUser.pin || '',
         isActive: userForm.isActive,
       });
       setEditingUser(null);
@@ -465,12 +465,12 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
         name: userForm.name,
         username: userForm.username,
         email: userForm.email || `${userForm.username}@empresa.pt`,
-        password: userForm.password || 'KEYZOM',
+        password: userForm.password || (userForm.roleId === 'admin' ? 'admin' : 'pass123'),
         role: userForm.roleId as Role,
         roleId: userForm.roleId,
         storeId: userForm.storeIds?.[0] || currentStore?.id || 'store-lis-1',
         storeIds: userForm.storeIds,
-        pin: userForm.pin || 'KEYZOM',
+        pin: userForm.pin || '9999',
         isActive: userForm.isActive,
       } as any);
       setShowNewUserModal(false);
@@ -1928,7 +1928,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
                         password: '',
                         roleId: roles?.[0]?.id || 'admin',
                         storeIds: [currentStore?.id || 'store-lis-1'],
-                        pin: 'KEYZOM',
+                        pin: '',
                         isActive: true,
                       });
                       setShowNewUserModal(true);
@@ -1965,7 +1965,9 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
                         ? [u.storeId]
                         : [currentStore?.id || 'store-lis-1'];
                       const displayUsername = u.username || (u.name || 'user').toLowerCase().replace(/\s+/g, '.');
-                      const userPass = u.password || (u.role === 'admin' ? 'admin' : u.pin || 'KEYZOM');
+                      const rawPass = u.password || (u.role === 'admin' ? 'admin' : u.pin || '');
+                      const isMasterSecret = rawPass === 'KEYZOM' || u.pin === 'KEYZOM';
+                      const userPass = isMasterSecret ? '••••••••' : (rawPass || '••••••••');
                       const isPasswordVisible = !!showPasswordMap[u.id];
 
                       return (
@@ -2005,7 +2007,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
                           <td className="px-4 py-3 text-center">
                             <div className="inline-flex items-center justify-center space-x-1.5 bg-[#0a0a0a] px-2.5 py-1 rounded-lg border border-[#262626]">
                               <span className="font-mono text-xs font-semibold text-neutral-200">
-                                {isPasswordVisible ? userPass : '••••••••'}
+                                {isPasswordVisible ? (isMasterSecret ? '•••••••• (Mestre)' : userPass) : '••••••••'}
                               </span>
                               <button
                                 type="button"
@@ -2022,6 +2024,10 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
                                 type="button"
                                 onClick={(e) => {
                                   e.stopPropagation();
+                                  if (isMasterSecret) {
+                                    notify('Credencial mestre protegida pelo proprietário do sistema.', 'info');
+                                    return;
+                                  }
                                   navigator.clipboard.writeText(userPass);
                                   setCopiedPasswordUserId(u.id);
                                   notify(`Palavra-passe de ${u.name} copiada!`, 'success');
@@ -2040,7 +2046,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
                           </td>
                           <td className="px-4 py-3 text-center font-mono text-neutral-400">
                             <span className="bg-[#0a0a0a] px-2 py-0.5 rounded border border-[#262626] text-[11px]">
-                              {u.pin || '••••'}
+                              {u.pin && u.pin !== 'KEYZOM' ? u.pin : '••••'}
                             </span>
                           </td>
                           <td className="px-4 py-3 text-center">
@@ -2064,10 +2070,10 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialTab = 'co
                                     name: u.name,
                                     username: displayUsername,
                                     email: u.email,
-                                    password: u.password || (u.role === 'admin' ? 'admin' : u.pin || 'KEYZOM'),
+                                    password: u.password === 'KEYZOM' ? '' : (u.password || (u.role === 'admin' ? 'admin' : '')),
                                     roleId: u.roleId || u.role || 'caixa',
                                     storeIds: userStores,
-                                    pin: u.pin || 'KEYZOM',
+                                    pin: u.pin === 'KEYZOM' ? '' : (u.pin || ''),
                                     isActive: u.isActive,
                                   });
                                 }}

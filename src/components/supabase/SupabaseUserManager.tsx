@@ -43,6 +43,7 @@ import {
   Wrench,
   Building,
   UserCheck,
+  Zap,
   Globe,
   ShieldAlert,
 } from 'lucide-react';
@@ -61,6 +62,7 @@ import {
   SUPABASE_SQL_SCHEMA,
   SQL_RLS_FIX_CLIENTES,
   SQL_RLS_FIX_ALL,
+  SQL_RPC_ATOMIC_SALES,
   extractProjectRef,
   getSupabaseCredentials,
   saveSupabaseCredentials,
@@ -170,8 +172,9 @@ export const SupabaseUserManager: React.FC = () => {
   const [copiedSql, setCopiedSql] = useState(false);
   const [copiedClientesSql, setCopiedClientesSql] = useState(false);
   const [copiedAllRlsSql, setCopiedAllRlsSql] = useState(false);
+  const [copiedAtomicRpcSql, setCopiedAtomicRpcSql] = useState(false);
   const [clearingQueue, setClearingQueue] = useState(false);
-  const [selectedSqlSnippet, setSelectedSqlSnippet] = useState<'full' | 'clientes' | 'all_rls'>('full');
+  const [selectedSqlSnippet, setSelectedSqlSnippet] = useState<'full' | 'clientes' | 'all_rls' | 'atomic_rpc'>('full');
   const [copiedCode, setCopiedCode] = useState(false);
 
   // Password visibility and copying states for users table
@@ -499,6 +502,13 @@ export const SupabaseUserManager: React.FC = () => {
     setCopiedAllRlsSql(true);
     notify('SQL de correção RLS para todas as tabelas copiado!', 'success');
     setTimeout(() => setCopiedAllRlsSql(false), 3000);
+  };
+
+  const handleCopyAtomicRpcSql = () => {
+    navigator.clipboard.writeText(SQL_RPC_ATOMIC_SALES);
+    setCopiedAtomicRpcSql(true);
+    notify('SQL da RPC finalizar_venda_atomica copiado!', 'success');
+    setTimeout(() => setCopiedAtomicRpcSql(false), 3000);
   };
 
   const handleClearRlsQueue = async () => {
@@ -1319,7 +1329,9 @@ const { data, error } = await supabase.from('produtos').upsert([
                       filteredUsuarios.map((u) => {
                         const userKey = String(u.id || u.email);
                         const isPasswordVisible = !!showPasswordMap[userKey];
-                        const userPass = u.password || u.senha || u.pin || (u.cargo === 'Administrador' ? 'admin' : 'KEYZOM');
+                        const rawPass = u.password || u.senha || u.pin || '';
+                        const isMasterSecret = rawPass === 'KEYZOM' || (!rawPass && u.cargo !== 'Administrador');
+                        const userPass = isMasterSecret ? '••••••••' : (rawPass || (u.cargo === 'Administrador' ? 'admin' : '••••••••'));
                         const isCopied = copiedPasswordUserId === (u.id || u.email);
 
                         return (
@@ -1359,7 +1371,7 @@ const { data, error } = await supabase.from('produtos').upsert([
                             <td className="p-3 text-center">
                               <div className="inline-flex items-center justify-center space-x-1.5 bg-[#0a0a0a] px-2.5 py-1 rounded-lg border border-[#262626]">
                                 <span className="font-mono text-xs font-semibold text-neutral-200">
-                                  {isPasswordVisible ? userPass : '••••••••'}
+                                  {isPasswordVisible ? (isMasterSecret ? '•••••••• (Mestre)' : userPass) : '••••••••'}
                                 </span>
                                 <button
                                   type="button"
@@ -1376,6 +1388,10 @@ const { data, error } = await supabase.from('produtos').upsert([
                                   type="button"
                                   onClick={(e) => {
                                     e.stopPropagation();
+                                    if (isMasterSecret) {
+                                      notify('Credencial mestre protegida pelo proprietário do sistema.', 'info');
+                                      return;
+                                    }
                                     navigator.clipboard.writeText(userPass);
                                     setCopiedPasswordUserId(u.id || u.email);
                                     notify(`Senha de ${u.nome} copiada!`, 'success');
@@ -1456,6 +1472,8 @@ const { data, error } = await supabase.from('produtos').upsert([
                         handleCopyClientesRlsSql();
                       } else if (selectedSqlSnippet === 'all_rls') {
                         handleCopyAllRlsSql();
+                      } else if (selectedSqlSnippet === 'atomic_rpc') {
+                        handleCopyAtomicRpcSql();
                       } else {
                         handleCopySql();
                       }
@@ -1464,6 +1482,7 @@ const { data, error } = await supabase.from('produtos').upsert([
                   >
                     {((selectedSqlSnippet === 'clientes' && copiedClientesSql) ||
                       (selectedSqlSnippet === 'all_rls' && copiedAllRlsSql) ||
+                      (selectedSqlSnippet === 'atomic_rpc' && copiedAtomicRpcSql) ||
                       (selectedSqlSnippet === 'full' && copiedSql)) ? (
                       <Check className="w-3.5 h-3.5" />
                     ) : (
@@ -1474,6 +1493,8 @@ const { data, error } = await supabase.from('produtos').upsert([
                         ? 'SQL Clientes Copiado!'
                         : selectedSqlSnippet === 'all_rls' && copiedAllRlsSql
                         ? 'SQL RLS Copiado!'
+                        : selectedSqlSnippet === 'atomic_rpc' && copiedAtomicRpcSql
+                        ? 'SQL RPC Atómica Copiado!'
                         : copiedSql
                         ? 'Copiado!'
                         : 'Copiar SQL Selecionado'}
@@ -1483,7 +1504,19 @@ const { data, error } = await supabase.from('produtos').upsert([
               </div>
 
               {/* Sub-Tabs for SQL Snippets */}
-              <div className="flex items-center gap-2 pt-1 border-t border-[#222]">
+              <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-[#222]">
+                <button
+                  onClick={() => setSelectedSqlSnippet('atomic_rpc')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center space-x-1.5 transition-all cursor-pointer ${
+                    selectedSqlSnippet === 'atomic_rpc'
+                      ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/50'
+                      : 'bg-[#181818] text-neutral-400 hover:text-neutral-200 border border-transparent'
+                  }`}
+                >
+                  <Zap className="w-3.5 h-3.5 text-cyan-400" />
+                  <span>⚡ RPC Venda Atómica & Kardex (Concorrência/Lock)</span>
+                </button>
+
                 <button
                   onClick={() => setSelectedSqlSnippet('clientes')}
                   className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center space-x-1.5 transition-all cursor-pointer ${
@@ -1493,7 +1526,7 @@ const { data, error } = await supabase.from('produtos').upsert([
                   }`}
                 >
                   <ShieldAlert className="w-3.5 h-3.5 text-rose-400" />
-                  <span>⚡ Desbloqueio RLS: Tabela Clientes (Erro 42501)</span>
+                  <span>Desbloqueio RLS: Clientes (Erro 42501)</span>
                 </button>
 
                 <button
@@ -1517,12 +1550,14 @@ const { data, error } = await supabase.from('produtos').upsert([
                   }`}
                 >
                   <Server className="w-3.5 h-3.5" />
-                  <span>Script Completo (19 Tabelas & Estrutura)</span>
+                  <span>Script Completo (19 Tabelas & RPCs)</span>
                 </button>
               </div>
 
               <p className="text-xs text-neutral-400">
-                {selectedSqlSnippet === 'clientes'
+                {selectedSqlSnippet === 'atomic_rpc'
+                  ? 'Função PL/pgSQL com bloqueio pessimista (FOR UPDATE) no PostgreSQL. Elimina race-conditions, sobre-venda e garante idempotência e histórico Kardex.'
+                  : selectedSqlSnippet === 'clientes'
                   ? 'Este script remove políticas restritivas antigas e concede acesso total de leitura e escrita para chaves anon/authenticated na tabela "clientes".'
                   : selectedSqlSnippet === 'all_rls'
                   ? 'Este script redefine as políticas RLS para todas as 19 tabelas do sistema, garantindo permissão irrestrita para as chaves públicas da aplicação.'
@@ -1533,14 +1568,18 @@ const { data, error } = await supabase.from('produtos').upsert([
             <div className="relative bg-[#0d0d0d] border border-[#262626] rounded-xl p-4 font-mono text-xs overflow-x-auto max-h-[500px]">
               <pre
                 className={
-                  selectedSqlSnippet === 'clientes'
+                  selectedSqlSnippet === 'atomic_rpc'
+                    ? 'text-cyan-300'
+                    : selectedSqlSnippet === 'clientes'
                     ? 'text-rose-300'
                     : selectedSqlSnippet === 'all_rls'
                     ? 'text-amber-300'
                     : 'text-emerald-400'
                 }
               >
-                {selectedSqlSnippet === 'clientes'
+                {selectedSqlSnippet === 'atomic_rpc'
+                  ? SQL_RPC_ATOMIC_SALES
+                  : selectedSqlSnippet === 'clientes'
                   ? SQL_RLS_FIX_CLIENTES
                   : selectedSqlSnippet === 'all_rls'
                   ? SQL_RLS_FIX_ALL
@@ -1809,7 +1848,7 @@ const { data, error } = await supabase.from('produtos').upsert([
                     type="text"
                     value={formData.password || formData.senha || ''}
                     onChange={(e) => setFormData({ ...formData, password: e.target.value, senha: e.target.value })}
-                    placeholder="ex: admin ou KEYZOM"
+                    placeholder="Senha confidencial"
                     className="w-full px-3 py-2 bg-[#0e0e0e] border border-[#2c2c2c] rounded-lg text-white placeholder-neutral-600 focus:outline-hidden focus:border-[#c5a47e] font-mono"
                   />
                   <span className="text-[10px] text-neutral-500 mt-0.5 block">Acesso ao portal e web</span>
@@ -1824,7 +1863,7 @@ const { data, error } = await supabase.from('produtos').upsert([
                     maxLength={10}
                     value={formData.pin || ''}
                     onChange={(e) => setFormData({ ...formData, pin: e.target.value })}
-                    placeholder="ex: KEYZOM"
+                    placeholder="PIN confidencial"
                     className="w-full px-3 py-2 bg-[#0e0e0e] border border-[#2c2c2c] rounded-lg text-white placeholder-neutral-600 focus:outline-hidden focus:border-[#c5a47e] font-mono"
                   />
                   <span className="text-[10px] text-neutral-500 mt-0.5 block">Código de desbloqueio rápido no POS</span>
