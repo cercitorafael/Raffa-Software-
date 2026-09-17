@@ -35,52 +35,118 @@ function normalizeHeaderKey(key: string): string {
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/[^a-z0-9]/g, '');
 
-  if (['nome', 'artigo', 'designacao', 'name', 'produto', 'descricaoartigo'].includes(clean)) {
-    return 'name';
+  if (
+    clean.includes('nome') ||
+    clean.includes('artigo') ||
+    clean.includes('designacao') ||
+    clean.includes('produto') ||
+    clean.includes('title') ||
+    clean === 'name'
+  ) {
+    if (!clean.includes('cod') && !clean.includes('sku') && !clean.includes('ref') && !clean.includes('preco') && !clean.includes('total')) {
+      return 'name';
+    }
   }
-  if (['sku', 'ref', 'referencia', 'code', 'codigo', 'codartigo'].includes(clean)) {
+
+  if (
+    ['sku', 'ref', 'referencia', 'code', 'codigo', 'codartigo', 'skureferencia'].includes(clean) ||
+    clean.startsWith('sku')
+  ) {
     return 'sku';
   }
-  if (['barcode', 'codigobarras', 'codigodebarras', 'ean', 'gtin', 'codbarras'].includes(clean)) {
+
+  if (
+    clean.includes('barcode') ||
+    clean.includes('codigobarras') ||
+    clean.includes('codbarras') ||
+    clean.includes('ean') ||
+    clean.includes('gtin')
+  ) {
     return 'barcode';
   }
-  if (['categoria', 'cat', 'category', 'familia', 'grupo'].includes(clean)) {
+
+  if (
+    clean.includes('categoria') ||
+    clean.includes('category') ||
+    clean.includes('familia') ||
+    clean === 'cat' ||
+    clean === 'grupo'
+  ) {
     return 'category';
   }
-  if (['preco', 'price', 'pvp', 'precovenda', 'precocomiva', 'valorvenda'].includes(clean)) {
-    return 'price';
+
+  if (
+    clean.includes('pvp') ||
+    clean.includes('preco') ||
+    clean.includes('price') ||
+    clean.includes('valorvenda')
+  ) {
+    if (!clean.includes('custo') && !clean.includes('compra') && !clean.includes('total')) {
+      return 'price';
+    }
   }
-  if (['custo', 'precocusto', 'costprice', 'cost', 'valordecompra', 'precocompra'].includes(clean)) {
-    return 'costPrice';
+
+  if (
+    clean.includes('custo') ||
+    clean.includes('cost') ||
+    clean.includes('compra')
+  ) {
+    if (!clean.includes('total')) {
+      return 'costPrice';
+    }
   }
-  if (['taxaiva', 'iva', 'tax', 'taxrate', 'taxadeiva', 'aliquota'].includes(clean)) {
+
+  if (clean.includes('iva') || clean.includes('tax') || clean.includes('aliquota')) {
     return 'taxRate';
   }
-  if (['unidade', 'unit', 'unid', 'medida', 'uom'].includes(clean)) {
+
+  if (['unidade', 'unit', 'unid', 'medida', 'uom', 'un'].includes(clean)) {
     return 'unit';
   }
-  if (['stockminimo', 'minstock', 'stockmin', 'minimo'].includes(clean)) {
+
+  if (clean.includes('stockmin') || clean.includes('minstock') || clean.includes('minimo')) {
     return 'minStock';
   }
-  if (['stockmaximo', 'maxstock', 'stockmax', 'maximo'].includes(clean)) {
+
+  if (clean.includes('stockmax') || clean.includes('maxstock') || clean.includes('maximo')) {
     return 'maxStock';
   }
-  if (['stockinicial', 'stock', 'quantidade', 'qty', 'initialstock', 'qtd'].includes(clean)) {
+
+  if (
+    clean.includes('stockinicial') ||
+    clean.includes('initialstock') ||
+    clean.includes('stockatual') ||
+    clean === 'stock' ||
+    clean === 'quantidade' ||
+    clean === 'qty' ||
+    clean === 'qtd'
+  ) {
     return 'initialStock';
   }
-  if (['lotes', 'controleslote', 'batch', 'hasbatchcontrol', 'controllote', 'validade'].includes(clean)) {
+
+  if (clean.includes('lote') || clean.includes('batch') || clean.includes('validade')) {
     return 'hasBatchControl';
   }
-  if (['descricao', 'description', 'obs', 'notas', 'detalhes'].includes(clean)) {
+
+  if (
+    clean.includes('descricao') ||
+    clean.includes('description') ||
+    clean.includes('obs') ||
+    clean.includes('notas') ||
+    clean.includes('detalhes')
+  ) {
     return 'description';
   }
-  if (['imagem', 'imageurl', 'foto', 'image', 'linkimagem'].includes(clean)) {
+
+  if (clean.includes('imagem') || clean.includes('image') || clean.includes('foto')) {
     return 'imageUrl';
   }
-  if (['fornecedor', 'supplier', 'supplierid', 'niffornecedor'].includes(clean)) {
+
+  if (clean.includes('fornecedor') || clean.includes('supplier')) {
     return 'supplier';
   }
-  if (['armazem', 'warehouse', 'warehouseid', 'local'].includes(clean)) {
+
+  if (clean.includes('armazem') || clean.includes('warehouse')) {
     return 'warehouse';
   }
 
@@ -259,6 +325,31 @@ export async function parseProductsFile(
 }
 
 /**
+ * Universal safe Excel downloader that works in browser, Electron and iframe environments
+ */
+function triggerExcelDownload(workbook: XLSX.WorkBook, filename: string): void {
+  try {
+    const excelBuffer = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
+    const blob = new Blob([excelBuffer], {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setTimeout(() => {
+      URL.revokeObjectURL(url);
+    }, 1000);
+  } catch {
+    // Fallback to XLSX.writeFile if blob generation fails
+    XLSX.writeFile(workbook, filename);
+  }
+}
+
+/**
  * Exports products to Excel workbook and triggers download
  */
 export function exportProductsToExcel(
@@ -334,8 +425,9 @@ export function exportProductsToExcel(
   XLSX.utils.book_append_sheet(workbook, worksheet, 'Catálogo de Produtos');
 
   const timestamp = new Date().toISOString().split('T')[0];
-  const filename = `Catalogo_Produtos_${companyName.replace(/[^a-zA-Z0-9]/g, '_')}_${timestamp}.xlsx`;
-  XLSX.writeFile(workbook, filename);
+  const safeName = (companyName || 'Empresa').replace(/[^a-zA-Z0-9]/g, '_');
+  const filename = `Catalogo_Produtos_${safeName}_${timestamp}.xlsx`;
+  triggerExcelDownload(workbook, filename);
 }
 
 /**
@@ -492,7 +584,7 @@ export function generateProductsTemplateExcel() {
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, worksheet, 'Modelo_Importacao');
 
-  XLSX.writeFile(workbook, 'Modelo_Importacao_Artigos_POS_ERP.xlsx');
+  triggerExcelDownload(workbook, 'Modelo_Importacao_Artigos_POS_ERP.xlsx');
 }
 
 /**

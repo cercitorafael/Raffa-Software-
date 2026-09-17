@@ -1,22 +1,8 @@
-const { app, BrowserWindow } = require('electron');
+const { app, BrowserWindow, protocol } = require('electron');
 const path = require('path');
+const fs = require('fs');
 
 let mainWindow = null;
-let localServer = null;
-
-function startEmbeddedServer() {
-  try {
-    // Em modo empacotado (.exe), inicia o servidor backend embutido se compilado
-    const serverPath = path.join(__dirname, 'dist', 'server.cjs');
-    if (require('fs').existsSync(serverPath)) {
-      process.env.NODE_ENV = 'production';
-      process.env.PORT = process.env.PORT || '3000';
-      require(serverPath);
-    }
-  } catch (err) {
-    console.error('Falha ao iniciar servidor local embutido:', err);
-  }
-}
 
 function createWindow() {
   const iconPath = path.join(__dirname, 'public', 'icon.png');
@@ -27,9 +13,10 @@ function createWindow() {
     minWidth: 1024,
     minHeight: 700,
     title: 'RAFFA SOFTWARE - POS & ERP Empresarial',
-    icon: iconPath,
-    backgroundColor: '#0a0a0a',
+    icon: fs.existsSync(iconPath) ? iconPath : undefined,
+    backgroundColor: '#0f172a',
     autoHideMenuBar: true,
+    show: false, // Evita flash da tela preta antes do carregamento
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -38,15 +25,36 @@ function createWindow() {
     },
   });
 
+  // Mostra a janela suavemente quando a página estiver pronta
+  mainWindow.once('ready-to-show', () => {
+    mainWindow.show();
+  });
+
   const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
 
   if (isDev) {
     const port = process.env.PORT || 3000;
-    mainWindow.loadURL(`http://localhost:${port}`);
+    mainWindow.loadURL(`http://localhost:${port}`).catch((err) => {
+      console.error('Falha ao carregar URL dev:', err);
+    });
   } else {
-    // No .exe executável, carrega a interface do build
-    mainWindow.loadFile(path.join(__dirname, 'dist', 'index.html'));
+    // No Windows (.exe), carrega o index.html gerado
+    const indexPath = path.join(__dirname, 'dist', 'index.html');
+    mainWindow.loadFile(indexPath).catch((err) => {
+      console.error('Falha ao carregar ficheiro HTML local:', err);
+      // Fallback para URL caso arquivo local falhe
+      mainWindow.loadURL(`file://${indexPath}`);
+    });
   }
+
+  // Se houver falha de renderização ou erro de script
+  mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
+    console.error('did-fail-load:', errorCode, errorDescription);
+  });
+
+  mainWindow.webContents.on('render-process-gone', (event, detailed) => {
+    console.error('render-process-gone:', detailed.reason);
+  });
 
   mainWindow.on('closed', () => {
     mainWindow = null;
@@ -54,9 +62,6 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
-  if (app.isPackaged) {
-    startEmbeddedServer();
-  }
   createWindow();
 
   app.on('activate', () => {

@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useApp } from '../../context/AppContext';
 import { formatCurrency } from '../../utils/crypto';
 import {
@@ -54,6 +54,13 @@ export const ProductImportExportModal: React.FC<ProductImportExportModalProps> =
   } = useApp();
 
   const [activeTab, setActiveTab] = useState<'import' | 'export'>(initialMode);
+
+  // Synchronize active tab when modal is opened with a specific initialMode
+  useEffect(() => {
+    if (isOpen) {
+      setActiveTab(initialMode);
+    }
+  }, [isOpen, initialMode]);
 
   // Import State
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -176,28 +183,36 @@ export const ProductImportExportModal: React.FC<ProductImportExportModalProps> =
       return;
     }
 
-    if (exportFormat === 'xlsx') {
-      exportProductsToExcel(
-        productsToExport,
-        categories,
-        stock,
-        warehouses,
-        suppliers,
-        currentCompany.tradeName || currentCompany.name,
-        currentCompany.currencySymbol || currentCompany.currency
-      );
-    } else if (exportFormat === 'csv') {
-      exportProductsToCSV(
-        productsToExport,
-        categories,
-        stock,
-        currentCompany.tradeName || currentCompany.name
-      );
-    } else {
-      exportProductsToJSON(productsToExport, currentCompany.tradeName || currentCompany.name);
-    }
+    try {
+      const companyName = currentCompany?.tradeName || currentCompany?.name || 'Empresa';
+      const currencySymbol = currentCompany?.currencySymbol || currentCompany?.currency || 'Mt';
 
-    notify(`Catálogo exportado com sucesso (${productsToExport.length} artigos)!`, 'success');
+      if (exportFormat === 'xlsx') {
+        exportProductsToExcel(
+          productsToExport,
+          categories,
+          stock,
+          warehouses,
+          suppliers,
+          companyName,
+          currencySymbol
+        );
+      } else if (exportFormat === 'csv') {
+        exportProductsToCSV(
+          productsToExport,
+          categories,
+          stock,
+          companyName
+        );
+      } else {
+        exportProductsToJSON(productsToExport, companyName);
+      }
+
+      notify(`Catálogo exportado com sucesso (${productsToExport.length} artigos)!`, 'success');
+    } catch (err: any) {
+      console.error('Erro na exportação:', err);
+      notify(`Erro ao exportar catálogo: ${err?.message || 'Falha na geração do ficheiro'}`, 'error');
+    }
   };
 
   return (
