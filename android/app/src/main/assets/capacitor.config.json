@@ -1,0 +1,9 @@
+{
+	"appId": "com.raffasoftware.pos",
+	"appName": "RAFFA SOFTWARE",
+	"webDir": "dist",
+	"server": {
+		"androidScheme": "https",
+		"cleartext": true
+	}
+}

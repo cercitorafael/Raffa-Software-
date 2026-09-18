@@ -3,7 +3,7 @@
   "productName": "RAFFA SOFTWARE",
   "private": true,
   "version": "5.1.0",
-  "main": "electron-main.cjs",
+  "main": "dist/server.cjs",
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
@@ -16,7 +16,9 @@
     "electron:build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs && electron-builder --win",
     "electron:build:dir": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs && electron-builder --win --dir",
     "cap:sync": "vite build && cap sync",
-    "cap:android": "cap open android"
+    "cap:copy": "vite build && cap copy",
+    "cap:android": "cap open android",
+    "build:android": "vite build && cap sync android"
   },
   "dependencies": {
     "@capacitor/android": "^8.5.2",
@@ -26,8 +28,10 @@
     "@supabase/supabase-js": "^2.112.4",
     "@tailwindcss/vite": "^4.1.14",
     "@vitejs/plugin-react": "^5.0.4",
+    "autoprefixer": "^10.4.21",
     "canvas-confetti": "^1.9.4",
     "dotenv": "^17.2.3",
+    "esbuild": "^0.25.0",
     "express": "^4.21.2",
     "jspdf": "^4.2.1",
     "jspdf-autotable": "^5.0.8",
@@ -36,6 +40,7 @@
     "react": "^19.0.1",
     "react-dom": "^19.0.1",
     "recharts": "^3.10.1",
+    "tailwindcss": "^4.1.14",
     "vite": "^6.2.3",
     "xlsx": "^0.18.5",
     "zod": "^4.5.4"
@@ -47,19 +52,18 @@
     "@types/node": "^22.14.0",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.7",
-    "autoprefixer": "^10.4.21",
     "concurrently": "^10.0.5",
     "cross-env": "^10.1.0",
     "electron": "^44.4.1",
     "electron-builder": "^26.15.3",
-    "esbuild": "^0.25.0",
-    "tailwindcss": "^4.1.14",
     "tsx": "^4.21.0",
     "typescript": "~5.8.2",
-    "vite": "^6.2.3",
     "wait-on": "^9.1.0"
   },
   "build": {
+    "extraMetadata": {
+      "main": "electron-main.cjs"
+    },
     "appId": "com.raffasoftware.pos",
     "productName": "RAFFA SOFTWARE",
     "directories": {

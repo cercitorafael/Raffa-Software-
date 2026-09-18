@@ -156,6 +156,10 @@ import {
   reconcileCustomerMetrics,
   fetchAllHistoricalSalesFromSupabase,
 } from '../utils/salesRecovery';
+import {
+  executeSupabaseReconciliation,
+  ReconciliationResult,
+} from '../utils/supabaseReconciliation';
 
 export interface CartItem extends SaleItem {
   image?: string;
@@ -477,6 +481,7 @@ export interface AppContextType {
   allSalesHistory: Sale[];
   setSalesHistory: React.Dispatch<React.SetStateAction<Sale[]>>;
   recoverAllSalesFromFirstDay: (options?: { notifyUser?: boolean; targetCompanyId?: string }) => Promise<{ success: boolean; count: number; totalRevenue: number }>;
+  reconciliarComSupabase: (options?: { notifyUser?: boolean; targetCompanyId?: string }) => Promise<ReconciliationResult>;
   addFiscalDocument: (doc: Sale) => Promise<Sale>;
   cancelInvoice: (invoiceId: string, reason: string, restockStock?: boolean) => void;
   updateDocument: (id: string, updates: Partial<Sale>) => void;
@@ -1717,16 +1722,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         if (event === 'DELETE') {
           const idToDelete = item.id || rawOld?.id;
           if (idToDelete) {
-            setSalesHistory((prev) => prev.filter((s) => String(s.id) !== String(idToDelete)));
+            setSalesHistory((prev) => {
+              const updated = prev.filter((s) => String(s.id) !== String(idToDelete));
+              saveToStorage('salesHistory', updated);
+              return updated;
+            });
             notify(`🗑️ Documento/Venda eliminada no Supabase (${rawOld?.invoice_number || idToDelete})`, 'info');
           }
         } else if (item.id) {
           setSalesHistory((prev) => {
             const exists = prev.some((s) => String(s.id) === String(item.id));
+            let updated: Sale[];
             if (exists) {
-              return prev.map((s) => (String(s.id) === String(item.id) ? ({ ...s, ...item } as Sale) : s));
+              updated = prev.map((s) => (String(s.id) === String(item.id) ? ({ ...s, ...item } as Sale) : s));
+            } else {
+              updated = [item as Sale, ...prev];
             }
-            return [item as Sale, ...prev];
+            saveToStorage('salesHistory', updated);
+            return updated;
           });
         }
       },
@@ -2596,6 +2609,104 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
     },
     [salesHistory, customers, currentCompany?.id, notify]
+  );
+
+  /**
+   * Reconciliação Geral e Bidirecional com o Supabase.
+   * Consolida vendas, produtos, stock, clientes, turnos e contas correntes,
+   * resolvendo discrepâncias e disponibilizando todos os dados atualizados localmente e na nuvem.
+   */
+  const reconciliarComSupabase = useCallback(
+    async (options?: { notifyUser?: boolean; targetCompanyId?: string }): Promise<ReconciliationResult> => {
+      const notifyUser = options?.notifyUser !== false;
+      const targetCompId = options?.targetCompanyId || currentCompany?.id || 'ALL';
+
+      if (notifyUser) {
+        notify('A reconciliar dados com o Supabase e consolidar múltiplos computadores...', 'info');
+      }
+
+      const result = await executeSupabaseReconciliation({
+        companyId: targetCompId,
+        localSales: salesHistory,
+        localProducts: products,
+        localCustomers: customers,
+        localStock: stock,
+        localShifts: shiftsHistory,
+        localPayables: accountsPayable,
+        localReceivables: accountsReceivable,
+        autoPushResolvedToCloud: true,
+      });
+
+      if (result.success) {
+        // 1. Atualizar e disponibilizar vendas
+        if (result.reconciledData.sales.length > 0) {
+          setSalesHistory(result.reconciledData.sales);
+          saveToStorage('salesHistory', result.reconciledData.sales);
+        }
+
+        // 2. Atualizar e disponibilizar produtos
+        if (result.reconciledData.products.length > 0) {
+          setProducts(result.reconciledData.products);
+          saveToStorage('products', result.reconciledData.products);
+        }
+
+        // 3. Atualizar e disponibilizar clientes com métricas reconciliadas
+        if (result.reconciledData.customers.length > 0) {
+          setCustomers(result.reconciledData.customers);
+          saveToStorage('customers', result.reconciledData.customers);
+        }
+
+        // 4. Atualizar e disponibilizar stock
+        if (result.reconciledData.stock.length > 0) {
+          setStock(result.reconciledData.stock);
+          saveToStorage('stock', result.reconciledData.stock);
+        }
+
+        // 5. Atualizar e disponibilizar turnos
+        if (result.reconciledData.shifts.length > 0) {
+          setShiftsHistory(result.reconciledData.shifts);
+          saveToStorage('shiftsHistory', result.reconciledData.shifts);
+          const active = result.reconciledData.shifts.find((s) => s.status === 'aberto' && !s.closedAt);
+          if (active) {
+            setActiveShift(active);
+            saveToStorage('activeShift', active);
+          }
+        }
+
+        // 6. Atualizar e disponibilizar contas correntes
+        if (result.reconciledData.accountsPayable.length > 0) {
+          setAccountsPayable(result.reconciledData.accountsPayable);
+          saveToStorage('accountsPayable', result.reconciledData.accountsPayable);
+        }
+        if (result.reconciledData.accountsReceivable.length > 0) {
+          setAccountsReceivable(result.reconciledData.accountsReceivable);
+          saveToStorage('accountsReceivable', result.reconciledData.accountsReceivable);
+        }
+
+        if (notifyUser) {
+          notify(
+            `Reconciliação Supabase concluída! ${result.summary.totalEntitiesProcessed} itens consolidados (${result.summary.newSalesMerged} vendas integradas, ${result.summary.discrepanciesResolved} ajustes aplicados).`,
+            'success'
+          );
+          sound.playSuccessChime();
+        }
+      } else if (notifyUser) {
+        notify(`Aviso na reconciliação: ${result.errors[0] || 'Verifique a conexão.'}`, 'warning');
+      }
+
+      return result;
+    },
+    [
+      currentCompany?.id,
+      salesHistory,
+      products,
+      customers,
+      stock,
+      shiftsHistory,
+      accountsPayable,
+      accountsReceivable,
+      notify,
+    ]
   );
 
   // Auto-recovery pass on startup to ensure historical sales and customer metrics are never lost
@@ -5993,12 +6104,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         })
       );
 
+      // 4. Puxar dados mais recentes da nuvem para atualizar vendas e produtos feitos noutros computadores
+      const compId = currentCompanyRef.current?.id || currentCompany?.id;
+      if (compId) {
+        await pullFromSupabase({ companyId: compId });
+      }
+
       sound.playSuccessChime();
 
       if (flushedCount > 0) {
-        notify(`Sincronização concluída: ${flushedCount} operação(ões) sincronizada(s) com sucesso no Supabase!`, 'success');
+        notify(`Sincronização concluída: ${flushedCount} operação(ões) enviada(s) e dados atualizados da nuvem com sucesso!`, 'success');
       } else if (remainingQueue.length === 0) {
-        notify('Todas as operações locais e de POS já estão sincronizadas com o Supabase.', 'info');
+        notify('Dados atualizados com sucesso entre computadores via Supabase Cloud.', 'success');
       } else {
         notify(`Ainda restam ${remainingQueue.length} operação(ões) com retry agendado via backoff exponencial.`, 'warning');
       }
@@ -6008,7 +6125,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         error: String(e),
         timestamp: new Date().toISOString(),
       });
-      notify('Sincronização offline pendente: os dados estão preservados no IndexedDB e serão reenviados automaticamente.', 'warning');
+      notify('Sincronização offline pendente: os dados locais estão preservados e serão sincronizados assim que possível.', 'warning');
     } finally {
       setIsSyncing(false);
     }
@@ -8717,6 +8834,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         allSalesHistory: salesHistory,
         setSalesHistory,
         recoverAllSalesFromFirstDay,
+        reconciliarComSupabase,
         addFiscalDocument,
         cancelInvoice,
         updateDocument,

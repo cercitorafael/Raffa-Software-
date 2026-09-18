@@ -4,6 +4,8 @@ import {
   UserPlus,
   RefreshCw,
   Trash2,
+  GitMerge,
+  Scale,
   Edit3,
   CheckCircle2,
   AlertTriangle,
@@ -88,6 +90,7 @@ export const SupabaseUserManager: React.FC = () => {
     pushToSupabase,
     pullUsersFromSupabase,
     pushUsersToSupabase,
+    reconciliarComSupabase,
     companies,
     currentCompany,
     stores,
@@ -166,7 +169,9 @@ export const SupabaseUserManager: React.FC = () => {
   // Single table loading state
   const [tableActionLoading, setTableActionLoading] = useState<Record<string, boolean>>({});
 
-  const [activeTab, setActiveTab] = useState<'realtime' | 'diagnostico' | 'tabelas' | 'usuarios' | 'sql' | 'config' | 'codigo'>('tabelas');
+  const [activeTab, setActiveTab] = useState<'realtime' | 'diagnostico' | 'tabelas' | 'reconciliacao' | 'usuarios' | 'sql' | 'config' | 'codigo'>('tabelas');
+  const [reconciling, setReconciling] = useState(false);
+  const [lastReconciliationReport, setLastReconciliationReport] = useState<any | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [logFilter, setLogFilter] = useState<'ALL' | 'INSERT' | 'UPDATE' | 'DELETE' | 'ERROR'>('ALL');
   const [copiedSql, setCopiedSql] = useState(false);
@@ -360,6 +365,21 @@ export const SupabaseUserManager: React.FC = () => {
       });
     } finally {
       setPushingAll(false);
+    }
+  };
+
+  const handleReconciliarDados = async () => {
+    setReconciling(true);
+    try {
+      const scopeComp = selectedCompanyId !== 'ALL' ? selectedCompanyId : currentCompany?.id || 'ALL';
+      const result = await reconciliarComSupabase({ notifyUser: true, targetCompanyId: scopeComp });
+      setLastReconciliationReport(result);
+      await fetchUsuarios();
+      await handleRunFullDiagnostics();
+    } catch (err: any) {
+      notify(`Erro na reconciliação: ${err?.message || err}`, 'error');
+    } finally {
+      setReconciling(false);
     }
   };
 
@@ -670,6 +690,17 @@ const { data, error } = await supabase.from('produtos').upsert([
             <span>{pushingAll ? 'A Carregar...' : 'Carregar para Supabase (Push)'}</span>
           </button>
 
+          {/* Reconcile All Data */}
+          <button
+            onClick={handleReconciliarDados}
+            disabled={reconciling}
+            className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-lg text-xs flex items-center space-x-1.5 transition-all cursor-pointer shadow-md disabled:opacity-50"
+            title="Reconciliar bidirecionalmente todos os dados com o Supabase e disponibilizar para outros computadores"
+          >
+            <GitMerge className={`w-3.5 h-3.5 ${reconciling ? 'animate-spin' : ''}`} />
+            <span>{reconciling ? 'A Reconciliar...' : 'Reconciliar Dados'}</span>
+          </button>
+
           {/* Open Supabase SQL Editor */}
           <a
             href={sqlEditorUrl}
@@ -786,6 +817,18 @@ const { data, error } = await supabase.from('produtos').upsert([
         >
           <Layers className="w-3.5 h-3.5" />
           <span>Matriz de Tabelas ERP (14 Tabelas)</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('reconciliacao')}
+          className={`py-3 text-xs font-semibold border-b-2 flex items-center space-x-2 shrink-0 transition-all cursor-pointer ${
+            activeTab === 'reconciliacao'
+              ? 'border-emerald-500 text-emerald-400'
+              : 'border-transparent text-neutral-400 hover:text-neutral-200'
+          }`}
+        >
+          <Scale className="w-3.5 h-3.5" />
+          <span>Reconciliação de Dados & Multi-dispositivo</span>
         </button>
 
         <button
@@ -1646,6 +1689,170 @@ const { data, error } = await supabase.from('produtos').upsert([
                   </button>
                 </div>
               </form>
+            </div>
+          </div>
+        )}
+        {/* TAB: RECONCILIAÇÃO DE DADOS & MULTI-DISPOSITIVO */}
+        {activeTab === 'reconciliacao' && (
+          <div className="space-y-4">
+            {/* Header explicativo */}
+            <div className="p-5 bg-[#141414] border border-[#262626] rounded-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+              <div className="flex items-start space-x-3.5">
+                <div className="p-3 bg-emerald-500/10 border border-emerald-500/30 rounded-xl text-emerald-400 shrink-0">
+                  <Scale className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-white flex items-center space-x-2">
+                    <span>Motor de Reconciliação Supabase Multi-computador</span>
+                    <span className="px-2 py-0.5 rounded-full text-[10px] bg-emerald-500/20 text-emerald-400 font-mono">
+                      BIDIRECIONAL & LWW
+                    </span>
+                  </h3>
+                  <p className="text-xs text-neutral-400 mt-1 max-w-2xl">
+                    Cruza dados locais deste computador com a nuvem (Supabase) e outros computadores.
+                    Garante que todas as vendas, alterações de artigos, histórico de clientes, contas e turnos sejam consolidados
+                    e fiquem disponíveis de imediato em todos os terminais.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center space-x-2 shrink-0">
+                <button
+                  onClick={handleReconciliarDados}
+                  disabled={reconciling}
+                  className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl text-xs flex items-center space-x-2 transition-all cursor-pointer shadow-lg disabled:opacity-50"
+                >
+                  <GitMerge className={`w-4 h-4 ${reconciling ? 'animate-spin' : ''}`} />
+                  <span>{reconciling ? 'A Reconciliar...' : 'Executar Reconciliação Geral'}</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Cartões com Métricas em Tempo Real */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div className="p-4 bg-[#141414] border border-[#262626] rounded-xl">
+                <div className="flex items-center justify-between text-neutral-400 text-xs mb-1">
+                  <span>Vendas Locais</span>
+                  <Receipt className="w-4 h-4 text-[#c5a47e]" />
+                </div>
+                <div className="text-xl font-mono font-bold text-white">{salesHistory.length}</div>
+                <div className="text-[10px] text-neutral-500 mt-0.5">Histórico neste computador</div>
+              </div>
+
+              <div className="p-4 bg-[#141414] border border-[#262626] rounded-xl">
+                <div className="flex items-center justify-between text-neutral-400 text-xs mb-1">
+                  <span>Catálogo Artigos</span>
+                  <Boxes className="w-4 h-4 text-emerald-400" />
+                </div>
+                <div className="text-xl font-mono font-bold text-white">{products.length}</div>
+                <div className="text-[10px] text-neutral-500 mt-0.5">Produtos disponíveis</div>
+              </div>
+
+              <div className="p-4 bg-[#141414] border border-[#262626] rounded-xl">
+                <div className="flex items-center justify-between text-neutral-400 text-xs mb-1">
+                  <span>Clientes Sincronizados</span>
+                  <UsersIcon className="w-4 h-4 text-sky-400" />
+                </div>
+                <div className="text-xl font-mono font-bold text-white">{customers.length}</div>
+                <div className="text-[10px] text-neutral-500 mt-0.5">Com métricas recompostas</div>
+              </div>
+
+              <div className="p-4 bg-[#141414] border border-[#262626] rounded-xl">
+                <div className="flex items-center justify-between text-neutral-400 text-xs mb-1">
+                  <span>Itens Inventário</span>
+                  <Layers className="w-4 h-4 text-amber-400" />
+                </div>
+                <div className="text-xl font-mono font-bold text-white">{stock.length}</div>
+                <div className="text-[10px] text-neutral-500 mt-0.5">Saldos de armazém</div>
+              </div>
+            </div>
+
+            {/* Relatório de Última Reconciliação */}
+            {lastReconciliationReport && (
+              <div className="p-5 bg-[#141414] border border-emerald-500/30 rounded-xl space-y-4 animate-fadeIn">
+                <div className="flex items-center justify-between pb-3 border-b border-[#262626]">
+                  <div className="flex items-center space-x-2">
+                    <CheckCircle2 className="w-5 h-5 text-emerald-400" />
+                    <h4 className="text-sm font-bold text-white">Relatório da Última Reconciliação</h4>
+                  </div>
+                  <span className="text-[11px] font-mono text-neutral-400">
+                    {new Date(lastReconciliationReport.timestamp).toLocaleTimeString('pt-MZ')}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                  <div className="p-3 bg-[#0e0e0e] border border-[#262626] rounded-lg">
+                    <span className="text-neutral-400 block mb-0.5">Entidades Processadas</span>
+                    <span className="text-base font-bold text-white font-mono">
+                      {lastReconciliationReport.summary.totalEntitiesProcessed}
+                    </span>
+                  </div>
+                  <div className="p-3 bg-[#0e0e0e] border border-[#262626] rounded-lg">
+                    <span className="text-neutral-400 block mb-0.5">Vendas Reconciliadas</span>
+                    <span className="text-base font-bold text-emerald-400 font-mono">
+                      {lastReconciliationReport.summary.salesReconciled}
+                    </span>
+                  </div>
+                  <div className="p-3 bg-[#0e0e0e] border border-[#262626] rounded-lg">
+                    <span className="text-neutral-400 block mb-0.5">Novas Vendas Integradas</span>
+                    <span className="text-base font-bold text-[#c5a47e] font-mono">
+                      +{lastReconciliationReport.summary.newSalesMerged}
+                    </span>
+                  </div>
+                  <div className="p-3 bg-[#0e0e0e] border border-[#262626] rounded-lg">
+                    <span className="text-neutral-400 block mb-0.5">Divergências Sanadas</span>
+                    <span className="text-base font-bold text-sky-400 font-mono">
+                      {lastReconciliationReport.summary.discrepanciesResolved}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Detalhes por categoria */}
+                <div className="space-y-1.5 pt-2">
+                  <span className="text-[11px] font-semibold text-neutral-400 uppercase tracking-wider">
+                    Resumo das Operações
+                  </span>
+                  <div className="bg-[#0e0e0e] border border-[#262626] rounded-lg p-3 space-y-1.5 text-xs text-neutral-300">
+                    {lastReconciliationReport.details.map((detail: string, i: number) => (
+                      <div key={i} className="flex items-center space-x-2">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0" />
+                        <span>{detail}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Como funciona o sistema multi-computador */}
+            <div className="p-5 bg-[#141414] border border-[#262626] rounded-xl space-y-3">
+              <h4 className="text-sm font-bold text-white flex items-center space-x-2">
+                <Info className="w-4 h-4 text-[#c5a47e]" />
+                <span>Como garantir sincronização perfeita entre todos os computadores</span>
+              </h4>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs text-neutral-400">
+                <div className="p-3 bg-[#0e0e0e] border border-[#262626] rounded-lg space-y-1.5">
+                  <span className="font-semibold text-white block">1. Sincronização Automática</span>
+                  <p>
+                    Vendas efetuadas em qualquer computador são enviadas automaticamente para o Supabase e
+                    distribuídas aos outros computadores em tempo real via canais WebSocket.
+                  </p>
+                </div>
+                <div className="p-3 bg-[#0e0e0e] border border-[#262626] rounded-lg space-y-1.5">
+                  <span className="font-semibold text-white block">2. Reconciliação Periódica</span>
+                  <p>
+                    Caso um computador tenha estado desligado ou sem internet, clique em "Reconciliar Dados"
+                    para consolidar 100% dos dados sem perder nenhum documento nem duplicar faturas.
+                  </p>
+                </div>
+                <div className="p-3 bg-[#0e0e0e] border border-[#262626] rounded-lg space-y-1.5">
+                  <span className="font-semibold text-white block">3. Multi-empresa Isolada</span>
+                  <p>
+                    Os registos são protegidos e associados à sua empresa ({selectedCompanyId !== 'ALL' ? selectedCompanyId : currentCompany?.name || 'Atual'}).
+                    Outras lojas e terminais recebem os dados instantaneamente.
+                  </p>
+                </div>
+              </div>
             </div>
           </div>
         )}

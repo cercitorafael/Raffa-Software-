@@ -462,7 +462,7 @@ export async function flushPendingSyncQueue(forceAll = false): Promise<number> {
   return successCount;
 }
 
-function addSyncLog(log: Omit<SupabaseSyncLog, 'id' | 'timestamp'>) {
+export function addSyncLog(log: Omit<SupabaseSyncLog, 'id' | 'timestamp'>) {
   const newLog: SupabaseSyncLog = {
     ...log,
     id: `log-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,

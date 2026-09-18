@@ -2,6 +2,12 @@ const { app, BrowserWindow, protocol } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
+// Prevenção crítica contra tela preta no Windows causada por incompatibilidade de GPU/drivers
+app.disableHardwareAcceleration();
+app.commandLine.appendSwitch('disable-software-rasterizer');
+app.commandLine.appendSwitch('disable-gpu');
+app.commandLine.appendSwitch('no-sandbox');
+
 let mainWindow = null;
 
 function createWindow() {
@@ -16,7 +22,7 @@ function createWindow() {
     icon: fs.existsSync(iconPath) ? iconPath : undefined,
     backgroundColor: '#0f172a',
     autoHideMenuBar: true,
-    show: false, // Evita flash da tela preta antes do carregamento
+    show: false,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -25,12 +31,26 @@ function createWindow() {
     },
   });
 
-  // Mostra a janela suavemente quando a página estiver pronta
+  let hasShown = false;
+  const showSafely = () => {
+    if (!hasShown && mainWindow && !mainWindow.isDestroyed()) {
+      hasShown = true;
+      mainWindow.show();
+      mainWindow.focus();
+    }
+  };
+
+  // Mostra a janela quando pronta
   mainWindow.once('ready-to-show', () => {
-    mainWindow.show();
+    showSafely();
   });
 
-  const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
+  // Timeout de segurança: se ready-to-show não disparar por bug de tema/gpu, mostra a janela após 1.5s
+  setTimeout(() => {
+    showSafely();
+  }, 1500);
+
+  const isDev = process.env.NODE_ENV === 'development';
 
   if (isDev) {
     const port = process.env.PORT || 3000;
@@ -38,12 +58,20 @@ function createWindow() {
       console.error('Falha ao carregar URL dev:', err);
     });
   } else {
-    // No Windows (.exe), carrega o index.html gerado
-    const indexPath = path.join(__dirname, 'dist', 'index.html');
-    mainWindow.loadFile(indexPath).catch((err) => {
+    // No executável Windows (.exe), busca o index.html na raiz do app ou em dist
+    const possiblePaths = [
+      path.join(__dirname, 'dist', 'index.html'),
+      path.join(app.getAppPath(), 'dist', 'index.html'),
+      path.join(__dirname, 'index.html'),
+    ];
+
+    const targetPath = possiblePaths.find((p) => fs.existsSync(p)) || possiblePaths[0];
+
+    mainWindow.loadFile(targetPath).catch((err) => {
       console.error('Falha ao carregar ficheiro HTML local:', err);
-      // Fallback para URL caso arquivo local falhe
-      mainWindow.loadURL(`file://${indexPath}`);
+      mainWindow.loadURL(`file://${targetPath}`).catch((urlErr) => {
+        console.error('Falha no fallback de URL file://', urlErr);
+      });
     });
   }
 

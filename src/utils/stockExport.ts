@@ -333,19 +333,30 @@ function triggerExcelDownload(workbook: XLSX.WorkBook, filename: string): void {
     const blob = new Blob([excelBuffer], {
       type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     });
+    
+    if (typeof window !== 'undefined' && (window.navigator as any)?.msSaveOrOpenBlob) {
+      (window.navigator as any).msSaveOrOpenBlob(blob, filename);
+      return;
+    }
+
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = filename;
+    link.setAttribute('download', filename);
+    link.style.display = 'none';
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
     setTimeout(() => {
       URL.revokeObjectURL(url);
-    }, 1000);
-  } catch {
-    // Fallback to XLSX.writeFile if blob generation fails
-    XLSX.writeFile(workbook, filename);
+    }, 2000);
+  } catch (err) {
+    try {
+      XLSX.writeFile(workbook, filename);
+    } catch (fallbackErr) {
+      console.error('Falha no descarregamento do Excel:', fallbackErr);
+      throw new Error('Não foi possível descarregar o ficheiro Excel. Verifique permissões do navegador.');
+    }
   }
 }
 
@@ -374,24 +385,29 @@ export function exportProductsToExcel(
 
   const exportData = products.map((p, idx) => {
     const totalQty = productStockMap.get(p.id) || 0;
-    const catName = categoryMap.get(p.category) || p.category;
+    const catName = categoryMap.get(p.category) || p.category || 'Geral';
     const supName = p.supplierId ? (supplierMap.get(p.supplierId) || p.supplierId) : 'N/A';
+    const price = Number(p.price) || 0;
+    const costPrice = Number(p.costPrice) || 0;
+    const taxRate = Number(p.taxRate) || 0;
+    const minStock = Number(p.minStock) || 0;
+    const maxStock = Number(p.maxStock) || 0;
 
     return {
       'Nº': idx + 1,
-      'SKU / Referência': p.sku,
-      'Designação do Artigo': p.name,
-      'Código de Barras (EAN)': p.barcode,
+      'SKU / Referência': p.sku || '',
+      'Designação do Artigo': p.name || 'Sem Nome',
+      'Código de Barras (EAN)': p.barcode || '',
       'Categoria': catName,
-      [`PVP (${currSym} com IVA)`]: p.price,
-      [`Preço Custo (${currSym})`]: p.costPrice,
-      [`Margem Bruta (${currSym})`]: Number((p.price - p.costPrice).toFixed(2)),
-      'Taxa IVA (%)': p.taxRate,
-      'Unidade': p.unit,
+      [`PVP (${currSym} com IVA)`]: price,
+      [`Preço Custo (${currSym})`]: costPrice,
+      [`Margem Bruta (${currSym})`]: Number((price - costPrice).toFixed(2)),
+      'Taxa IVA (%)': taxRate,
+      'Unidade': p.unit || 'un',
       'Stock Atual (Total)': totalQty,
-      'Stock Mínimo': p.minStock,
-      'Stock Máximo': p.maxStock,
-      [`Valor Total Stock (${currSym})`]: Number((totalQty * p.costPrice).toFixed(2)),
+      'Stock Mínimo': minStock,
+      'Stock Máximo': maxStock,
+      [`Valor Total Stock (${currSym})`]: Number((totalQty * costPrice).toFixed(2)),
       'Controlo de Lotes': p.hasBatchControl ? 'Sim' : 'Não',
       'Fornecedor Habitual': supName,
       'Descrição / Notas': p.description || '',

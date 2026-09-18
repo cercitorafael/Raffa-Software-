@@ -278,14 +278,26 @@ export const Navbar: React.FC<{ onOpenShiftModal: () => void }> = ({ onOpenShift
             <span>{t('header.fiscalAudit')}</span>
           </button>
 
-          {/* Online Realtime Cloud Indicator */}
-          <div
-            title={t('header.cloudConnectionActive')}
-            className="flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border bg-emerald-500/10 text-emerald-400 border-emerald-500/30 shrink-0 whitespace-nowrap shadow-xs"
+          {/* Online Realtime Cloud Indicator / Sync Trigger */}
+          <button
+            onClick={() => triggerManualSync()}
+            disabled={isSyncing}
+            title={isSyncing ? 'A sincronizar dados entre computadores...' : 'Nuvem Ativa: Clique para forçar sincronização imediata com os outros computadores'}
+            className={`flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-all cursor-pointer shrink-0 whitespace-nowrap shadow-xs ${
+              isSyncing
+                ? 'bg-amber-500/15 text-amber-300 border-amber-500/40 animate-pulse'
+                : 'bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
+            }`}
           >
-            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-            <span className="font-medium">{t('header.online')}</span>
-          </div>
+            {isSyncing ? (
+              <RotateCw className="w-3.5 h-3.5 text-amber-400 animate-spin" />
+            ) : (
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+            )}
+            <span className="font-medium">
+              {isSyncing ? 'A Sincronizar...' : t('header.online')}
+            </span>
+          </button>
 
           {/* Cash Register Shift Button */}
           <button

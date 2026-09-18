@@ -98,6 +98,8 @@ export const AnalyticsModule: React.FC = () => {
     currentCompany,
     formatCurrency,
     notify,
+    triggerManualSync,
+    isSyncing,
   } = useApp();
 
   // RBAC Permission check for Analytics/BI
@@ -1255,6 +1257,21 @@ export const AnalyticsModule: React.FC = () => {
           </div>
 
           <div className="flex items-center flex-wrap gap-2">
+            <button
+              id="analytics-sync-cloud-btn"
+              onClick={() => triggerManualSync()}
+              disabled={isSyncing}
+              className={`px-3.5 py-2 rounded-lg border text-xs font-medium transition-all flex items-center space-x-2 cursor-pointer shadow-sm ${
+                isSyncing
+                  ? 'bg-amber-500/15 border-amber-500/40 text-amber-300 animate-pulse'
+                  : 'bg-[#1e1e1e] hover:bg-[#262626] border-[#333333] hover:border-[#c5a47e]/50 text-neutral-200 hover:text-white'
+              }`}
+              title="Puxar vendas e dados atualizados da nuvem (Supabase) registados noutros computadores"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 text-[#c5a47e] ${isSyncing ? 'animate-spin' : ''}`} />
+              <span>{isSyncing ? 'A Sincronizar...' : 'Sincronizar Nuvem'}</span>
+            </button>
+
             <button
               id="analytics-export-csv"
               onClick={exportToCSV}
