@@ -1,6 +1,6 @@
 import { Sale, Customer } from '../types';
 import { supabase } from '../lib/supabase';
-import { mapSupabaseToSale } from '../lib/supabaseSync';
+import { mapSupabaseToSale, mapSaleToSupabase } from '../lib/supabaseSync';
 import { offlineDB } from './indexedDB';
 
 /**
@@ -125,7 +125,8 @@ export async function fetchAllHistoricalSalesFromSupabase(): Promise<Sale[]> {
     const { data, error } = await supabase
       .from('vendas')
       .select('*')
-      .order('date', { ascending: false });
+      .order('date', { ascending: false })
+      .range(0, 49999);
 
     if (error) {
       console.warn('Erro ao carregar vendas históricas do Supabase:', error.message);
@@ -216,7 +217,40 @@ export async function recoverAndReconcileAllSales(
   // 4. Reconcile customer totals
   const reconciledCustomers = reconcileCustomerMetrics(localCustomers, allSales);
 
-  // 5. Update Supabase clientes table in the background for persisted accuracy
+  // 5. AUTO-PUSH PARA O BANCO CENTRAL (SUPABASE) DE TODAS AS VENDAS QUE SÓ EXISTEM NESTE DISPOSITIVO
+  // Garante paridade total entre todos os computadores, caixas e terminais
+  try {
+    const remoteIdSet = new Set(remoteSales.map((r) => String(r.id)));
+    const remoteInvSet = new Set(remoteSales.map((r) => (r.invoiceNumber ? r.invoiceNumber.trim() : '')));
+
+    const missingInCloud = allSales.filter((s) => {
+      if (!s || !s.id) return false;
+      if (remoteIdSet.has(String(s.id))) return false;
+      if (s.invoiceNumber && remoteInvSet.has(s.invoiceNumber.trim())) return false;
+      return true;
+    });
+
+    if (missingInCloud.length > 0) {
+      const batchSize = 50;
+      for (let i = 0; i < missingInCloud.length; i += batchSize) {
+        const batch = missingInCloud.slice(i, i + batchSize).map((s) => ({
+          ...mapSaleToSupabase(s),
+          company_id: s.companyId || targetCompanyId || 'comp-1',
+        }));
+        await supabase.from('vendas').upsert(batch);
+      }
+
+      // Marcar como sincronizadas no banco local do dispositivo
+      const syncedAt = new Date().toISOString();
+      for (const s of missingInCloud) {
+        offlineDB.markSaleSynced(s.id, syncedAt, 'OK_GRAVEI').catch(() => {});
+      }
+    }
+  } catch (err) {
+    console.warn('Aviso ao sincronizar vendas pendentes no Supabase:', err);
+  }
+
+  // 6. Update Supabase clientes table in the background for persisted accuracy
   try {
     for (const cust of reconciledCustomers) {
       if (cust.totalSpent > 0 || (cust.ordersCount || 0) > 0) {
@@ -234,7 +268,7 @@ export async function recoverAndReconcileAllSales(
     console.warn('Aviso ao sincronizar métricas de clientes no Supabase:', e);
   }
 
-  // 6. Compute statistics
+  // 7. Compute statistics
   const totalRevenue = allSales.reduce((sum, s) => sum + (Number(s.total) || 0), 0);
   const earliestSaleDate = allSales.length > 0 ? allSales[allSales.length - 1].date : null;
   const latestSaleDate = allSales.length > 0 ? allSales[0].date : null;

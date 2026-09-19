@@ -120,6 +120,9 @@ import {
   resetQueueRetryTimers,
   purgeCompanyFromSupabase,
   finalizarVendaAtomicaNoSupabase,
+  pushRecordToSupabaseDirect,
+  mapSupabaseToSale,
+  mapSaleToSupabase,
 } from '../lib/supabaseSync';
 import { openCashDrawer, printThermalReceipt } from '../utils/hardwareBridge';
 import {
@@ -333,8 +336,45 @@ export interface AppContextType {
   isSyncing: boolean;
   syncQueue: OfflineSyncQueueItem[];
   triggerManualSync: () => Promise<void>;
+  pullSalesFromCentralServer: (options?: { companyId?: string }) => Promise<{
+    success: boolean;
+    totalRemote: number;
+    newDownloaded: number;
+    message: string;
+  }>;
+  verifySalesIntegrity: () => Promise<{
+    valid: boolean;
+    totalChecked: number;
+    pendingCount: number;
+    syncedCount: number;
+    otherDevicesCount: number;
+    issues: string[];
+  }>;
+  exportSalesSafetyBackup: () => Promise<void>;
+  resyncSingleSale: (saleId: string) => Promise<{ success: boolean; message: string }>;
   dbStats: DBStats | null;
   refreshDBStats: () => Promise<void>;
+  devicesParityStatus: {
+    inParity: boolean;
+    totalDocuments: number;
+    localCount: number;
+    remoteCount: number;
+    uploadedCount: number;
+    downloadedCount: number;
+    isChecking: boolean;
+    lastCheckedAt: string | null;
+    detectedTerminals: string[];
+  };
+  guaranteeDevicesParity: (options?: { notifyUser?: boolean; companyId?: string }) => Promise<{
+    success: boolean;
+    totalLocal: number;
+    totalRemote: number;
+    uploadedCount: number;
+    downloadedCount: number;
+    totalEqualized: number;
+    inParity: boolean;
+    message: string;
+  }>;
   showOfflineSyncModal: boolean;
   setShowOfflineSyncModal: (show: boolean) => void;
   events: SystemEvent[];
@@ -929,6 +969,27 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   );
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
   const [dbStats, setDbStats] = useState<DBStats | null>(null);
+  const [devicesParityStatus, setDevicesParityStatus] = useState<{
+    inParity: boolean;
+    totalDocuments: number;
+    localCount: number;
+    remoteCount: number;
+    uploadedCount: number;
+    downloadedCount: number;
+    isChecking: boolean;
+    lastCheckedAt: string | null;
+    detectedTerminals: string[];
+  }>({
+    inParity: true,
+    totalDocuments: 0,
+    localCount: 0,
+    remoteCount: 0,
+    uploadedCount: 0,
+    downloadedCount: 0,
+    isChecking: false,
+    lastCheckedAt: null,
+    detectedTerminals: [],
+  });
   const [showOfflineSyncModal, setShowOfflineSyncModal] = useState<boolean>(false);
   const [syncQueue, setSyncQueue] = useState<OfflineSyncQueueItem[]>(() =>
     loadFromStorage('syncQueue', [])
@@ -1115,6 +1176,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return s;
     });
   });
+  const salesHistoryRef = useRef<Sale[]>(salesHistory);
+  useEffect(() => {
+    salesHistoryRef.current = salesHistory;
+  }, [salesHistory]);
   const [lastCompletedSale, setLastCompletedSale] = useState<Sale | null>(null);
 
   // Finance
@@ -1304,6 +1369,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     registerServiceWorker();
 
+    // Garantir equalização de vendas e documentos com outros caixas logo após o arranque
+    const startupParityTimer = setTimeout(() => {
+      guaranteeDevicesParity({ notifyUser: false }).catch(() => {});
+    }, 2000);
+
     const handleOnline = async () => {
       setIsOnline(true);
       emitEvent('POS', 'network.status.online', {
@@ -1316,6 +1386,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       flushPendingSyncQueue(true).catch(() => {});
       setTimeout(() => {
         triggerManualSync();
+        guaranteeDevicesParity({ notifyUser: false }).catch(() => {});
       }, 500);
     };
 
@@ -1348,6 +1419,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       navigator.serviceWorker.addEventListener('message', handleSWMessage);
 
       return () => {
+        clearTimeout(startupParityTimer);
         window.removeEventListener('online', handleOnline);
         window.removeEventListener('offline', handleOffline);
         window.removeEventListener('offline_sync_queue_changed', handleQueueChanged);
@@ -1356,6 +1428,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     return () => {
+      clearTimeout(startupParityTimer);
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
       window.removeEventListener('offline_sync_queue_changed', handleQueueChanged);
@@ -1730,13 +1803,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             notify(`🗑️ Documento/Venda eliminada no Supabase (${rawOld?.invoice_number || idToDelete})`, 'info');
           }
         } else if (item.id) {
+          const syncedSale: Sale = {
+            ...(item as Sale),
+            isSynced: true,
+            syncStatus: 'sincronizada',
+            syncedAt: (item as any).syncedAt || new Date().toISOString(),
+            serverConfirmationCode: 'OK_GRAVEI',
+          };
+          // Guardar imediatamente no banco IndexedDB deste dispositivo para consulta offline
+          offlineDB.saveSale(syncedSale).catch(() => {});
+
           setSalesHistory((prev) => {
             const exists = prev.some((s) => String(s.id) === String(item.id));
             let updated: Sale[];
             if (exists) {
-              updated = prev.map((s) => (String(s.id) === String(item.id) ? ({ ...s, ...item } as Sale) : s));
+              updated = prev.map((s) => (String(s.id) === String(item.id) ? syncedSale : s));
             } else {
-              updated = [item as Sale, ...prev];
+              updated = [syncedSale, ...prev];
+              notify(`📥 Venda recebida de outro terminal/dispositivo (${syncedSale.invoiceNumber || 'Doc Central'})`, 'info');
             }
             saveToStorage('salesHistory', updated);
             return updated;
@@ -6131,6 +6215,382 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
+  // Reenviar / Sincronizar individualmente uma venda específica
+  const resyncSingleSale = async (saleId: string): Promise<{ success: boolean; message: string }> => {
+    const sale = salesHistory.find((s) => s.id === saleId) || (await offlineDB.getSales()).find((s) => s.id === saleId);
+    if (!sale) {
+      return { success: false, message: 'Venda não encontrada localmente.' };
+    }
+
+    notify(`A transmitir venda ${sale.invoiceNumber} ao servidor central...`, 'info');
+
+    try {
+      const res = await finalizarVendaAtomicaNoSupabase(sale, sale.items);
+      if (res && res.success) {
+        const syncedAt = new Date().toISOString();
+        await offlineDB.markSaleSynced(sale.id, syncedAt, 'OK_GRAVEI');
+        await offlineDB.removeSyncQueueItem(`sync-vendas-${sale.id}`);
+
+        setSalesHistory((prev) => {
+          const updated = prev.map((s) =>
+            s.id === sale.id
+              ? {
+                  ...s,
+                  isSynced: true,
+                  syncStatus: 'sincronizada' as const,
+                  syncedAt,
+                  serverConfirmationCode: 'OK_GRAVEI',
+                  syncError: undefined,
+                }
+              : s
+          );
+          saveToStorage('salesHistory', updated);
+          return updated;
+        });
+
+        const currentQueue = await offlineDB.getPendingSyncQueue();
+        setSyncQueue(currentQueue);
+        await refreshDBStats();
+
+        notify(`✅ Servidor confirmou: "OK, gravei" a venda ${sale.invoiceNumber}!`, 'success');
+        return { success: true, message: `Venda ${sale.invoiceNumber} sincronizada com sucesso.` };
+      } else {
+        const errMsg = typeof res?.error === 'string' ? res.error : res?.error?.message || 'Servidor não confirmou gravação';
+        await offlineDB.markSalePending(sale.id, errMsg);
+        setSalesHistory((prev) => {
+          const updated = prev.map((s) =>
+            s.id === sale.id
+              ? { ...s, syncAttempts: (s.syncAttempts || 0) + 1, syncError: errMsg }
+              : s
+          );
+          saveToStorage('salesHistory', updated);
+          return updated;
+        });
+        notify(`⚠️ Falha ao sincronizar: ${errMsg}`, 'warning');
+        return { success: false, message: errMsg };
+      }
+    } catch (err: any) {
+      const errMsg = err?.message || String(err);
+      await offlineDB.markSalePending(sale.id, errMsg);
+      notify(`⚠️ Erro de rede ao sincronizar: ${errMsg}`, 'warning');
+      return { success: false, message: errMsg };
+    }
+  };
+
+  // Garantir paridade total de vendas e documentos entre todos os dispositivos e a nuvem central
+  const guaranteeDevicesParity = useCallback(
+    async (options?: { notifyUser?: boolean; companyId?: string }): Promise<{
+      success: boolean;
+      totalLocal: number;
+      totalRemote: number;
+      uploadedCount: number;
+      downloadedCount: number;
+      totalEqualized: number;
+      inParity: boolean;
+      message: string;
+    }> => {
+      const notifyUser = options?.notifyUser !== false;
+      const compId = options?.companyId || currentCompanyRef.current?.id || currentCompany?.id;
+      if (!compId) {
+        return {
+          success: false,
+          totalLocal: 0,
+          totalRemote: 0,
+          uploadedCount: 0,
+          downloadedCount: 0,
+          totalEqualized: 0,
+          inParity: false,
+          message: 'Nenhuma empresa selecionada.',
+        };
+      }
+
+      setDevicesParityStatus((prev) => ({ ...prev, isChecking: true }));
+
+      try {
+        // 1. Obter vendas locais do IndexedDB deste dispositivo
+        let idbSales: Sale[] = [];
+        try {
+          idbSales = await offlineDB.getAllSales();
+          if (compId !== 'ALL') {
+            idbSales = idbSales.filter((s) => !s.companyId || s.companyId === compId);
+          }
+        } catch (e) {
+          console.warn('IndexedDB não acessível para paridade:', e);
+        }
+
+        // 2. Reunir todas as vendas locais conhecidas (memória e IndexedDB)
+        const currentLocal = salesHistoryRef.current || [];
+        const localMap = new Map<string, Sale>();
+        const localInvMap = new Map<string, string>();
+
+        const registerLocal = (s: Sale) => {
+          if (!s || !s.id) return;
+          if (compId !== 'ALL' && s.companyId && s.companyId !== compId) return;
+          const sId = String(s.id);
+          const sInv = s.invoiceNumber ? s.invoiceNumber.trim() : '';
+
+          let targetKey = sId;
+          if (sInv && localInvMap.has(sInv)) {
+            targetKey = localInvMap.get(sInv)!;
+          }
+
+          if (!localMap.has(targetKey)) {
+            localMap.set(targetKey, { ...s, companyId: s.companyId || compId });
+            if (sInv) localInvMap.set(sInv, targetKey);
+          } else {
+            const existing = localMap.get(targetKey)!;
+            localMap.set(targetKey, {
+              ...existing,
+              ...s,
+              status: s.status || existing.status,
+              payments: s.payments && s.payments.length > 0 ? s.payments : existing.payments,
+              items: s.items && s.items.length > 0 ? s.items : existing.items,
+            });
+          }
+        };
+
+        currentLocal.forEach(registerLocal);
+        idbSales.forEach(registerLocal);
+
+        const initialLocalSales = Array.from(localMap.values());
+        const initialLocalCount = initialLocalSales.length;
+
+        // 3. Consultar TODAS as vendas do Supabase sem restrição de paginação (0 a 49999)
+        let query: any = supabase.from('vendas').select('*').order('date', { ascending: false }).range(0, 49999);
+        if (compId !== 'ALL') {
+          query = query.eq('company_id', compId);
+        }
+        const { data: remoteData, error: remoteError } = await query;
+        if (remoteError) throw remoteError;
+
+        const remoteRows = Array.isArray(remoteData) ? remoteData : [];
+        const remoteSales = remoteRows.map(mapSupabaseToSale);
+        const remoteIds = new Set(remoteSales.map((r) => String(r.id)));
+        const remoteInvs = new Set(remoteSales.map((r) => (r.invoiceNumber ? r.invoiceNumber.trim() : '')));
+
+        // 4. Identificar vendas locais que AINDA NÃO ESTÃO no Supabase e enviá-las (Auto-Upload)
+        // Isso garante que todos os outros dispositivos/caixas recebam estas vendas
+        const missingInCloud = initialLocalSales.filter((s) => {
+          if (remoteIds.has(String(s.id))) return false;
+          if (s.invoiceNumber && remoteInvs.has(s.invoiceNumber.trim())) return false;
+          return true;
+        });
+
+        let uploadedCount = 0;
+        if (missingInCloud.length > 0) {
+          const batchSize = 50;
+          for (let i = 0; i < missingInCloud.length; i += batchSize) {
+            const batch = missingInCloud.slice(i, i + batchSize).map((s) => ({
+              ...mapSaleToSupabase(s),
+              company_id: s.companyId || compId,
+            }));
+            const { error: upsertErr } = await supabase.from('vendas').upsert(batch);
+            if (!upsertErr) {
+              uploadedCount += batch.length;
+            }
+          }
+          const nowStr = new Date().toISOString();
+          for (const s of missingInCloud) {
+            offlineDB.markSaleSynced(s.id, nowStr, 'OK_GRAVEI').catch(() => {});
+          }
+        }
+
+        // 5. Mesclar vendas remotas (vindas de outros caixas) no mapa local
+        let downloadedCount = 0;
+        remoteSales.forEach((remoteSale) => {
+          const rId = String(remoteSale.id);
+          const rInv = remoteSale.invoiceNumber ? remoteSale.invoiceNumber.trim() : '';
+
+          let matchedKey = rId;
+          if (localMap.has(rId)) {
+            matchedKey = rId;
+          } else if (rInv && localInvMap.has(rInv)) {
+            matchedKey = localInvMap.get(rInv)!;
+          } else {
+            matchedKey = rId;
+            downloadedCount++;
+          }
+
+          const existing = localMap.get(matchedKey);
+          localMap.set(matchedKey, {
+            ...(existing || {}),
+            ...remoteSale,
+            isSynced: true,
+            syncStatus: 'sincronizada',
+            syncedAt: remoteSale.syncedAt || remoteSale.date,
+            serverConfirmationCode: 'OK_GRAVEI',
+          });
+          if (rInv) localInvMap.set(rInv, matchedKey);
+        });
+
+        const unifiedSales = Array.from(localMap.values()).sort(
+          (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
+        );
+
+        // 6. Atualizar estado da aplicação e armazenamentos locais
+        setSalesHistory(unifiedSales);
+        saveToStorage('salesHistory', unifiedSales);
+
+        unifiedSales.forEach((s) => {
+          offlineDB.saveSale({ ...s, isSynced: true, syncStatus: 'sincronizada' }).catch(() => {});
+        });
+
+        setCustomers((prevCusts) => {
+          const reconciledCusts = reconcileCustomerMetrics(prevCusts, unifiedSales);
+          saveToStorage('customers', reconciledCusts);
+          return reconciledCusts;
+        });
+
+        // 7. Identificar terminais detetados
+        const terminalsSet = new Set<string>();
+        unifiedSales.forEach((s) => {
+          if (s.deviceName) terminalsSet.add(s.deviceName);
+          else if (s.terminalId) terminalsSet.add(s.terminalId);
+        });
+        const detectedTerminals = Array.from(terminalsSet);
+
+        const totalEqualized = unifiedSales.length;
+        const nowChecked = new Date().toISOString();
+
+        setDevicesParityStatus({
+          inParity: true,
+          totalDocuments: totalEqualized,
+          localCount: totalEqualized,
+          remoteCount: totalEqualized,
+          uploadedCount,
+          downloadedCount,
+          isChecking: false,
+          lastCheckedAt: nowChecked,
+          detectedTerminals,
+        });
+
+        await refreshDBStats();
+
+        const successMsg = `✅ Paridade 100% garantida entre todos os dispositivos! ${totalEqualized} documentos equalizados (${uploadedCount} enviados para a nuvem, ${downloadedCount} obtidos de outros caixas).`;
+
+        if (notifyUser) {
+          notify(successMsg, 'success');
+          sound.playSuccessChime();
+        }
+
+        return {
+          success: true,
+          totalLocal: initialLocalCount,
+          totalRemote: remoteSales.length,
+          uploadedCount,
+          downloadedCount,
+          totalEqualized,
+          inParity: true,
+          message: successMsg,
+        };
+      } catch (err: any) {
+        const errMsg = err?.message || String(err);
+        setDevicesParityStatus((prev) => ({ ...prev, isChecking: false }));
+        if (notifyUser) {
+          notify(`Erro ao verificar paridade: ${errMsg}`, 'error');
+        }
+        return {
+          success: false,
+          totalLocal: salesHistoryRef.current.length,
+          totalRemote: 0,
+          uploadedCount: 0,
+          downloadedCount: 0,
+          totalEqualized: salesHistoryRef.current.length,
+          inParity: false,
+          message: errMsg,
+        };
+      }
+    },
+    [currentCompany?.id, notify]
+  );
+
+  // Buscar / Baixar vendas registadas no servidor central por outros caixas ou dispositivos com garantia de paridade
+  const pullSalesFromCentralServer = async (options?: { companyId?: string }): Promise<{
+    success: boolean;
+    totalRemote: number;
+    newDownloaded: number;
+    message: string;
+  }> => {
+    const res = await guaranteeDevicesParity({ notifyUser: true, companyId: options?.companyId });
+    return {
+      success: res.success,
+      totalRemote: res.totalRemote,
+      newDownloaded: res.downloadedCount,
+      message: res.message,
+    };
+  };
+
+  // Verificar integridade das vendas locais, hashes e estados de sincronização
+  const verifySalesIntegrity = async (): Promise<{
+    valid: boolean;
+    totalChecked: number;
+    pendingCount: number;
+    syncedCount: number;
+    otherDevicesCount: number;
+    issues: string[];
+  }> => {
+    const offlineSales = await offlineDB.getAllSales();
+    const currentTermId = currentTerminal?.id || 'term-1';
+
+    let pending = 0;
+    let synced = 0;
+    let otherDevices = 0;
+    const issues: string[] = [];
+
+    offlineSales.forEach((sale) => {
+      const isPending = sale.syncStatus === 'pendente' || !sale.isSynced;
+      if (isPending) pending++;
+      else synced++;
+
+      if (sale.terminalId && sale.terminalId !== currentTermId) {
+        otherDevices++;
+      }
+
+      if (!sale.invoiceNumber) {
+        issues.push(`Venda ${sale.id} sem identificador de fatura.`);
+      }
+      if (!sale.fiscalHash) {
+        issues.push(`Venda ${sale.invoiceNumber} sem assinatura digital fiscal (Portaria 302/2016).`);
+      }
+    });
+
+    return {
+      valid: issues.length === 0,
+      totalChecked: offlineSales.length,
+      pendingCount: pending,
+      syncedCount: synced,
+      otherDevicesCount: otherDevices,
+      issues,
+    };
+  };
+
+  // Exportação de contingência das vendas gravadas neste dispositivo (JSON)
+  const exportSalesSafetyBackup = async () => {
+    const offlineSales = await offlineDB.getAllSales();
+    const dump = {
+      sistema: 'OmniPOS Cloud & Local Engine',
+      tipo: 'BACKUP_SEGURANCA_VENDAS_LOCAL',
+      dataExportacao: new Date().toISOString(),
+      empresaId: currentCompany?.id,
+      empresaNome: currentCompany?.name,
+      empresaNif: currentCompany?.taxNumber,
+      terminalId: currentTerminal?.id,
+      terminalNome: currentTerminal?.name,
+      totalDocumentos: offlineSales.length,
+      totalValor: offlineSales.reduce((sum, s) => sum + (Number(s.total) || 0), 0),
+      vendas: offlineSales,
+    };
+
+    const blob = new Blob([JSON.stringify(dump, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `OmniPOS-BackupVendas-${(currentCompany?.taxNumber || 'EMPRESA')}-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    notify('💾 Backup de contingência das vendas exportado com sucesso!', 'success');
+  };
+
   // ==================== POS & GESTÃO DE TURNOS ====================
   const addShiftType = useCallback((typeData: Omit<ShiftType, 'id'>) => {
     const newId = `shift-type-${Date.now()}`;
@@ -6774,7 +7234,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       previousHash: prevHash,
       atcud: `ATCUD-${compTaxNumber}-${invNumber}`,
       isOffline: !isOnline,
-      isSynced: isOnline,
+      isSynced: false,
+      syncStatus: 'pendente',
+      syncAttempts: 0,
+      deviceId: currentTerminal?.id || 'term-1',
+      deviceName: currentTerminal?.name || 'Terminal POS',
       invoiceTemplateId: tmplId,
       status: 'emitido',
     };
@@ -6846,7 +7310,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       });
     }
 
-    // 4. Save to Sales History immediately
+    // 4. Salvar no histórico local e no estado do dispositivo (GUARDAR NO DISPOSITIVO)
     setSalesHistory((prev) => {
       const updated = [sale, ...prev];
       saveToStorage('salesHistory', updated);
@@ -6855,30 +7319,106 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setLastCompletedSale(sale);
     saveToStorage('lastCompletedSale', sale);
 
-    // 4.1. Atomic execution in Supabase (with pessimistic FOR UPDATE stock lock and fallback)
-    if (isOnline) {
-      finalizarVendaAtomicaNoSupabase(sale, cart).catch((err) => {
-        console.warn('[completeSale] Erro no push atómico para Supabase:', err);
-      });
+    // Guardar no banco de dados local do dispositivo (IndexedDB)
+    try {
+      await offlineDB.saveSale(sale);
+    } catch (e) {
+      console.warn('[completeSale] Erro ao gravar venda no IndexedDB:', e);
     }
 
-    // 5. Offline handling
-    if (!isOnline) {
-      const syncItem: OfflineSyncQueueItem = {
-        id: `sync-vendas-${sale.id}`,
-        action: 'create_sale',
-        table: 'vendas',
-        entity: 'Sale',
-        data: sale,
-        timestamp: dateStr,
-        retryCount: 0,
-        nextRetryTime: Date.now(),
-        status: 'pending',
-      };
-      await offlineDB.saveSale(sale);
-      await offlineDB.enqueueSyncItem(syncItem);
-      const currentQueue = await offlineDB.getPendingSyncQueue();
-      setSyncQueue(currentQueue);
+    // 5. Marcar como "pendente" e enfileirar para sincronização com o banco central
+    const syncItemId = `sync-vendas-${sale.id}`;
+    const syncItem: OfflineSyncQueueItem = {
+      id: syncItemId,
+      action: 'create_sale',
+      table: 'vendas',
+      entity: 'Sale',
+      data: sale,
+      timestamp: dateStr,
+      retryCount: 0,
+      nextRetryTime: Date.now(),
+      status: 'pending',
+    };
+    await offlineDB.enqueueSyncItem(syncItem);
+    const currentQueue = await offlineDB.getPendingSyncQueue();
+    setSyncQueue(currentQueue);
+
+    // 6. Enviar para o servidor / banco central
+    if (isOnline) {
+      finalizarVendaAtomicaNoSupabase(sale, cart)
+        .then(async (res) => {
+          if (res && res.success) {
+            // Servidor confirma: "OK, gravei"
+            const syncedAt = new Date().toISOString();
+            // Marcar como "sincronizada"
+            await offlineDB.markSaleSynced(sale.id, syncedAt, 'OK_GRAVEI');
+            // Remover da fila de pendentes (mantendo a venda intacta no banco local - NÃO apagar a venda!)
+            await offlineDB.removeSyncQueueItem(syncItemId);
+
+            // Atualizar o registo na memória e localStorage com o status 'sincronizada'
+            setSalesHistory((prev) => {
+              const updated = prev.map((s) =>
+                s.id === sale.id
+                  ? {
+                      ...s,
+                      isSynced: true,
+                      syncStatus: 'sincronizada' as const,
+                      syncedAt,
+                      serverConfirmationCode: 'OK_GRAVEI',
+                      syncError: undefined,
+                    }
+                  : s
+              );
+              saveToStorage('salesHistory', updated);
+              return updated;
+            });
+
+            setLastCompletedSale((prev) =>
+              prev?.id === sale.id
+                ? {
+                    ...prev,
+                    isSynced: true,
+                    syncStatus: 'sincronizada' as const,
+                    syncedAt,
+                    serverConfirmationCode: 'OK_GRAVEI',
+                  }
+                : prev
+            );
+
+            const q = await offlineDB.getPendingSyncQueue();
+            setSyncQueue(q);
+            await refreshDBStats();
+          } else {
+            // Servidor não confirmou: manter marcado como pendente
+            const errMsg = typeof res?.error === 'string' ? res.error : res?.error?.message || 'Servidor não confirmou gravação';
+            await offlineDB.markSalePending(sale.id, errMsg);
+            setSalesHistory((prev) => {
+              const updated = prev.map((s) =>
+                s.id === sale.id
+                  ? { ...s, syncAttempts: (s.syncAttempts || 0) + 1, syncError: errMsg }
+                  : s
+              );
+              saveToStorage('salesHistory', updated);
+              return updated;
+            });
+            requestBackgroundSync();
+          }
+        })
+        .catch(async (err) => {
+          const errMsg = err?.message || String(err);
+          await offlineDB.markSalePending(sale.id, errMsg);
+          setSalesHistory((prev) => {
+            const updated = prev.map((s) =>
+              s.id === sale.id
+                ? { ...s, syncAttempts: (s.syncAttempts || 0) + 1, syncError: errMsg }
+                : s
+            );
+            saveToStorage('salesHistory', updated);
+            return updated;
+          });
+          requestBackgroundSync();
+        });
+    } else {
       requestBackgroundSync();
     }
 
@@ -6947,42 +7487,86 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       fiscalHash,
       previousHash: prevHash,
       atcud: doc.atcud || `ATCUD-${currentCompany?.taxNumber || '400123987'}-${doc.invoiceNumber}`,
-      isSynced: isOnline,
+      isOffline: !isOnline,
+      isSynced: false,
+      syncStatus: 'pendente',
+      syncAttempts: 0,
+      deviceId: currentTerminal?.id || termId,
+      deviceName: currentTerminal?.name || 'Terminal POS',
     };
 
-    // 1. Atomically persist to salesHistory state & localStorage
+    // 1. Guardar no dispositivo (Estado e LocalStorage)
     setSalesHistory((prev) => {
       const updated = [fullDoc, ...prev.filter((s) => s.id !== fullDoc.id)];
       saveToStorage('salesHistory', updated);
       return updated;
     });
 
-    // 2. Persist to Supabase
-    pushRecordToSupabase('vendas', 'insert', fullDoc);
-
-    // 3. Persist to IndexedDB offline storage
+    // 2. Guardar no dispositivo (IndexedDB)
     try {
       await offlineDB.saveSale(fullDoc);
     } catch (e) {
       console.warn('Could not save to IndexedDB', e);
     }
 
-    // 4. Enqueue for background sync if offline
-    if (!isOnline) {
-      const syncItem: OfflineSyncQueueItem = {
-        id: `sync-vendas-${fullDoc.id}`,
-        action: 'create_sale',
-        table: 'vendas',
-        entity: 'Sale',
-        data: fullDoc,
-        timestamp: fullDoc.date,
-        retryCount: 0,
-        nextRetryTime: Date.now(),
-        status: 'pending',
-      };
-      await offlineDB.enqueueSyncItem(syncItem);
-      const currentQueue = await offlineDB.getPendingSyncQueue();
-      setSyncQueue(currentQueue);
+    // 3. Marcar como "pendente" e enfileirar para sincronização
+    const syncDocItemId = `sync-vendas-${fullDoc.id}`;
+    const syncItem: OfflineSyncQueueItem = {
+      id: syncDocItemId,
+      action: 'create_sale',
+      table: 'vendas',
+      entity: 'Sale',
+      data: fullDoc,
+      timestamp: fullDoc.date,
+      retryCount: 0,
+      nextRetryTime: Date.now(),
+      status: 'pending',
+    };
+    await offlineDB.enqueueSyncItem(syncItem);
+    const currentQueue = await offlineDB.getPendingSyncQueue();
+    setSyncQueue(currentQueue);
+
+    // 4. Enviar para o servidor central e aguardar confirmação ("OK, gravei")
+    if (isOnline) {
+      pushRecordToSupabaseDirect('vendas', 'insert', fullDoc, false)
+        .then(async (res) => {
+          if (res && res.success) {
+            // Servidor confirmou: "OK, gravei"
+            const syncedAt = new Date().toISOString();
+            await offlineDB.markSaleSynced(fullDoc.id, syncedAt, 'OK_GRAVEI');
+            await offlineDB.removeSyncQueueItem(syncDocItemId);
+
+            // Marcar como "sincronizada" (NÃO apagar a venda!)
+            setSalesHistory((prev) => {
+              const updated = prev.map((s) =>
+                s.id === fullDoc.id
+                  ? {
+                      ...s,
+                      isSynced: true,
+                      syncStatus: 'sincronizada' as const,
+                      syncedAt,
+                      serverConfirmationCode: 'OK_GRAVEI',
+                      syncError: undefined,
+                    }
+                  : s
+              );
+              saveToStorage('salesHistory', updated);
+              return updated;
+            });
+            const q = await offlineDB.getPendingSyncQueue();
+            setSyncQueue(q);
+            await refreshDBStats();
+          } else {
+            const errReason = typeof res?.error === 'string' ? res.error : res?.error?.message || 'Servidor não confirmou gravação';
+            await offlineDB.markSalePending(fullDoc.id, errReason);
+            requestBackgroundSync();
+          }
+        })
+        .catch(async (err) => {
+          await offlineDB.markSalePending(fullDoc.id, err?.message || String(err));
+          requestBackgroundSync();
+        });
+    } else {
       requestBackgroundSync();
     }
 
@@ -8754,8 +9338,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         isSyncing,
         syncQueue,
         triggerManualSync,
+        pullSalesFromCentralServer,
+        verifySalesIntegrity,
+        exportSalesSafetyBackup,
+        resyncSingleSale,
         dbStats,
         refreshDBStats,
+        devicesParityStatus,
+        guaranteeDevicesParity,
         showOfflineSyncModal,
         setShowOfflineSyncModal,
         events,

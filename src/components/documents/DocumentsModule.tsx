@@ -55,6 +55,8 @@ import {
   Percent,
   Landmark,
   RefreshCw,
+  RotateCw,
+  Scale,
 } from 'lucide-react';
 import { sound } from '../../utils/audio';
 import {
@@ -114,9 +116,18 @@ export const DocumentsModule: React.FC = () => {
     activeShift,
     registerDocSaleInShift,
     recoverAllSalesFromFirstDay,
+    pullSalesFromCentralServer,
+    resyncSingleSale,
+    triggerManualSync,
+    isSyncing,
+    setShowOfflineSyncModal,
+    devicesParityStatus,
+    guaranteeDevicesParity,
   } = useApp();
 
   const [isRecoveringSales, setIsRecoveringSales] = useState(false);
+  const [isPullingSales, setIsPullingSales] = useState(false);
+  const [resyncingDocId, setResyncingDocId] = useState<string | null>(null);
 
   const currencySymbol = currentCompany?.currencySymbol || currencyDefinition?.symbol || 'Mt';
 
@@ -2155,10 +2166,62 @@ export const DocumentsModule: React.FC = () => {
               </select>
             </div>
 
-            <div className="flex items-center space-x-3">
-              <div className="text-xs text-neutral-400 font-mono">
+            <div className="flex items-center space-x-2">
+              <div className="text-xs text-neutral-400 font-mono hidden xl:inline">
                 Encontrados: <strong className="text-white">{filteredArchive.length}</strong> documentos
               </div>
+
+              {/* Guarantee Devices Parity (Equalizar Todos os Dispositivos) */}
+              <button
+                type="button"
+                onClick={async () => {
+                  setIsPullingSales(true);
+                  try {
+                    await guaranteeDevicesParity({ notifyUser: true });
+                  } finally {
+                    setIsPullingSales(false);
+                  }
+                }}
+                disabled={isPullingSales || devicesParityStatus.isChecking}
+                className="px-3 py-2 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 rounded-xl text-xs font-semibold flex items-center space-x-1.5 transition-colors cursor-pointer disabled:opacity-50 shadow-xs"
+                title="Garantir que todos os computadores e caixas sincronizem rigorosamente o mesmo número de vendas e documentos"
+              >
+                <Scale className={`w-3.5 h-3.5 ${isPullingSales || devicesParityStatus.isChecking ? 'animate-spin' : 'text-emerald-400'}`} />
+                <span className="hidden sm:inline font-bold">Paridade entre Caixas</span>
+                <span className="px-1.5 py-0.2 bg-emerald-500/20 rounded text-[10px] font-mono font-bold text-emerald-300">
+                  {salesHistory.length} docs
+                </span>
+              </button>
+
+              {/* Pull Remote Sales from Central Server */}
+              <button
+                type="button"
+                onClick={async () => {
+                  setIsPullingSales(true);
+                  try {
+                    await pullSalesFromCentralServer();
+                  } finally {
+                    setIsPullingSales(false);
+                  }
+                }}
+                disabled={isPullingSales}
+                className="px-3 py-2 bg-[#c5a47e]/15 hover:bg-[#c5a47e]/25 text-[#c5a47e] border border-[#c5a47e]/30 rounded-xl text-xs font-semibold flex items-center space-x-1.5 transition-colors cursor-pointer disabled:opacity-50"
+                title="Descarregar faturas e vendas de outros dispositivos da empresa"
+              >
+                <Download className={`w-3.5 h-3.5 ${isPullingSales ? 'animate-bounce' : ''}`} />
+                <span className="hidden sm:inline font-bold">Buscar de Outros Caixas</span>
+              </button>
+
+              {/* Open Offline Sync & Guarantee Manager */}
+              <button
+                type="button"
+                onClick={() => setShowOfflineSyncModal(true)}
+                className="px-3 py-2 bg-[#1c1c1c] hover:bg-[#282828] text-neutral-300 border border-[#333] rounded-xl text-xs font-semibold flex items-center space-x-1.5 transition-colors cursor-pointer"
+                title="Abrir Gestor de Sincronização, Fila e Garantia de Registos"
+              >
+                <RotateCw className="w-3.5 h-3.5 text-[#c5a47e]" />
+                <span className="hidden sm:inline font-bold">Garantia & Sinc</span>
+              </button>
 
               {/* Clear / Delete Archive Button */}
               <button
@@ -2191,13 +2254,14 @@ export const DocumentsModule: React.FC = () => {
                   <th className="p-3.5 font-semibold">NIF</th>
                   <th className="p-3.5 font-semibold text-right">Total</th>
                   <th className="p-3.5 font-semibold text-center">Assinatura AT</th>
+                  <th className="p-3.5 font-semibold text-center">Sincronização</th>
                   <th className="p-3.5 font-semibold text-right">Ações</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#1f1f1f]">
                 {filteredArchive.length === 0 ? (
                   <tr>
-                    <td colSpan={9} className="py-12 text-center text-neutral-500">
+                    <td colSpan={10} className="py-12 text-center text-neutral-500">
                       Nenhum documento fiscal encontrado com os filtros selecionados.
                     </td>
                   </tr>
@@ -2313,6 +2377,46 @@ export const DocumentsModule: React.FC = () => {
                             <ShieldCheck className="w-3 h-3" />
                             <span>{(doc.fiscalHash || 'AT-OK').substring(0, 8)}</span>
                           </span>
+                        </td>
+                        <td className="p-3.5 text-center whitespace-nowrap">
+                          {doc.syncStatus === 'sincronizada' || doc.isSynced ? (
+                            <div className="inline-flex flex-col items-center">
+                              <span
+                                className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 text-[9.5px] font-semibold"
+                                title={`Confirmado pelo servidor: "OK, gravei"${doc.syncedAt ? ' em ' + formatDate(doc.syncedAt) : ''}`}
+                              >
+                                <Check className="w-2.5 h-2.5 text-emerald-400" />
+                                <span>Sincronizada</span>
+                              </span>
+                              <span className="text-[9px] text-neutral-400 font-mono mt-0.5 max-w-[110px] truncate" title={doc.deviceName || doc.deviceId || 'Caixa Local'}>
+                                {doc.deviceName || doc.deviceId || 'Caixa Local'}
+                              </span>
+                            </div>
+                          ) : (
+                            <div className="inline-flex flex-col items-center space-y-1">
+                              <span
+                                className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30 text-[9.5px] font-semibold"
+                                title={doc.syncError || 'Pendente de gravação no servidor central. Guardada no dispositivo.'}
+                              >
+                                <Clock className="w-2.5 h-2.5 text-amber-400" />
+                                <span>Pendente</span>
+                              </span>
+                              <button
+                                onClick={async () => {
+                                  setResyncingDocId(doc.id);
+                                  try {
+                                    await resyncSingleSale(doc.id);
+                                  } finally {
+                                    setResyncingDocId(null);
+                                  }
+                                }}
+                                disabled={resyncingDocId === doc.id}
+                                className="px-1.5 py-0.5 rounded bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 text-[9px] font-bold transition-colors cursor-pointer"
+                              >
+                                {resyncingDocId === doc.id ? 'A enviar...' : 'Reenviar'}
+                              </button>
+                            </div>
+                          )}
                         </td>
                         <td className="p-3.5 text-right">
                           <div className="flex items-center justify-end space-x-1">

@@ -385,13 +385,17 @@ export async function flushPendingSyncQueue(forceAll = false): Promise<number> {
 
         if (success) {
           successCount++;
-          // Se for venda, marcar arquivamento local como sincronizado
+          // Se for venda, marcar arquivamento local como sincronizado com confirmação formal do servidor ("OK, gravei")
           if ((item.action === 'create_sale' || table === 'vendas') && item.data?.id) {
-            await offlineDB.markSaleSynced(item.data.id);
+            await offlineDB.markSaleSynced(item.data.id, new Date().toISOString(), 'OK_GRAVEI');
           }
-          // Remover com sucesso do IndexedDB
+          // Remover da fila de pendentes (NÃO apagar a venda do histórico)
           await offlineDB.removeSyncQueueItem(item.id);
         } else {
+          // Se for venda, atualizar com estado de tentativa
+          if ((item.action === 'create_sale' || table === 'vendas') && item.data?.id) {
+            await offlineDB.markSalePending(item.data.id, typeof syncError === 'string' ? syncError : syncError?.message);
+          }
           // Falha: Aplicar Retry com Backoff Exponencial inteligente
           const isRls = isRlsError(syncError);
           const nextRetry = (item.retryCount || 0) + 1;
@@ -842,6 +846,10 @@ export function mapSupabaseToSale(row: any): Sale {
     fiscalHash: row.fiscal_hash || '',
     previousHash: row.previous_hash || '',
     isSynced: true,
+    syncStatus: 'sincronizada',
+    syncedAt: row.updated_at || row.date || new Date().toISOString(),
+    serverConfirmationCode: 'OK_GRAVEI',
+    deviceId: row.terminal_id || 'term-1',
     atcud: row.atcud || undefined,
     notes: row.notes || undefined,
   };
@@ -2054,7 +2062,7 @@ export async function pullAllFromSupabase(options?: {
 
   const fetchTable = async (table: TableSyncName, mapper: (row: any) => any, key: string) => {
     try {
-      let query: any = supabase.from(table).select('*');
+      let query: any = supabase.from(table).select('*').range(0, 49999);
       
       // Apply multi-tenant company filter if specified
       if (options?.companyId && options.companyId !== 'ALL') {

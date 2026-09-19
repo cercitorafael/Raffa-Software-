@@ -513,6 +513,13 @@ export interface Sale {
   fiscalHash: string; // SHA-256 digital signature
   previousHash: string;
   isSynced: boolean; // For offline sync tracking
+  syncStatus?: 'pendente' | 'sincronizada' | 'erro'; // Fluxo formal de sincronização
+  syncedAt?: string; // Data/Hora em que o servidor confirmou gravação
+  syncAttempts?: number; // Tentativas de envio
+  syncError?: string; // Último erro reportado
+  deviceId?: string; // Identificador do dispositivo/terminal que gerou a venda
+  deviceName?: string; // Nome do dispositivo/terminal
+  serverConfirmationCode?: string; // Código de confirmação recebido do servidor central
   isOfflineCreated?: boolean;
   isOffline?: boolean;
   atcud?: string;

@@ -131,7 +131,7 @@ export async function executeSupabaseReconciliation(params: {
     // -------------------------------------------------------------
     let remoteSalesRaw: any[] = [];
     try {
-      let q = supabase.from('vendas').select('*').order('date', { ascending: false });
+      let q = supabase.from('vendas').select('*').order('date', { ascending: false }).range(0, 49999);
       if (companyId && companyId !== 'ALL') {
         q = q.eq('company_id', companyId);
       }
@@ -179,8 +179,8 @@ export async function executeSupabaseReconciliation(params: {
       } else {
         const existing = salesMap.get(existingId)!;
         // Se o novo registo tiver carimbo mais recente ou dados de pagamento mais completos
-        const existingTime = new Date(existing.updatedAt || existing.date).getTime();
-        const incomingTime = new Date(s.updatedAt || s.date).getTime();
+        const existingTime = new Date((existing as any).updatedAt || existing.date).getTime();
+        const incomingTime = new Date((s as any).updatedAt || s.date).getTime();
         const isMoreRecent = incomingTime > existingTime;
 
         // Se uma estiver paga/emitida e a outra pendente
@@ -306,8 +306,8 @@ export async function executeSupabaseReconciliation(params: {
       } else {
         const existing = productMap.get(key)!;
         // Priorizar dados com carimbo de tempo mais recente ou mais preenchidos
-        const existingTime = new Date(existing.updatedAt || 0).getTime();
-        const incomingTime = new Date(p.updatedAt || 0).getTime();
+        const existingTime = new Date((existing as any).updatedAt || 0).getTime();
+        const incomingTime = new Date((p as any).updatedAt || 0).getTime();
         productMap.set(key, {
           ...existing,
           ...(incomingTime >= existingTime ? p : {}),
@@ -354,8 +354,8 @@ export async function executeSupabaseReconciliation(params: {
         stockMap.set(key, { ...s, companyId: s.companyId || companyId });
       } else {
         const existing = stockMap.get(key)!;
-        const existingTime = new Date(existing.updatedAt || 0).getTime();
-        const incomingTime = new Date(s.updatedAt || 0).getTime();
+        const existingTime = new Date((existing as any).updatedAt || 0).getTime();
+        const incomingTime = new Date((s as any).updatedAt || 0).getTime();
         stockMap.set(key, {
           ...existing,
           ...(incomingTime >= existingTime ? s : {}),
@@ -409,7 +409,7 @@ export async function executeSupabaseReconciliation(params: {
           ...sh,
           status: isClosed ? 'fechado' : 'aberto',
           totalSales: Math.max(Number(existing.totalSales) || 0, Number(sh.totalSales) || 0),
-          totalRevenue: Math.max(Number(existing.totalRevenue) || 0, Number(sh.totalRevenue) || 0),
+          totalCash: Math.max(Number(existing.totalCash) || 0, Number(sh.totalCash) || 0),
         });
       }
     };
@@ -484,6 +484,38 @@ export async function executeSupabaseReconciliation(params: {
         }
       } catch (err: any) {
         console.warn('Aviso ao sincronizar clientes reconciliados no Supabase:', err);
+      }
+    }
+
+    // 8. AUTO-PUSH PARA SUPABASE DE TODAS AS VENDAS QUE FALTAVAM NA NUVEM
+    // Garante que outros computadores e caixas descarreguem exatamente o mesmo número de vendas
+    if (autoPushResolvedToCloud && reconciledSales.length > 0) {
+      try {
+        const remoteIds = new Set(remoteSales.map((r) => String(r.id)));
+        const remoteInvs = new Set(remoteSales.map((r) => (r.invoiceNumber ? r.invoiceNumber.trim() : '')));
+
+        const missingSalesInCloud = reconciledSales.filter((s) => {
+          if (!s || !s.id) return false;
+          if (remoteIds.has(String(s.id))) return false;
+          if (s.invoiceNumber && remoteInvs.has(s.invoiceNumber.trim())) return false;
+          return true;
+        });
+
+        if (missingSalesInCloud.length > 0) {
+          const batchSize = 50;
+          for (let i = 0; i < missingSalesInCloud.length; i += batchSize) {
+            const batch = missingSalesInCloud.slice(i, i + batchSize).map((s) => ({
+              ...mapSaleToSupabase(s),
+              company_id: s.companyId || companyId,
+            }));
+            await supabase.from('vendas').upsert(batch);
+          }
+          result.details.push(
+            `Nuvem atualizada: ${missingSalesInCloud.length} venda(s) deste dispositivo foram enviadas para o Supabase para sincronizar outros caixas.`
+          );
+        }
+      } catch (err: any) {
+        console.warn('Aviso ao sincronizar vendas reconciliadas no Supabase:', err);
       }
     }
 

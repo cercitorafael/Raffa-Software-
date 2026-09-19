@@ -508,13 +508,29 @@ Instrução: Aceite os valores definidos diretamente pelo operador para cada mê
     });
   }
 
+  // Primary listener: Always bind port 3000 for AI Studio reverse proxy
   const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server running on http://0.0.0.0:${PORT}`);
   });
 
   server.on('error', (err: any) => {
-    console.error('Server listen error:', err);
+    console.error('Server listen error on port', PORT, ':', err.message || err);
   });
+
+  // Cloud Run production listener: Cloud Run passes PORT (e.g. 8080) for health checks and ingress
+  const cloudRunPort = process.env.PORT ? parseInt(process.env.PORT, 10) : null;
+  if (cloudRunPort && cloudRunPort !== PORT && !isNaN(cloudRunPort)) {
+    try {
+      const crServer = app.listen(cloudRunPort, '0.0.0.0', () => {
+        console.log(`Cloud Run ingress listener running on http://0.0.0.0:${cloudRunPort}`);
+      });
+      crServer.on('error', (err: any) => {
+        console.warn(`Cloud Run listener on port ${cloudRunPort} notice:`, err.message || err);
+      });
+    } catch (e: any) {
+      console.warn('Could not bind additional Cloud Run port:', e.message || e);
+    }
+  }
 }
 
 startServer().catch((err) => {

@@ -400,7 +400,11 @@ class IndexedDBEngine {
     return this.getSales();
   }
 
-  public async markSaleSynced(saleId: string): Promise<void> {
+  public async markSaleSynced(
+    saleId: string,
+    syncedAt?: string,
+    confirmationCode?: string
+  ): Promise<void> {
     const store = await this.getStore('sales', 'readwrite');
     if (!store) return;
 
@@ -408,13 +412,57 @@ class IndexedDBEngine {
       const getReq = store.get(saleId);
       getReq.onsuccess = () => {
         if (getReq.result) {
-          const updated = { ...getReq.result, isSynced: true };
+          const updated = {
+            ...getReq.result,
+            isSynced: true,
+            syncStatus: 'sincronizada',
+            syncedAt: syncedAt || new Date().toISOString(),
+            serverConfirmationCode: confirmationCode || 'OK_GRAVEI',
+            syncError: undefined,
+          };
           store.put(updated);
         }
         resolve();
       };
       getReq.onerror = () => resolve();
     });
+  }
+
+  public async markSalePending(
+    saleId: string,
+    errorMsg?: string
+  ): Promise<void> {
+    const store = await this.getStore('sales', 'readwrite');
+    if (!store) return;
+
+    return new Promise((resolve) => {
+      const getReq = store.get(saleId);
+      getReq.onsuccess = () => {
+        if (getReq.result) {
+          const attempts = (getReq.result.syncAttempts || 0) + 1;
+          const updated = {
+            ...getReq.result,
+            isSynced: false,
+            syncStatus: 'pendente',
+            syncAttempts: attempts,
+            syncError: errorMsg || getReq.result.syncError,
+          };
+          store.put(updated);
+        }
+        resolve();
+      };
+      getReq.onerror = () => resolve();
+    });
+  }
+
+  public async getPendingSales(): Promise<Sale[]> {
+    const all = await this.getSales();
+    return all.filter((s) => !s.isSynced || s.syncStatus === 'pendente');
+  }
+
+  public async getSyncedSales(): Promise<Sale[]> {
+    const all = await this.getSales();
+    return all.filter((s) => s.isSynced || s.syncStatus === 'sincronizada');
   }
 
   /* ----------------------------------------------------
